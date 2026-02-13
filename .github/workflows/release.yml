@@ -17,11 +17,18 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
         
+      - name: Install NSIS
+        run: choco install nsis -y
+        
+      - name: Package Installer
+        shell: bash
+        run: ./tools/package-nsis.sh ${GITHUB_REF_NAME}
+        
       - name: Prepare Artifacts
         shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME}
-          mkdir -p dist
+          # Move installer to dist if not already there, and keep other binaries
           cp build/Release/wininspectd.exe dist/wininspectd-${VERSION}-win-x64.exe
           cp build/Release/wininspect.exe dist/wininspect-${VERSION}-win-x64.exe
           cp build/Release/wininspect-gui.exe dist/wininspect-gui-${VERSION}-win-x64.exe
