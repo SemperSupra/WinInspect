@@ -1,0 +1,11 @@
+build/
+dist/
+.wbab/
+*.tmp
+*.sig
+wi_nonce*
+.wininspect_config
+.wininspect_portable
+bin/
+obj/
+out/

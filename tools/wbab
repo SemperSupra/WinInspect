@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WBAB_DIR="${ROOT}/tools/WineBotAppBuilder"
+
+usage() {
+  cat <<'EOF'
+wbab (WinInspect)
+Usage: tools/wbab <preflight|build|test|package|sign|e2e> [args]
+
+This repository is scaffolded to work with WineBotAppBuilder (WBAB).
+If you add WBAB as a submodule at tools/WineBotAppBuilder, this wrapper can
+delegate to WBAB's runners.
+
+Fallback behavior (no submodule): run local CMake build/test on Windows.
+
+EOF
+}
+
+run_local_build() {
+  cmake -S "${ROOT}" -B "${ROOT}/build" -DWININSPECT_BUILD_TESTS=ON
+  cmake --build "${ROOT}/build" --config Release
+}
+
+run_local_test() {
+  ctest --test-dir "${ROOT}/build" -C Release --output-on-failure
+}
+
+case "${cmd}" in
+  preflight)
+    "${ROOT}/scripts/preflight.sh"
+    ;;
+  build)
+    if [[ -d "${WBAB_DIR}" ]]; then
+      "${ROOT}/tools/winbuild-build.sh" "$@"
+    else
+      run_local_build
+    fi
+    ;;
+  test)
+    if [[ -d "${WBAB_DIR}" ]]; then
+      "${ROOT}/scripts/wbab-test.sh" "$@"
+    else
+      run_local_test
+    fi
+    ;;
+  package)
+    "${ROOT}/tools/package-nsis.sh" "$@"
+    ;;
+  sign)
+    "${ROOT}/tools/sign-dev.sh" "$@"
+    ;;
+  e2e)
+    "${ROOT}/scripts/e2e-smoke.sh" "$@"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
