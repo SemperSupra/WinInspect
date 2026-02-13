@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-win32:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure CMake
+        run: cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
+        
+      - name: Build
+        run: cmake --build build --config Release
+        
+      - name: Prepare Artifacts
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p dist
+          cp build/Release/wininspectd.exe dist/wininspectd-${VERSION}-win-x64.exe
+          cp build/Release/wininspect.exe dist/wininspect-${VERSION}-win-x64.exe
+          cp build/Release/wininspect-gui.exe dist/wininspect-gui-${VERSION}-win-x64.exe
+          
+      - name: Upload Win32 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win32-binaries
+          path: dist/*
+
+  build-portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          
+      - name: Build Portable CLI
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p dist
+          cd clients/portable
+          GOOS=linux GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-linux-x64
+          GOOS=windows GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-win-x64.exe
+          GOOS=darwin GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-mac-x64
+          GOOS=darwin GOARCH=arm64 go build -o ../../dist/wi-portable-${VERSION}-mac-arm64
+          
+      - name: Upload Portable Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-binaries
+          path: dist/*
+
+  publish:
+    needs: [build-win32, build-portable]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
+          generate_release_notes: true
