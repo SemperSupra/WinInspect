@@ -15,7 +15,7 @@ public:
     TcpServer(int port, wininspect::ServerState* state, wininspect::IBackend* backend);
     ~TcpServer();
 
-    void start(std::atomic<bool>* running, bool bind_public = false, const std::string& auth_keys = "");
+    void start(std::atomic<bool>* running, bool bind_public = false, const std::string& auth_keys = "", bool read_only = false);
 
 private:
     int port_;

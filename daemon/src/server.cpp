@@ -45,7 +45,7 @@ std::string make_snap_id(std::uint64_t n) {
   return "s-" + std::to_string(n);
 }
 
-void handle_client(HANDLE hPipe, ServerState* st, IBackend* backend) {
+void handle_client(HANDLE hPipe, ServerState* st, IBackend* backend, bool read_only) {
   CoreEngine core(backend);
   ClientSession session;
 
@@ -60,6 +60,14 @@ void handle_client(HANDLE hPipe, ServerState* st, IBackend* backend) {
     try {
       auto req = parse_request_json(m.json);
       resp.id = req.id;
+
+      // Security: Check Read-Only mode
+      if (read_only && (req.method == "window.postMessage" || req.method == "input.send")) {
+          resp.ok = false;
+          resp.error_code = "E_ACCESS_DENIED";
+          resp.error_message = "daemon is running in read-only mode";
+          goto send;
+      }
 
       // canonical flag in params
       auto itc = req.params.find("canonical");
@@ -202,7 +210,7 @@ void run_server(std::atomic<bool>* running, ServerState* st, IBackend* backend) 
     BOOL ok = ConnectNamedPipe(hPipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
     if (!ok) { CloseHandle(hPipe); continue; }
 
-    std::thread(handle_client, hPipe, st, backend).detach();
+    std::thread(handle_client, hPipe, st, backend, read_only).detach();
   }
 }
 
@@ -211,11 +219,13 @@ void run_server(std::atomic<bool>* running, ServerState* st, IBackend* backend) 
 int wmain(int argc, wchar_t** argv) {
   bool headless = false;
   bool bind_public = false;
+  bool read_only = false;
   std::wstring auth_keys;
   int tcp_port = 1985;
   for (int i = 1; i < argc; ++i) {
     if (std::wstring(argv[i]) == L"--headless") headless = true;
     if (std::wstring(argv[i]) == L"--public") bind_public = true;
+    if (std::wstring(argv[i]) == L"--read-only") read_only = true;
     if (std::wstring(argv[i]) == L"--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
     }
@@ -228,7 +238,7 @@ int wmain(int argc, wchar_t** argv) {
   Win32Backend backend;
   std::atomic<bool> running{true};
 
-  std::thread server_thread(run_server, &running, &st, &backend);
+  std::thread server_thread(run_server, &running, &st, &backend, read_only);
 
   // Start TCP server for cross-environment access (Host <-> Guest, Host <-> Wine)
   std::string auth_keys_u8;
@@ -238,9 +248,9 @@ int wmain(int argc, wchar_t** argv) {
       WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(), (int)auth_keys.size(), auth_keys_u8.data(), len, nullptr, nullptr);
   }
 
-  std::thread([&, tcp_port, bind_public, auth_keys_u8]() {
+  std::thread([&, tcp_port, bind_public, auth_keys_u8, read_only]() {
     wininspectd::TcpServer tcp(tcp_port, &st, &backend);
-    tcp.start(&running, bind_public, auth_keys_u8);
+    tcp.start(&running, bind_public, auth_keys_u8, read_only);
   }).detach();
 
   if (!headless) {

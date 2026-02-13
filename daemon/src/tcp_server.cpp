@@ -44,8 +44,12 @@ static bool verify_identity(const std::string& auth_keys_path, const std::string
     return false;
 }
 
-static void handle_socket_client(SOCKET s, wininspect::ServerState* st, wininspect::IBackend* backend, std::string auth_keys) {
+static void handle_socket_client(SOCKET s, wininspect::ServerState* st, wininspect::IBackend* backend, std::string auth_keys, bool read_only) {
     wininspect::CoreEngine core(backend);
+    
+    // Set 5 second timeout for handshake
+    DWORD timeout = 5000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
     if (!auth_keys.empty()) {
         std::vector<uint8_t> nonce(32);
@@ -86,6 +90,10 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState* st, wininspe
         if (!socket_write_all(s, &slen, 4) || !socket_write_all(s, sj.data(), slen)) { closesocket(s); return; }
     }
 
+    // Handshake successful, set a longer idle timeout (30 mins)
+    DWORD idle_timeout = 30 * 60 * 1000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&idle_timeout, sizeof(idle_timeout));
+
     while (true) {
         uint32_t len = 0;
         if (!socket_read_all(s, &len, 4)) break;
@@ -103,6 +111,14 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState* st, wininspe
         try {
             auto req = wininspect::parse_request_json(json_req);
             resp.id = req.id;
+
+            // Security: Check Read-Only mode
+            if (read_only && (req.method == "window.postMessage" || req.method == "input.send")) {
+                resp.ok = false;
+                resp.error_code = "E_ACCESS_DENIED";
+                resp.error_message = "daemon is running in read-only mode";
+                goto send_resp;
+            }
 
             auto itc = req.params.find("canonical");
             if (itc != req.params.end() && itc->second.is_bool()) canonical = itc->second.as_bool();
@@ -129,6 +145,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState* st, wininspe
             resp.error_code = "E_BAD_REQUEST";
         }
 
+    send_resp:
         std::string out = wininspect::serialize_response_json(resp, canonical);
         uint32_t out_len = (uint32_t)out.size();
         if (!socket_write_all(s, &out_len, 4)) break;
@@ -142,7 +159,7 @@ TcpServer::TcpServer(int port, wininspect::ServerState* state, wininspect::IBack
 
 TcpServer::~TcpServer() {}
 
-void TcpServer::start(std::atomic<bool>* running, bool bind_public, const std::string& auth_keys) {
+void TcpServer::start(std::atomic<bool>* running, bool bind_public, const std::string& auth_keys, bool read_only) {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return;
 
@@ -184,7 +201,7 @@ void TcpServer::start(std::atomic<bool>* running, bool bind_public, const std::s
         u_long m2 = 0;
         ioctlsocket(client, FIONBIO, &m2);
 
-        std::thread(handle_socket_client, client, state_, backend_, auth_keys).detach();
+        std::thread(handle_socket_client, client, state_, backend_, auth_keys, read_only).detach();
     }
 
     closesocket(listen_sock);
