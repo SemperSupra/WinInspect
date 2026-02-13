@@ -34,11 +34,7 @@ case "${cmd}" in
     "${ROOT}/scripts/preflight.sh"
     ;;
   build)
-    if [[ -d "${WBAB_DIR}" ]]; then
-      "${ROOT}/tools/winbuild-build.sh" "$@"
-    else
-      run_local_build
-    fi
+    "${ROOT}/tools/winbuild-build.sh" "$@"
     ;;
   test)
     if [[ -d "${WBAB_DIR}" ]]; then

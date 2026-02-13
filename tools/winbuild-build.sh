@@ -26,10 +26,6 @@ if command -v go &> /dev/null; then
     echo "  Building for Windows (x64)..."
     GOOS=windows GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-win-x64.exe"
     
-    echo "  Building for macOS (Universal)..."
-    GOOS=darwin GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-mac-x64"
-    GOOS=darwin GOARCH=arm64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-mac-arm64"
-    
     popd > /dev/null
 else
     echo "Skipping Go build (compiler not found)."

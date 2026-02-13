@@ -11,27 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Configure CMake
-        run: cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
-        
-      - name: Build
-        run: cmake --build build --config Release
-        
       - name: Install NSIS
         run: choco install nsis -y
         
-      - name: Package Installer
+      - name: WBAB Preflight
         shell: bash
-        run: ./tools/package-nsis.sh ${GITHUB_REF_NAME}
+        run: ./tools/wbab preflight
         
-      - name: Prepare Artifacts
+      - name: WBAB Build
         shell: bash
-        run: |
-          VERSION=${GITHUB_REF_NAME}
-          # Move installer to dist if not already there, and keep other binaries
-          cp build/Release/wininspectd.exe dist/wininspectd-${VERSION}-win-x64.exe
-          cp build/Release/wininspect.exe dist/wininspect-${VERSION}-win-x64.exe
-          cp build/Release/wininspect-gui.exe dist/wininspect-gui-${VERSION}-win-x64.exe
+        run: ./tools/wbab build ${GITHUB_REF_NAME}
+        
+      - name: WBAB Package
+        shell: bash
+        run: ./tools/wbab package ${GITHUB_REF_NAME}
           
       - name: Upload Win32 Artifacts
         uses: actions/upload-artifact@v4
@@ -39,34 +32,8 @@ jobs:
           name: win32-binaries
           path: dist/*
 
-  build-portable:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-          
-      - name: Build Portable CLI
-        run: |
-          VERSION=${GITHUB_REF_NAME}
-          mkdir -p dist
-          cd clients/portable
-          GOOS=linux GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-linux-x64
-          GOOS=windows GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-win-x64.exe
-          GOOS=darwin GOARCH=amd64 go build -o ../../dist/wi-portable-${VERSION}-mac-x64
-          GOOS=darwin GOARCH=arm64 go build -o ../../dist/wi-portable-${VERSION}-mac-arm64
-          
-      - name: Upload Portable Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: portable-binaries
-          path: dist/*
-
   publish:
-    needs: [build-win32, build-portable]
+    needs: [build-win32]
     runs-on: ubuntu-latest
     permissions:
       contents: write
