@@ -7,12 +7,13 @@ WinInspect is a WinSpy++-like window inspection tool designed as a **core + brok
 - **Clients**: CLI, Win32 native GUI, and API clients can run **concurrently** without interfering.
 
 This repository is scaffolded to follow the **WineBotAppBuilder (WBAB)** lifecycle:
-- `wbab preflight`
+- `wbab lint`
 - `wbab build`
 - `wbab test`
 - `wbab package`
 - `wbab sign`
-- `wbab e2e`
+- `wbab smoke`
+- `wbab discover`
 
 ## Quick start (developer)
 
