@@ -14,11 +14,12 @@ DOCTEST_TEST_CASE("Injection methods work") {
     CoreRequest req;
     req.id = "1";
     req.method = "window.postMessage";
-    
-    // We can't really verify postMessage side effects on FakeBackend easily without
-    // extending FakeBackend to record them, but we can verify the call succeeds.
-    // Let's modify FakeBackend to be observable or just check success response.
-    
+
+    // We can't really verify postMessage side effects on FakeBackend easily
+    // without extending FakeBackend to record them, but we can verify the call
+    // succeeds. Let's modify FakeBackend to be observable or just check success
+    // response.
+
     json::Object params;
     params["hwnd"] = "0x1234";
     params["msg"] = 100.0; // WM_...
@@ -26,7 +27,7 @@ DOCTEST_TEST_CASE("Injection methods work") {
 
     CoreResponse resp = core.handle(req, {});
     DOCTEST_REQUIRE(resp.ok);
-    
+
     // Check missing params
     req.params.clear();
     resp = core.handle(req, {});
