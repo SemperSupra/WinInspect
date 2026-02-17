@@ -2,6 +2,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <bcrypt.h>
+#ifndef BCRYPT_ECD_PUBLIC_GENERIC_MAGIC
+#define BCRYPT_ECD_PUBLIC_GENERIC_MAGIC 0x50434345
+#endif
 #include <vector>
 #include <string>
 #include <sstream>
@@ -62,8 +65,8 @@ bool CryptoSession::compute_shared_secret(const std::vector<uint8_t>& remote_pub
         return false;
     }
 
-    BCRYPT_BUFFER_DESC derDesc = { 0 };
-    BCRYPT_BUFFER derBuffers[1] = { 0 };
+    BCryptBufferDesc derDesc = { 0 };
+    BCryptBuffer derBuffers[1] = { 0 };
     derDesc.cBuffers = 1;
     derDesc.pBuffers = derBuffers;
     derDesc.ulVersion = BCRYPTBUFFER_VERSION;

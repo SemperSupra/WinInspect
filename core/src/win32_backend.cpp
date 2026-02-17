@@ -6,6 +6,8 @@
 #include <psapi.h>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <iterator>
 
 namespace wininspect {
 
