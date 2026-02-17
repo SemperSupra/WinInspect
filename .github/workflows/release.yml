@@ -11,6 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
       - name: Install NSIS
         run: choco install nsis -y
         
@@ -22,6 +26,10 @@ jobs:
         shell: bash
         run: ./tools/wbab build ${GITHUB_REF_NAME}
         
+      - name: WBAB Test
+        shell: bash
+        run: ./tools/wbab test
+
       - name: WBAB Package
         shell: bash
         run: ./tools/wbab package ${GITHUB_REF_NAME}

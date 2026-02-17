@@ -3,9 +3,6 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -60,8 +57,7 @@ func main() {
 			return
 		}
 		saveConfig(args[2])
-		fmt.Printf("Key path saved: %s
-", args[2])
+		fmt.Printf("Key path saved: %s\n", args[2])
 		return
 	}
 
@@ -72,8 +68,7 @@ func main() {
 
 	err := runCommand(*tcpAddr, *keyPath, cmd, args[1:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v
-", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -161,7 +156,7 @@ func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
 
 	authStatus, err := recvRaw(conn)
 	if err != nil { return nil, err }
-	if !strings.Contains(string(authStatus), ""ok":true") {
+	if !strings.Contains(string(authStatus), "\"ok\":true") {
 		return nil, fmt.Errorf("auth failed")
 	}
 
@@ -190,13 +185,29 @@ func recvRaw(conn net.Conn) ([]byte, error) {
 }
 
 func sendEncrypted(conn net.Conn, s *CryptoSession, data []byte) error {
-	nonce := make([]byte, 12) // In real version, increment s.nonce
-	ciphertext := s.aesGCM.Seal(nil, nonce, data, nil)
+	nonce := make([]byte, 12)
+	binary.LittleEndian.PutUint64(nonce, s.nonce)
+	s.nonce++
+
+	// Seal appends [Ciphertext][Tag] to dst (nil here, so new slice)
+	sealed := s.aesGCM.Seal(nil, nonce, data, nil)
+
+	// C++ Logic: [Nonce(12)][Tag(16)][Ciphertext(N)]
+	// Sealed is: [Ciphertext(N)][Tag(16)]
+	tagSize := 16
+	if len(sealed) < tagSize {
+		return fmt.Errorf("encryption error")
+	}
 	
-	total := make([]byte, 12 + 16 + len(data)) // Nonce + Tag + Cipher
-	// Matches our C++ logic: [Nonce(12)][Tag(16)][Ciphertext(N)]
-	// Note: Seal returns [Ciphertext][Tag], we may need to reorder
-	return sendRaw(conn, ciphertext) 
+	realCipher := sealed[:len(sealed)-tagSize]
+	tag := sealed[len(sealed)-tagSize:]
+
+	total := make([]byte, 12 + 16 + len(realCipher))
+	copy(total[0:12], nonce)
+	copy(total[12:28], tag)
+	copy(total[28:], realCipher)
+
+	return sendRaw(conn, total)
 }
 
 func recvEncrypted(conn net.Conn, s *CryptoSession) ([]byte, error) {

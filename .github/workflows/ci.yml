@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  test-win32:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: WBAB Preflight
+        shell: bash
+        run: ./tools/wbab preflight
+
+      - name: WBAB Build
+        shell: bash
+        run: ./tools/wbab build ${GITHUB_REF_NAME}
+
+      - name: WBAB Test
+        shell: bash
+        run: ./tools/wbab test
