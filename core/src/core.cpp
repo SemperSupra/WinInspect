@@ -3,7 +3,7 @@
 
 namespace wininspect {
 
-static json::Value make_error(const std::string& code, const std::string& msg) {
+static json::Value make_error(const std::string &code, const std::string &msg) {
   json::Object e;
   e["code"] = code;
   e["message"] = msg;
@@ -14,39 +14,52 @@ json::Object CoreResponse::to_json_obj(bool /*canonical*/) const {
   json::Object o;
   o["id"] = id;
   o["ok"] = ok;
-  if (ok) o["result"] = result;
-  else o["error"] = make_error(error_code, error_message);
+  if (ok)
+    o["result"] = result;
+  else
+    o["error"] = make_error(error_code, error_message);
   return o;
 }
 
-CoreEngine::CoreEngine(IBackend* backend) : backend_(backend) {}
+CoreEngine::CoreEngine(IBackend *backend) : backend_(backend) {}
 
-static std::optional<std::string> get_str(const json::Object& o, const std::string& k) {
+static std::optional<std::string> get_str(const json::Object &o,
+                                          const std::string &k) {
   auto it = o.find(k);
-  if (it == o.end()) return std::nullopt;
-  if (!it->second.is_str()) return std::nullopt;
+  if (it == o.end())
+    return std::nullopt;
+  if (!it->second.is_str())
+    return std::nullopt;
   return it->second.as_str();
 }
-static std::optional<bool> get_bool(const json::Object& o, const std::string& k) {
+static std::optional<bool> get_bool(const json::Object &o,
+                                    const std::string &k) {
   auto it = o.find(k);
-  if (it == o.end()) return std::nullopt;
-  if (!it->second.is_bool()) return std::nullopt;
+  if (it == o.end())
+    return std::nullopt;
+  if (!it->second.is_bool())
+    return std::nullopt;
   return it->second.as_bool();
 }
-static std::optional<double> get_num(const json::Object& o, const std::string& k) {
+static std::optional<double> get_num(const json::Object &o,
+                                     const std::string &k) {
   auto it = o.find(k);
-  if (it == o.end()) return std::nullopt;
-  if (!it->second.is_num()) return std::nullopt;
+  if (it == o.end())
+    return std::nullopt;
+  if (!it->second.is_num())
+    return std::nullopt;
   return it->second.as_num();
 }
 
-static std::optional<hwnd_u64> parse_hwnd(const std::string& s) {
-  if (s.rfind("0x", 0) != 0) return std::nullopt;
+static std::optional<hwnd_u64> parse_hwnd(const std::string &s) {
+  if (s.rfind("0x", 0) != 0)
+    return std::nullopt;
   std::uint64_t v = 0;
   std::stringstream ss;
   ss << std::hex << s.substr(2);
   ss >> v;
-  if (ss.fail()) return std::nullopt;
+  if (ss.fail())
+    return std::nullopt;
   return (hwnd_u64)v;
 }
 
@@ -56,15 +69,16 @@ static std::string fmt_hwnd(hwnd_u64 h) {
   return oss.str();
 }
 
-static json::Object event_to_json(const Event& e) {
+static json::Object event_to_json(const Event &e) {
   json::Object o;
   o["type"] = e.type;
   o["hwnd"] = fmt_hwnd(e.hwnd);
-  if (!e.property.empty()) o["property"] = e.property;
+  if (!e.property.empty())
+    o["property"] = e.property;
   return o;
 }
 
-static json::Object window_info_to_json(const WindowInfo& wi) {
+static json::Object window_info_to_json(const WindowInfo &wi) {
   json::Object o;
   o["hwnd"] = fmt_hwnd(wi.hwnd);
   o["parent"] = fmt_hwnd(wi.parent);
@@ -72,12 +86,18 @@ static json::Object window_info_to_json(const WindowInfo& wi) {
   o["class_name"] = wi.class_name;
   o["title"] = wi.title;
 
-  json::Object wr; wr["left"]= (double)wi.window_rect.left; wr["top"]=(double)wi.window_rect.top;
-  wr["right"]=(double)wi.window_rect.right; wr["bottom"]=(double)wi.window_rect.bottom;
+  json::Object wr;
+  wr["left"] = (double)wi.window_rect.left;
+  wr["top"] = (double)wi.window_rect.top;
+  wr["right"] = (double)wi.window_rect.right;
+  wr["bottom"] = (double)wi.window_rect.bottom;
   o["window_rect"] = wr;
 
-  json::Object cr; cr["left"]= (double)wi.client_rect.left; cr["top"]=(double)wi.client_rect.top;
-  cr["right"]=(double)wi.client_rect.right; cr["bottom"]=(double)wi.client_rect.bottom;
+  json::Object cr;
+  cr["left"] = (double)wi.client_rect.left;
+  cr["top"] = (double)wi.client_rect.top;
+  cr["right"] = (double)wi.client_rect.right;
+  cr["bottom"] = (double)wi.client_rect.bottom;
   o["client_rect"] = cr;
 
   o["pid"] = (double)wi.pid;
@@ -96,14 +116,17 @@ static json::Object window_info_to_json(const WindowInfo& wi) {
 }
 
 static std::vector<uint8_t> base64_decode(std::string_view in) {
-  static const std::string_view b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  static const std::string_view b64 =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::vector<uint8_t> out;
   std::vector<int> T(256, -1);
-  for (int i = 0; i < 64; i++) T[b64[i]] = i;
+  for (int i = 0; i < 64; i++)
+    T[b64[i]] = i;
 
   int val = 0, valb = -8;
   for (char c : in) {
-    if (T[c] == -1) break;
+    if (T[c] == -1)
+      break;
     val = (val << 6) + T[c];
     valb += 6;
     if (valb >= 0) {
@@ -114,7 +137,9 @@ static std::vector<uint8_t> base64_decode(std::string_view in) {
   return out;
 }
 
-CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot, const Snapshot* old_snapshot) {
+CoreResponse CoreEngine::handle(const CoreRequest &req,
+                                const Snapshot &snapshot,
+                                const Snapshot *old_snapshot) {
   CoreResponse resp;
   resp.id = req.id;
   resp.ok = true;
@@ -122,10 +147,12 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
 
   try {
     if (req.method == "events.poll") {
-      if (!old_snapshot) throw std::runtime_error("events.poll requires two snapshots");
+      if (!old_snapshot)
+        throw std::runtime_error("events.poll requires two snapshots");
       auto events = backend_->poll_events(*old_snapshot, snapshot);
       json::Array arr;
-      for (const auto& e : events) arr.push_back(event_to_json(e));
+      for (const auto &e : events)
+        arr.push_back(event_to_json(e));
       resp.result = arr;
       return resp;
     }
@@ -144,9 +171,11 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
 
     if (req.method == "window.listChildren") {
       auto hwnd_s = get_str(req.params, "hwnd");
-      if (!hwnd_s) throw std::runtime_error("missing hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
       auto hwnd = parse_hwnd(*hwnd_s);
-      if (!hwnd) throw std::runtime_error("bad hwnd");
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
       auto ch = backend_->list_children(snapshot, *hwnd);
       json::Array arr;
       for (auto h : ch) {
@@ -160,11 +189,18 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
 
     if (req.method == "window.getInfo") {
       auto hwnd_s = get_str(req.params, "hwnd");
-      if (!hwnd_s) throw std::runtime_error("missing hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
       auto hwnd = parse_hwnd(*hwnd_s);
-      if (!hwnd) throw std::runtime_error("bad hwnd");
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
       auto info = backend_->get_info(snapshot, *hwnd);
-      if (!info) { resp.ok=false; resp.error_code="E_BAD_HWND"; resp.error_message="not a valid window handle"; return resp; }
+      if (!info) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_HWND";
+        resp.error_message = "not a valid window handle";
+        return resp;
+      }
       resp.result = window_info_to_json(*info);
       return resp;
     }
@@ -172,13 +208,22 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
     if (req.method == "window.pickAtPoint") {
       auto x = get_num(req.params, "x");
       auto y = get_num(req.params, "y");
-      if (!x || !y) throw std::runtime_error("missing x/y");
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
       PickFlags flags;
-      if (auto b = get_bool(req.params, "prefer_child")) flags.prefer_child = *b;
-      if (auto b = get_bool(req.params, "ignore_transparent")) flags.ignore_transparent = *b;
+      if (auto b = get_bool(req.params, "prefer_child"))
+        flags.prefer_child = *b;
+      if (auto b = get_bool(req.params, "ignore_transparent"))
+        flags.ignore_transparent = *b;
       auto h = backend_->pick_at_point(snapshot, (int)*x, (int)*y, flags);
-      if (!h) { resp.ok=false; resp.error_code="E_NOT_FOUND"; resp.error_message="no window at point"; return resp; }
-      json::Object o; o["hwnd"] = fmt_hwnd(*h);
+      if (!h) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        resp.error_message = "no window at point";
+        return resp;
+      }
+      json::Object o;
+      o["hwnd"] = fmt_hwnd(*h);
       resp.result = o;
       return resp;
     }
@@ -186,22 +231,28 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
     if (req.method == "window.ensureVisible") {
       auto hwnd_s = get_str(req.params, "hwnd");
       auto vis = get_bool(req.params, "visible");
-      if (!hwnd_s || !vis) throw std::runtime_error("missing hwnd/visible");
+      if (!hwnd_s || !vis)
+        throw std::runtime_error("missing hwnd/visible");
       auto hwnd = parse_hwnd(*hwnd_s);
-      if (!hwnd) throw std::runtime_error("bad hwnd");
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
       auto r = backend_->ensure_visible(*hwnd, *vis);
-      json::Object o; o["changed"] = r.changed;
+      json::Object o;
+      o["changed"] = r.changed;
       resp.result = o;
       return resp;
     }
 
     if (req.method == "window.ensureForeground") {
       auto hwnd_s = get_str(req.params, "hwnd");
-      if (!hwnd_s) throw std::runtime_error("missing hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
       auto hwnd = parse_hwnd(*hwnd_s);
-      if (!hwnd) throw std::runtime_error("bad hwnd");
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
       auto r = backend_->ensure_foreground(*hwnd);
-      json::Object o; o["changed"] = r.changed;
+      json::Object o;
+      o["changed"] = r.changed;
       resp.result = o;
       return resp;
     }
@@ -211,32 +262,108 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
       auto msg = get_num(req.params, "msg");
       auto wparam = get_num(req.params, "wparam");
       auto lparam = get_num(req.params, "lparam");
-      if (!hwnd_s || !msg) throw std::runtime_error("missing hwnd/msg");
+      if (!hwnd_s || !msg)
+        throw std::runtime_error("missing hwnd/msg");
       auto hwnd = parse_hwnd(*hwnd_s);
-      if (!hwnd) throw std::runtime_error("bad hwnd");
-      bool ok = backend_->post_message(*hwnd, (uint32_t)*msg, (uint64_t)(wparam.value_or(0)), (uint64_t)(lparam.value_or(0)));
-      json::Object o; o["sent"] = ok;
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      bool ok = backend_->post_message(*hwnd, (uint32_t)*msg,
+                                       (uint64_t)(wparam.value_or(0)),
+                                       (uint64_t)(lparam.value_or(0)));
+      json::Object o;
+      o["sent"] = ok;
       resp.result = o;
       return resp;
     }
 
     if (req.method == "input.send") {
       auto data_b64 = get_str(req.params, "data_b64");
-      if (!data_b64) throw std::runtime_error("missing data_b64");
+      if (!data_b64)
+        throw std::runtime_error("missing data_b64");
       auto data = base64_decode(*data_b64);
       bool ok = backend_->send_input(data);
-      json::Object o; o["sent"] = ok;
+      json::Object o;
+      o["sent"] = ok;
       resp.result = o;
       return resp;
     }
 
-    // snapshot.capture/events.* are handled in daemon layer (session/scoped state)
+    if (req.method == "input.mouseClick") {
+      auto x = get_num(req.params, "x");
+      auto y = get_num(req.params, "y");
+      auto btn = get_num(req.params, "button"); // 0=left, 1=right, 2=middle
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
+      int b = (int)btn.value_or(0);
+      bool ok = backend_->send_mouse_click((int)*x, (int)*y, b);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "input.keyPress") {
+      auto vk = get_num(req.params, "vk");
+      if (!vk)
+        throw std::runtime_error("missing vk");
+      bool ok = backend_->send_key_press((int)*vk);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "input.text") {
+      auto text = get_str(req.params, "text");
+      if (!text)
+        throw std::runtime_error("missing text");
+      bool ok = backend_->send_text(*text);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "ui.inspect") {
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+
+      auto elements = backend_->inspect_ui_elements(*hwnd);
+      json::Array arr;
+      for (const auto &el : elements) {
+        json::Object o;
+        o["automation_id"] = el.automation_id;
+        o["name"] = el.name;
+        o["class_name"] = el.class_name;
+        o["control_type"] = el.control_type;
+
+        json::Object r;
+        r["left"] = (double)el.bounding_rect.left;
+        r["top"] = (double)el.bounding_rect.top;
+        r["right"] = (double)el.bounding_rect.right;
+        r["bottom"] = (double)el.bounding_rect.bottom;
+        o["bounding_rect"] = r;
+
+        o["enabled"] = el.enabled;
+        o["visible"] = el.visible;
+        arr.push_back(o);
+      }
+      resp.result = arr;
+      return resp;
+    }
+
+    // snapshot.capture/events.* are handled in daemon layer (session/scoped
+    // state)
     resp.ok = false;
     resp.error_code = "E_BAD_METHOD";
     resp.error_message = "method not implemented in core";
     return resp;
 
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     resp.ok = false;
     resp.error_code = "E_BAD_REQUEST";
     resp.error_message = e.what();
@@ -246,14 +373,17 @@ CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot
 
 CoreRequest parse_request_json(std::string_view json_utf8) {
   auto v = json::parse(json_utf8);
-  if (!v.is_obj()) throw std::runtime_error("request must be object");
-  const auto& o = v.as_obj();
+  if (!v.is_obj())
+    throw std::runtime_error("request must be object");
+  const auto &o = v.as_obj();
 
   auto it_id = o.find("id");
-  auto it_m  = o.find("method");
-  auto it_p  = o.find("params");
-  if (it_id==o.end() || it_m==o.end() || it_p==o.end()) throw std::runtime_error("missing fields");
-  if (!it_id->second.is_str() || !it_m->second.is_str() || !it_p->second.is_obj())
+  auto it_m = o.find("method");
+  auto it_p = o.find("params");
+  if (it_id == o.end() || it_m == o.end() || it_p == o.end())
+    throw std::runtime_error("missing fields");
+  if (!it_id->second.is_str() || !it_m->second.is_str() ||
+      !it_p->second.is_obj())
     throw std::runtime_error("bad field types");
 
   CoreRequest r;
@@ -263,7 +393,7 @@ CoreRequest parse_request_json(std::string_view json_utf8) {
   return r;
 }
 
-std::string serialize_response_json(const CoreResponse& resp, bool canonical) {
+std::string serialize_response_json(const CoreResponse &resp, bool canonical) {
   (void)canonical;
   json::Value v = resp.to_json_obj(canonical);
   return json::dumps(v);
