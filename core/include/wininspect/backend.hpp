@@ -32,6 +32,14 @@ public:
                             uint64_t lparam) = 0;
   virtual bool send_input(const std::vector<uint8_t> &raw_input_data) = 0;
 
+  // Higher-level injection helpers
+  virtual bool send_mouse_click(int x, int y, int button) = 0; // 0=left, 1=right, 2=middle
+  virtual bool send_key_press(int vk) = 0;
+  virtual bool send_text(const std::string &text) = 0;
+
+  // UI Automation
+  virtual std::vector<UIElementInfo> inspect_ui_elements(hwnd_u64 parent) = 0;
+
   // Event polling
   virtual std::vector<Event> poll_events(const Snapshot &old_snap,
                                          const Snapshot &new_snap) = 0;

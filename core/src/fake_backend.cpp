@@ -89,7 +89,51 @@ bool FakeBackend::post_message(hwnd_u64, uint32_t, uint64_t, uint64_t) {
 }
 
 bool FakeBackend::send_input(const std::vector<uint8_t> &) {
-  return true; // Mock success
+  std::lock_guard<std::mutex> lk(mu_);
+  injected_events_.push_back("send_input");
+  return true;
+}
+
+bool FakeBackend::send_mouse_click(int x, int y, int button) {
+  std::lock_guard<std::mutex> lk(mu_);
+  injected_events_.push_back("mouse_click:" + std::to_string(x) + "," +
+                             std::to_string(y) + "," + std::to_string(button));
+  return true;
+}
+
+bool FakeBackend::send_key_press(int vk) {
+  std::lock_guard<std::mutex> lk(mu_);
+  injected_events_.push_back("key_press:" + std::to_string(vk));
+  return true;
+}
+
+bool FakeBackend::send_text(const std::string &text) {
+  std::lock_guard<std::mutex> lk(mu_);
+  injected_events_.push_back("text:" + text);
+  return true;
+}
+
+std::vector<UIElementInfo> FakeBackend::inspect_ui_elements(hwnd_u64 parent) {
+  std::lock_guard<std::mutex> lk(mu_);
+  auto it = ui_elements_.find(parent);
+  if (it == ui_elements_.end())
+    return {};
+  return it->second;
+}
+
+void FakeBackend::add_fake_ui_element(hwnd_u64 parent, const UIElementInfo &info) {
+  std::lock_guard<std::mutex> lk(mu_);
+  ui_elements_[parent].push_back(info);
+}
+
+std::vector<std::string> FakeBackend::get_injected_events() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return injected_events_;
+}
+
+void FakeBackend::clear_injected_events() {
+  std::lock_guard<std::mutex> lk(mu_);
+  injected_events_.clear();
 }
 
 std::vector<Event> FakeBackend::poll_events(const Snapshot &,

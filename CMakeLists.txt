@@ -20,6 +20,10 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid)
+endif()
+
+if (WIN32)
   add_executable(wininspectd
     daemon/src/server.cpp
     daemon/src/pipe_win32.cpp
@@ -50,6 +54,7 @@ if (WININSPECT_BUILD_TESTS)
     core/tests/test_trace_replay.cpp
     core/tests/test_injection.cpp
     core/tests/test_crypto.cpp
+    core/tests/test_uia.cpp
   )
   target_include_directories(test_core PRIVATE core/include third_party)
   target_link_libraries(test_core PRIVATE wininspect_core)

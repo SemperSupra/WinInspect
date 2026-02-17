@@ -288,6 +288,74 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       return resp;
     }
 
+    if (req.method == "input.mouseClick") {
+      auto x = get_num(req.params, "x");
+      auto y = get_num(req.params, "y");
+      auto btn = get_num(req.params, "button"); // 0=left, 1=right, 2=middle
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
+      int b = (int)btn.value_or(0);
+      bool ok = backend_->send_mouse_click((int)*x, (int)*y, b);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "input.keyPress") {
+      auto vk = get_num(req.params, "vk");
+      if (!vk)
+        throw std::runtime_error("missing vk");
+      bool ok = backend_->send_key_press((int)*vk);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "input.text") {
+      auto text = get_str(req.params, "text");
+      if (!text)
+        throw std::runtime_error("missing text");
+      bool ok = backend_->send_text(*text);
+      json::Object o;
+      o["sent"] = ok;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "ui.inspect") {
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+
+      auto elements = backend_->inspect_ui_elements(*hwnd);
+      json::Array arr;
+      for (const auto &el : elements) {
+        json::Object o;
+        o["automation_id"] = el.automation_id;
+        o["name"] = el.name;
+        o["class_name"] = el.class_name;
+        o["control_type"] = el.control_type;
+
+        json::Object r;
+        r["left"] = (double)el.bounding_rect.left;
+        r["top"] = (double)el.bounding_rect.top;
+        r["right"] = (double)el.bounding_rect.right;
+        r["bottom"] = (double)el.bounding_rect.bottom;
+        o["bounding_rect"] = r;
+
+        o["enabled"] = el.enabled;
+        o["visible"] = el.visible;
+        arr.push_back(o);
+      }
+      resp.result = arr;
+      return resp;
+    }
+
     // snapshot.capture/events.* are handled in daemon layer (session/scoped
     // state)
     resp.ok = false;

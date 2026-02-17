@@ -53,4 +53,57 @@ DOCTEST_TEST_CASE("Injection methods work") {
     resp = core.handle(req, {});
     DOCTEST_REQUIRE(!resp.ok);
   }
+
+  // Test input.mouseClick
+  {
+    CoreRequest req;
+    req.id = "3";
+    req.method = "input.mouseClick";
+    json::Object params;
+    params["x"] = 100.0;
+    params["y"] = 200.0;
+    params["button"] = 0.0;
+    req.params = params;
+
+    CoreResponse resp = core.handle(req, {});
+    DOCTEST_REQUIRE(resp.ok);
+
+    auto events = backend.get_injected_events();
+    DOCTEST_REQUIRE(events.size() > 0);
+    DOCTEST_REQUIRE(events.back() == "mouse_click:100,200,0");
+  }
+
+  // Test input.keyPress
+  {
+    CoreRequest req;
+    req.id = "4";
+    req.method = "input.keyPress";
+    json::Object params;
+    params["vk"] = 65.0; // 'A'
+    req.params = params;
+
+    CoreResponse resp = core.handle(req, {});
+    DOCTEST_REQUIRE(resp.ok);
+
+    auto events = backend.get_injected_events();
+    DOCTEST_REQUIRE(events.size() > 0);
+    DOCTEST_REQUIRE(events.back() == "key_press:65");
+  }
+
+  // Test input.text
+  {
+    CoreRequest req;
+    req.id = "5";
+    req.method = "input.text";
+    json::Object params;
+    params["text"] = "hello";
+    req.params = params;
+
+    CoreResponse resp = core.handle(req, {});
+    DOCTEST_REQUIRE(resp.ok);
+
+    auto events = backend.get_injected_events();
+    DOCTEST_REQUIRE(events.size() > 0);
+    DOCTEST_REQUIRE(events.back() == "text:hello");
+  }
 }
