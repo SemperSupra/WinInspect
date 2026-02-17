@@ -75,8 +75,7 @@ LRESULT CALLBACK TrayManager::windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LP
                 if (self->onExit_) self->onExit_();
                 self->stop();
             } else if (LOWORD(wParam) == ID_TRAY_ABOUT) {
-                MessageBoxW(hwnd, L"WinInspect Daemon
-Monitoring windows with style.", L"About", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(hwnd, L"WinInspect Daemon\nMonitoring windows with style.", L"About", MB_OK | MB_ICONINFORMATION);
             }
             return 0;
         }

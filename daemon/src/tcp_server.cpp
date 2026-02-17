@@ -3,16 +3,43 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <wincrypt.h>
 #include <thread>
 #include <vector>
 #include <iostream>
+#include <fstream>
+#include <string>
 
 #include "tcp_server.hpp"
 #include "wininspect/core.hpp"
 
 #include "wininspect/crypto.hpp"
 
+#pragma comment(lib, "Advapi32.lib")
+
 namespace wininspectd {
+
+static bool socket_read_all(SOCKET s, void* buf, uint32_t len) {
+    uint32_t n = 0;
+    char* p = (char*)buf;
+    while (n < len) {
+        int r = recv(s, p + n, (int)(len - n), 0);
+        if (r <= 0) return false;
+        n += r;
+    }
+    return true;
+}
+
+static bool socket_write_all(SOCKET s, const void* buf, uint32_t len) {
+    uint32_t n = 0;
+    const char* p = (const char*)buf;
+    while (n < len) {
+        int r = send(s, p + n, (int)(len - n), 0);
+        if (r <= 0) return false;
+        n += r;
+    }
+    return true;
+}
 
 static std::string base64_encode(const std::vector<uint8_t>& in) {
     static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
