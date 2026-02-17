@@ -9,7 +9,7 @@ WBAB_DIR="${ROOT}/tools/WineBotAppBuilder"
 usage() {
   cat <<'EOF'
 wbab (WinInspect)
-Usage: tools/wbab <preflight|build|test|package|sign|e2e> [args]
+Usage: tools/wbab <lint|build|test|package|sign|smoke|discover|preflight> [args]
 
 This repository is scaffolded to work with WineBotAppBuilder (WBAB).
 If you add WBAB as a submodule at tools/WineBotAppBuilder, this wrapper can
@@ -33,6 +33,9 @@ case "${cmd}" in
   preflight)
     "${ROOT}/scripts/preflight.sh"
     ;;
+  lint)
+    "${ROOT}/scripts/lint.sh" "$@"
+    ;;
   build)
     "${ROOT}/tools/winbuild-build.sh" "$@"
     ;;
@@ -49,8 +52,15 @@ case "${cmd}" in
   sign)
     "${ROOT}/tools/sign-dev.sh" "$@"
     ;;
+  smoke)
+    "${ROOT}/scripts/smoke.sh" "$@"
+    ;;
+  discover)
+    "${ROOT}/scripts/discover.sh" "$@"
+    ;;
   e2e)
-    "${ROOT}/scripts/e2e-smoke.sh" "$@"
+    echo "WARNING: 'e2e' is deprecated. Use 'smoke' instead."
+    "${ROOT}/scripts/smoke.sh" "$@"
     ;;
   *)
     usage
