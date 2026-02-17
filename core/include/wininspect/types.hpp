@@ -48,4 +48,14 @@ struct Event {
   std::string property; // for "window.changed"
 };
 
+struct UIElementInfo {
+  std::string automation_id;
+  std::string name;
+  std::string class_name;
+  std::string control_type;
+  Rect bounding_rect{};
+  bool enabled = false;
+  bool visible = false;
+};
+
 } // namespace wininspect

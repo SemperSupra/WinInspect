@@ -21,6 +21,12 @@ public:
                     uint64_t lparam) override;
   bool send_input(const std::vector<uint8_t> &raw_input_data) override;
 
+  bool send_mouse_click(int x, int y, int button) override;
+  bool send_key_press(int vk) override;
+  bool send_text(const std::string &text) override;
+
+  std::vector<UIElementInfo> inspect_ui_elements(hwnd_u64 parent) override;
+
   std::vector<Event> poll_events(const Snapshot &old_snap,
                                  const Snapshot &new_snap) override;
 };
