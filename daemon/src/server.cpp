@@ -27,6 +27,7 @@ struct ServerState {
   std::map<std::string, Snapshot> snaps;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
   static constexpr size_t MAX_SNAPSHOTS = 1000; // Increased limit
+  bool auth_enabled = false;
 };
 
 struct ClientSession {
@@ -106,8 +107,8 @@ void handle_client(HANDLE hPipe, ServerState* st, IBackend* backend, bool read_o
           std::lock_guard<std::mutex> lk(st->mu);
           o["active_snapshots"] = (double)st->snaps.size();
           o["max_snapshots"] = (double)ServerState::MAX_SNAPSHOTS;
+        o["auth_enabled"] = st->auth_enabled;
         }
-        o["auth_enabled"] = !auth_keys_u8.empty();
         o["version"] = "1.0.0";
         resp.ok = true;
         resp.result = o;
@@ -192,7 +193,7 @@ void handle_client(HANDLE hPipe, ServerState* st, IBackend* backend, bool read_o
   CloseHandle(hPipe);
 }
 
-void run_server(std::atomic<bool>* running, ServerState* st, IBackend* backend) {
+void run_server(std::atomic<bool>* running, ServerState* st, IBackend* backend, bool read_only) {
   while (running->load()) {
     HANDLE hPipe = CreateNamedPipeW(
       PIPE_NAME,
@@ -234,12 +235,6 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
-  ServerState st;
-  Win32Backend backend;
-  std::atomic<bool> running{true};
-
-  std::thread server_thread(run_server, &running, &st, &backend, read_only);
-
   // Start TCP server for cross-environment access (Host <-> Guest, Host <-> Wine)
   std::string auth_keys_u8;
   if (!auth_keys.empty()) {
@@ -247,6 +242,13 @@ int wmain(int argc, wchar_t** argv) {
       auth_keys_u8.resize(len);
       WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(), (int)auth_keys.size(), auth_keys_u8.data(), len, nullptr, nullptr);
   }
+
+  ServerState st;
+  st.auth_enabled = !auth_keys_u8.empty();
+  Win32Backend backend;
+  std::atomic<bool> running{true};
+
+  std::thread server_thread(run_server, &running, &st, &backend, read_only);
 
   std::thread([&, tcp_port, bind_public, auth_keys_u8, read_only]() {
     wininspectd::TcpServer tcp(tcp_port, &st, &backend);
