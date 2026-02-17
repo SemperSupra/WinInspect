@@ -27,6 +27,15 @@ run_local_build() {
 
 run_local_test() {
   ctest --test-dir "${ROOT}/build" -C Release --output-on-failure
+
+  if command -v go &> /dev/null; then
+    if [ -d "${ROOT}/clients/portable" ]; then
+      echo "Running Go tests..."
+      pushd "${ROOT}/clients/portable" > /dev/null
+      go test ./...
+      popd > /dev/null
+    fi
+  fi
 }
 
 case "${cmd}" in

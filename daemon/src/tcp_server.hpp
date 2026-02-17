@@ -1,26 +1,28 @@
 #pragma once
 #include <atomic>
-#include <string>
 #include <functional>
+#include <string>
 
 namespace wininspect {
-    struct ServerState;
-    class IBackend;
-}
+struct ServerState;
+class IBackend;
+} // namespace wininspect
 
 namespace wininspectd {
 
 class TcpServer {
 public:
-    TcpServer(int port, wininspect::ServerState* state, wininspect::IBackend* backend);
-    ~TcpServer();
+  TcpServer(int port, wininspect::ServerState *state,
+            wininspect::IBackend *backend);
+  ~TcpServer();
 
-    void start(std::atomic<bool>* running, bool bind_public = false, const std::string& auth_keys = "", bool read_only = false);
+  void start(std::atomic<bool> *running, bool bind_public = false,
+             const std::string &auth_keys = "", bool read_only = false);
 
 private:
-    int port_;
-    wininspect::ServerState* state_;
-    wininspect::IBackend* backend_;
+  int port_;
+  wininspect::ServerState *state_;
+  wininspect::IBackend *backend_;
 };
 
 } // namespace wininspectd

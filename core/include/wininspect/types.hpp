@@ -8,7 +8,9 @@ namespace wininspect {
 using hwnd_u64 = std::uint64_t;
 inline constexpr std::string_view PROTOCOL_VERSION = "1.0.0";
 
-struct Rect { long left{}, top{}, right{}, bottom{}; };
+struct Rect {
+  long left{}, top{}, right{}, bottom{};
+};
 
 struct WindowInfo {
   hwnd_u64 hwnd{};
@@ -41,9 +43,9 @@ struct Snapshot {
 };
 
 struct Event {
-    std::string type; // "window.created", "window.destroyed", "window.changed"
-    hwnd_u64 hwnd{};
-    std::string property; // for "window.changed"
+  std::string type; // "window.created", "window.destroyed", "window.changed"
+  hwnd_u64 hwnd{};
+  std::string property; // for "window.changed"
 };
 
 } // namespace wininspect

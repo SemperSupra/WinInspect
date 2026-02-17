@@ -6,8 +6,8 @@ using namespace wininspect;
 
 DOCTEST_TEST_CASE("ensureVisible is idempotent on FakeBackend") {
   FakeBackend fb({
-    {1,0,0,"A","C1",true},
-    {2,0,0,"B","C2",false},
+      {1, 0, 0, "A", "C1", true},
+      {2, 0, 0, "B", "C2", false},
   });
 
   Snapshot s = fb.capture_snapshot();
