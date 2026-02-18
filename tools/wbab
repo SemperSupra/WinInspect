@@ -12,30 +12,18 @@ wbab (WinInspect)
 Usage: tools/wbab <lint|build|test|package|sign|smoke|discover|preflight> [args]
 
 This repository is scaffolded to work with WineBotAppBuilder (WBAB).
-If you add WBAB as a submodule at tools/WineBotAppBuilder, this wrapper can
-delegate to WBAB's runners.
-
-Fallback behavior (no submodule): run local CMake build/test on Windows.
+If WBAB submodule is present (tools/WineBotAppBuilder), build/test/package
+commands will run inside WBAB containers.
 
 EOF
 }
 
 run_local_build() {
-  cmake -S "${ROOT}" -B "${ROOT}/build" -DWININSPECT_BUILD_TESTS=ON
-  cmake --build "${ROOT}/build" --config Release
+  "${ROOT}/tools/winbuild-build.sh" "$@"
 }
 
 run_local_test() {
-  ctest --test-dir "${ROOT}/build" -C Release --output-on-failure
-
-  if command -v go &> /dev/null; then
-    if [ -d "${ROOT}/clients/portable" ]; then
-      echo "Running Go tests..."
-      pushd "${ROOT}/clients/portable" > /dev/null
-      go test ./...
-      popd > /dev/null
-    fi
-  fi
+  "${ROOT}/scripts/wbab-test.sh" "$@"
 }
 
 case "${cmd}" in
@@ -43,20 +31,67 @@ case "${cmd}" in
     "${ROOT}/scripts/preflight.sh"
     ;;
   lint)
+    # Linting is kept local for now to avoid container dependency issues (clang-format)
     "${ROOT}/scripts/lint.sh" "$@"
     ;;
   build)
-    "${ROOT}/tools/winbuild-build.sh" "$@"
+    if [[ -d "${WBAB_DIR}" ]]; then
+      echo "--- Running WBAB Containerized Build ---"
+      # Delegate to WBAB container build
+      export WBAB_BUILD_CMD="./tools/ci-build.sh"
+      "${WBAB_DIR}/tools/wbab" build "$@"
+
+      # Post-process artifacts (copy from out/ to dist/)
+      VERSION="${1:-dev}"
+      DIST_DIR="${ROOT}/dist"
+      mkdir -p "${DIST_DIR}"
+
+      echo "--- Post-processing Artifacts ---"
+      # wbab-build/ci-build puts them in out/
+      # We need to mimic tools/winbuild-build.sh naming:
+      cp "${ROOT}/out/wininspectd.exe" "${DIST_DIR}/wininspectd-${VERSION}-win-x64.exe" 2>/dev/null || true
+      cp "${ROOT}/out/wininspect.exe" "${DIST_DIR}/wininspect-${VERSION}-win-x64.exe" 2>/dev/null || true
+      cp "${ROOT}/out/wininspect-gui.exe" "${DIST_DIR}/wininspect-gui-${VERSION}-win-x64.exe" 2>/dev/null || true
+
+      # Run Go build locally
+      echo "--- Building Portable CLI (Go) Locally ---"
+      if command -v go &> /dev/null; then
+          if [ -d "${ROOT}/clients/portable" ]; then
+              pushd "${ROOT}/clients/portable" > /dev/null
+              GOOS=linux GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-linux-x64"
+              GOOS=windows GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-win-x64.exe"
+              popd > /dev/null
+          fi
+      else
+          echo "Skipping Go build (compiler not found)."
+      fi
+    else
+      echo "WBAB submodule not found. Running local build..."
+      run_local_build "$@"
+    fi
     ;;
   test)
     if [[ -d "${WBAB_DIR}" ]]; then
-      "${ROOT}/scripts/wbab-test.sh" "$@"
+      echo "--- Running WBAB Containerized Test ---"
+      # Delegate to WBAB container test
+      # We use ctest on the build directory which is persisted in workspace
+      export WBAB_TEST_CMD="ctest --test-dir build -C Release --output-on-failure"
+      "${WBAB_DIR}/tools/wbab" test "$@"
     else
-      run_local_test
+      run_local_test "$@"
     fi
     ;;
   package)
-    "${ROOT}/tools/package-nsis.sh" "$@"
+    if [[ -d "${WBAB_DIR}" ]]; then
+       echo "--- Running WBAB Containerized Packaging ---"
+       # Delegate to WBAB container package
+       export WBAB_PACKAGE_CMD="./tools/package-nsis.sh"
+       # Tell package-nsis.sh to look for binaries in ../out (relative to tools/)
+       export BUILD_SRC="../out"
+       "${WBAB_DIR}/tools/wbab" package "$@"
+    else
+       "${ROOT}/tools/package-nsis.sh" "$@"
+    fi
     ;;
   sign)
     "${ROOT}/tools/sign-dev.sh" "$@"
