@@ -2,12 +2,12 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#include <UIAutomation.h>
+#include <comdef.h>
 #include <psapi.h>
 #include <string>
 #include <vector>
 #include <windows.h>
-#include <UIAutomation.h>
-#include <comdef.h>
 
 namespace wininspect {
 
@@ -30,7 +30,8 @@ static std::string w2u8(const std::wstring &ws) {
 }
 
 static std::string bstr_to_utf8(BSTR bstr) {
-  if (!bstr) return {};
+  if (!bstr)
+    return {};
   std::wstring ws(bstr, SysStringLen(bstr));
   return w2u8(ws);
 }
@@ -191,164 +192,174 @@ bool Win32Backend::send_input(const std::vector<uint8_t> &raw_input_data) {
 }
 
 bool Win32Backend::send_mouse_click(int x, int y, int button) {
-    // 0=left, 1=right, 2=middle
-    // Use absolute coordinates
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    if (sw == 0) sw = 1;
-    if (sh == 0) sh = 1;
+  // 0=left, 1=right, 2=middle
+  // Use absolute coordinates
+  int sw = GetSystemMetrics(SM_CXSCREEN);
+  int sh = GetSystemMetrics(SM_CYSCREEN);
+  if (sw == 0)
+    sw = 1;
+  if (sh == 0)
+    sh = 1;
 
-    // Normalize to 0-65535
-    int nx = (x * 65535) / sw;
-    int ny = (y * 65535) / sh;
+  // Normalize to 0-65535
+  int nx = (x * 65535) / sw;
+  int ny = (y * 65535) / sh;
 
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_MOUSE;
-    inputs[0].mi.dx = nx;
-    inputs[0].mi.dy = ny;
-    inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+  INPUT inputs[2] = {};
+  inputs[0].type = INPUT_MOUSE;
+  inputs[0].mi.dx = nx;
+  inputs[0].mi.dy = ny;
+  inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
 
-    if (button == 0) {
-        inputs[0].mi.dwFlags |= MOUSEEVENTF_LEFTDOWN;
-        inputs[1] = inputs[0];
-        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
-    } else if (button == 1) {
-        inputs[0].mi.dwFlags |= MOUSEEVENTF_RIGHTDOWN;
-        inputs[1] = inputs[0];
-        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_RIGHTUP;
-    } else if (button == 2) {
-        inputs[0].mi.dwFlags |= MOUSEEVENTF_MIDDLEDOWN;
-        inputs[1] = inputs[0];
-        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MIDDLEUP;
-    } else {
-        return false;
-    }
+  if (button == 0) {
+    inputs[0].mi.dwFlags |= MOUSEEVENTF_LEFTDOWN;
+    inputs[1] = inputs[0];
+    inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
+  } else if (button == 1) {
+    inputs[0].mi.dwFlags |= MOUSEEVENTF_RIGHTDOWN;
+    inputs[1] = inputs[0];
+    inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_RIGHTUP;
+  } else if (button == 2) {
+    inputs[0].mi.dwFlags |= MOUSEEVENTF_MIDDLEDOWN;
+    inputs[1] = inputs[0];
+    inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MIDDLEUP;
+  } else {
+    return false;
+  }
 
-    // Send click
-    return SendInput(2, inputs, sizeof(INPUT)) == 2;
+  // Send click
+  return SendInput(2, inputs, sizeof(INPUT)) == 2;
 }
 
 bool Win32Backend::send_key_press(int vk) {
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = (WORD)vk;
+  INPUT inputs[2] = {};
+  inputs[0].type = INPUT_KEYBOARD;
+  inputs[0].ki.wVk = (WORD)vk;
 
-    inputs[1] = inputs[0];
-    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+  inputs[1] = inputs[0];
+  inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
 
-    return SendInput(2, inputs, sizeof(INPUT)) == 2;
+  return SendInput(2, inputs, sizeof(INPUT)) == 2;
 }
 
 bool Win32Backend::send_text(const std::string &text) {
-    std::wstring wtext;
-    int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
-    if (len > 0) {
-        wtext.resize(len - 1);
-        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), len);
-    }
+  std::wstring wtext;
+  int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
+  if (len > 0) {
+    wtext.resize(len - 1);
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), len);
+  }
 
-    if (wtext.empty()) return true;
+  if (wtext.empty())
+    return true;
 
-    std::vector<INPUT> inputs;
-    inputs.reserve(wtext.size() * 2);
+  std::vector<INPUT> inputs;
+  inputs.reserve(wtext.size() * 2);
 
-    for (wchar_t c : wtext) {
-        INPUT i = {};
-        i.type = INPUT_KEYBOARD;
-        i.ki.wScan = c;
-        i.ki.dwFlags = KEYEVENTF_UNICODE;
-        inputs.push_back(i);
+  for (wchar_t c : wtext) {
+    INPUT i = {};
+    i.type = INPUT_KEYBOARD;
+    i.ki.wScan = c;
+    i.ki.dwFlags = KEYEVENTF_UNICODE;
+    inputs.push_back(i);
 
-        i.ki.dwFlags |= KEYEVENTF_KEYUP;
-        inputs.push_back(i);
-    }
+    i.ki.dwFlags |= KEYEVENTF_KEYUP;
+    inputs.push_back(i);
+  }
 
-    return SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT)) == inputs.size();
+  return SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT)) ==
+         inputs.size();
 }
 
 std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64 parent) {
-    std::vector<UIElementInfo> results;
+  std::vector<UIElementInfo> results;
 
-    // Attempt to initialize COM. If already initialized, it might fail but that's ok if we can create the instance.
-    HRESULT hrInit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    // Ignore result, just proceed to create instance.
+  // Attempt to initialize COM. If already initialized, it might fail but that's
+  // ok if we can create the instance.
+  HRESULT hrInit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  // Ignore result, just proceed to create instance.
 
-    IUIAutomation* pAutomation = NULL;
-    HRESULT hr = CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, IID_IUIAutomation, (void**)&pAutomation);
-    if (FAILED(hr)) {
-        // Log failure?
-        if (SUCCEEDED(hrInit)) CoUninitialize();
-        return results;
-    }
-
-    IUIAutomationElement* pRoot = NULL;
-    HWND hParent = from_u64(parent);
-    if (IsWindow(hParent)) {
-        hr = pAutomation->ElementFromHandle(hParent, &pRoot);
-    } else {
-        // If invalid handle, maybe use desktop? No, just return empty.
-    }
-
-    if (SUCCEEDED(hr) && pRoot) {
-        // Find children
-        IUIAutomationCondition* pTrueCondition = NULL;
-        pAutomation->CreateTrueCondition(&pTrueCondition);
-        IUIAutomationElementArray* pChildren = NULL;
-        if (pTrueCondition) {
-            pRoot->FindAll(TreeScope_Children, pTrueCondition, &pChildren);
-            pTrueCondition->Release();
-        }
-
-        if (pChildren) {
-            int length = 0;
-            pChildren->get_Length(&length);
-            for (int i = 0; i < length; i++) {
-                IUIAutomationElement* pNode = NULL;
-                if (SUCCEEDED(pChildren->GetElement(i, &pNode)) && pNode) {
-                    UIElementInfo info;
-
-                    BSTR bStr = NULL;
-                    if (SUCCEEDED(pNode->get_CurrentAutomationId(&bStr))) {
-                        info.automation_id = bstr_to_utf8(bStr);
-                        SysFreeString(bStr);
-                    }
-                    if (SUCCEEDED(pNode->get_CurrentName(&bStr))) {
-                        info.name = bstr_to_utf8(bStr);
-                        SysFreeString(bStr);
-                    }
-                    if (SUCCEEDED(pNode->get_CurrentClassName(&bStr))) {
-                        info.class_name = bstr_to_utf8(bStr);
-                        SysFreeString(bStr);
-                    }
-                    // Control type is int, convert to string?
-                    CONTROLTYPEID cType;
-                    if (SUCCEEDED(pNode->get_CurrentControlType(&cType))) {
-                         // Simple mapping or just raw ID
-                         info.control_type = std::to_string(cType);
-                    }
-
-                    RECT r = {};
-                    if (SUCCEEDED(pNode->get_CurrentBoundingRectangle(&r))) {
-                        info.bounding_rect = {r.left, r.top, r.right, r.bottom};
-                    }
-
-                    BOOL bVal = FALSE;
-                    if (SUCCEEDED(pNode->get_CurrentIsEnabled(&bVal))) info.enabled = bVal;
-                    if (SUCCEEDED(pNode->get_CurrentIsOffscreen(&bVal))) info.visible = !bVal; // IsOffscreen means NOT visible usually
-
-                    results.push_back(info);
-                    pNode->Release();
-                }
-            }
-            pChildren->Release();
-        }
-        pRoot->Release();
-    }
-
-    pAutomation->Release();
-    if (SUCCEEDED(hrInit)) CoUninitialize();
-
+  IUIAutomation *pAutomation = NULL;
+  HRESULT hr = CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER,
+                                IID_IUIAutomation, (void **)&pAutomation);
+  if (FAILED(hr)) {
+    // Log failure?
+    if (SUCCEEDED(hrInit))
+      CoUninitialize();
     return results;
+  }
+
+  IUIAutomationElement *pRoot = NULL;
+  HWND hParent = from_u64(parent);
+  if (IsWindow(hParent)) {
+    hr = pAutomation->ElementFromHandle(hParent, &pRoot);
+  } else {
+    // If invalid handle, maybe use desktop? No, just return empty.
+  }
+
+  if (SUCCEEDED(hr) && pRoot) {
+    // Find children
+    IUIAutomationCondition *pTrueCondition = NULL;
+    pAutomation->CreateTrueCondition(&pTrueCondition);
+    IUIAutomationElementArray *pChildren = NULL;
+    if (pTrueCondition) {
+      pRoot->FindAll(TreeScope_Children, pTrueCondition, &pChildren);
+      pTrueCondition->Release();
+    }
+
+    if (pChildren) {
+      int length = 0;
+      pChildren->get_Length(&length);
+      for (int i = 0; i < length; i++) {
+        IUIAutomationElement *pNode = NULL;
+        if (SUCCEEDED(pChildren->GetElement(i, &pNode)) && pNode) {
+          UIElementInfo info;
+
+          BSTR bStr = NULL;
+          if (SUCCEEDED(pNode->get_CurrentAutomationId(&bStr))) {
+            info.automation_id = bstr_to_utf8(bStr);
+            SysFreeString(bStr);
+          }
+          if (SUCCEEDED(pNode->get_CurrentName(&bStr))) {
+            info.name = bstr_to_utf8(bStr);
+            SysFreeString(bStr);
+          }
+          if (SUCCEEDED(pNode->get_CurrentClassName(&bStr))) {
+            info.class_name = bstr_to_utf8(bStr);
+            SysFreeString(bStr);
+          }
+          // Control type is int, convert to string?
+          CONTROLTYPEID cType;
+          if (SUCCEEDED(pNode->get_CurrentControlType(&cType))) {
+            // Simple mapping or just raw ID
+            info.control_type = std::to_string(cType);
+          }
+
+          RECT r = {};
+          if (SUCCEEDED(pNode->get_CurrentBoundingRectangle(&r))) {
+            info.bounding_rect = {r.left, r.top, r.right, r.bottom};
+          }
+
+          BOOL bVal = FALSE;
+          if (SUCCEEDED(pNode->get_CurrentIsEnabled(&bVal)))
+            info.enabled = bVal;
+          if (SUCCEEDED(pNode->get_CurrentIsOffscreen(&bVal)))
+            info.visible = !bVal; // IsOffscreen means NOT visible usually
+
+          results.push_back(info);
+          pNode->Release();
+        }
+      }
+      pChildren->Release();
+    }
+    pRoot->Release();
+  }
+
+  pAutomation->Release();
+  if (SUCCEEDED(hrInit))
+    CoUninitialize();
+
+  return results;
 }
 
 static std::vector<hwnd_u64> sorted(std::vector<hwnd_u64> v) {
@@ -404,7 +415,9 @@ bool Win32Backend::send_input(const std::vector<uint8_t> &) { return false; }
 bool Win32Backend::send_mouse_click(int, int, int) { return false; }
 bool Win32Backend::send_key_press(int) { return false; }
 bool Win32Backend::send_text(const std::string &) { return false; }
-std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64) { return {}; }
+std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64) {
+  return {};
+}
 
 std::vector<Event> Win32Backend::poll_events(const Snapshot &,
                                              const Snapshot &) {
