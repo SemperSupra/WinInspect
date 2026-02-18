@@ -121,8 +121,7 @@ std::vector<UIElementInfo> FakeBackend::inspect_ui_elements(hwnd_u64 parent) {
   return it->second;
 }
 
-void FakeBackend::add_fake_ui_element(hwnd_u64 parent,
-                                      const UIElementInfo &info) {
+void FakeBackend::add_fake_ui_element(hwnd_u64 parent, const UIElementInfo &info) {
   std::lock_guard<std::mutex> lk(mu_);
   ui_elements_[parent].push_back(info);
 }

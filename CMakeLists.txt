@@ -6,6 +6,10 @@ option(WININSPECT_BUILD_TESTS "Build tests" ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (WIN32)
+  add_compile_definitions(UNICODE _UNICODE)
+endif()
+
 add_library(wininspect_core
   core/src/core.cpp
   core/src/fake_backend.cpp

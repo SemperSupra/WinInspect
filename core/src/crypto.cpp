@@ -1,11 +1,14 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <bcrypt.h>
+#ifndef BCRYPT_ECD_PUBLIC_GENERIC_MAGIC
+#define BCRYPT_ECD_PUBLIC_GENERIC_MAGIC 0x50434345
+#endif
+#include <vector>
+#include <string>
+#include <sstream>
 #include <fstream>
 #include <iostream>
-#include <sstream>
-#include <string>
-#include <vector>
 #include <windows.h>
 
 #include "wininspect/crypto.hpp"
@@ -74,24 +77,22 @@ bool CryptoSession::compute_shared_secret(
     return false;
   }
 
-  BCRYPT_BUFFER_DESC derDesc = {0};
-  BCRYPT_BUFFER derBuffers[1] = {0};
-  derDesc.cBuffers = 1;
-  derDesc.pBuffers = derBuffers;
-  derDesc.ulVersion = BCRYPTBUFFER_VERSION;
-  derBuffers[0].BufferType = KDF_HASH_ALGORITHM;
-  derBuffers[0].cbBuffer =
-      (ULONG)((wcslen(BCRYPT_SHA256_ALGORITHM) + 1) * sizeof(wchar_t));
-  derBuffers[0].pvBuffer = (PVOID)BCRYPT_SHA256_ALGORITHM;
+    BCryptBufferDesc derDesc = { 0 };
+    BCryptBuffer derBuffers[1] = { 0 };
+    derDesc.cBuffers = 1;
+    derDesc.pBuffers = derBuffers;
+    derDesc.ulVersion = BCRYPTBUFFER_VERSION;
+    derBuffers[0].BufferType = KDF_HASH_ALGORITHM;
+    derBuffers[0].cbBuffer = (ULONG)((wcslen(BCRYPT_SHA256_ALGORITHM) + 1) * sizeof(wchar_t));
+    derBuffers[0].pvBuffer = (PVOID)BCRYPT_SHA256_ALGORITHM;
 
-  uint8_t derived[32];
-  ULONG cbDerived = 0;
-  if (BCryptDeriveKey(hSecret, BCRYPT_KDF_HASH, &derDesc, derived, 32,
-                      &cbDerived, 0) != 0) {
-    BCryptDestroySecret(hSecret);
-    BCryptDestroyKey(hRemoteKey);
-    return false;
-  }
+    uint8_t derived[32];
+    ULONG cbDerived = 0;
+    if (BCryptDeriveKey(hSecret, BCRYPT_KDF_HASH, &derDesc, derived, 32, &cbDerived, 0) != 0) {
+        BCryptDestroySecret(hSecret);
+        BCryptDestroyKey(hRemoteKey);
+        return false;
+    }
 
   BCryptDestroySecret(hSecret);
   BCryptDestroyKey(hRemoteKey);
