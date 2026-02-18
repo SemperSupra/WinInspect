@@ -4,10 +4,6 @@
   !define VERSION "dev"
 !endif
 
-!ifndef BUILD_SRC
-  !define BUILD_SRC "..\build\Release"
-!endif
-
 Name "WinInspect ${VERSION}"
 OutFile "..\\dist\\WinInspect-Installer.exe"
 InstallDir "$PROGRAMFILES64\\WinInspect"
@@ -31,9 +27,9 @@ Section "WinInspect Core" SecCore
   SetOutPath "$INSTDIR"
   
   ; Binaries (assuming they are in build/Release/)
-  File "${BUILD_SRC}\wininspectd.exe"
-  File "${BUILD_SRC}\wininspect.exe"
-  File "${BUILD_SRC}\wininspect-gui.exe"
+  File "..\build\Release\wininspectd.exe"
+  File "..\build\Release\wininspect.exe"
+  File "..\build\Release\wininspect-gui.exe"
   
   ; License
   File "..\LICENSE"
