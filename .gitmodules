@@ -1,0 +1,3 @@
+[submodule "tools/WineBotAppBuilder"]
+	path = tools/WineBotAppBuilder
+	url = https://github.com/SemperSupra/WineBotAppBuilder
