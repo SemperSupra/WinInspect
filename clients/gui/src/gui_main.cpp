@@ -16,23 +16,29 @@ using namespace wininspect_gui;
 // Simple pipe transport for the GUI
 class PipeTransport : public ITransport {
 public:
-    std::string request(const std::string& json) override {
-        HANDLE h = CreateFileW(L"\\\\.\\pipe\\wininspectd", GENERIC_READ|GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (h == INVALID_HANDLE_VALUE) return "{\"ok\":false,\"error\":\"no daemon\"}";
-        
-        uint32_t len = (uint32_t)json.size();
-        DWORD w = 0;
-        WriteFile(h, &len, 4, &w, nullptr);
-        WriteFile(h, json.data(), len, &w, nullptr);
+  std::string request(const std::string &json) override {
+    HANDLE h = CreateFileW(L"\.\pipe\wininspectd", GENERIC_READ | GENERIC_WRITE,
+                           0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+      return "{" ok ":false," error ":" no daemon "}";
 
-        uint32_t rlen = 0;
-        DWORD r = 0;
-        if (!ReadFile(h, &rlen, 4, &r, nullptr)) { CloseHandle(h); return "{\"ok\":false}"; }
-        std::string resp; resp.resize(rlen);
-        ReadFile(h, resp.data(), rlen, &r, nullptr);
-        CloseHandle(h);
-        return resp;
+    uint32_t len = (uint32_t)json.size();
+    DWORD w = 0;
+    WriteFile(h, &len, 4, &w, nullptr);
+    WriteFile(h, json.data(), len, &w, nullptr);
+
+    uint32_t rlen = 0;
+    DWORD r = 0;
+    if (!ReadFile(h, &rlen, 4, &r, nullptr)) {
+      CloseHandle(h);
+      return "{" ok ":false}";
     }
+    std::string resp;
+    resp.resize(rlen);
+    ReadFile(h, resp.data(), rlen, &r, nullptr);
+    CloseHandle(h);
+    return resp;
+  }
 };
 
 class WinInspectWindow {
