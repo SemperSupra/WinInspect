@@ -4,6 +4,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <psapi.h>
 #include <string>
+#include <algorithm>
+#include <iterator>
 #include <vector>
 #include <windows.h>
 #include <UIAutomation.h>

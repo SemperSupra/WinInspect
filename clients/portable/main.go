@@ -23,8 +23,8 @@ type Request struct {
 }
 
 type Response struct {
-	ID     string          `json:"id"`
-	OK     bool            `json:"ok"`
+	ID    string          `json:"id"`
+	OK    bool            `json:"ok"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *ErrorDetail    `json:"error,omitempty"`
 }
@@ -107,14 +107,10 @@ func runCommand(addr, keyPath, method string, args []string) error {
 
 	params := make(map[string]interface{})
 	if method == "info" || method == "children" {
-		if len(args) < 1 {
-			return fmt.Errorf("missing hwnd")
-		}
+		if len(args) < 1 { return fmt.Errorf("missing hwnd") }
 		params["hwnd"] = args[0]
 	} else if method == "pick" {
-		if len(args) < 2 {
-			return fmt.Errorf("missing x y")
-		}
+		if len(args) < 2 { return fmt.Errorf("missing x y") }
 		params["x"] = args[0]
 		params["y"] = args[1]
 	}
@@ -140,9 +136,7 @@ func runCommand(addr, keyPath, method string, args []string) error {
 func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
 	// Recv Hello
 	helloData, err := recvRaw(conn)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	var hello map[string]interface{}
 	json.Unmarshal(helloData, &hello)
 
@@ -158,14 +152,10 @@ func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
 		"signature": "SSHSIG_STUB",
 	}
 	respData, _ := json.Marshal(resp)
-	if err := sendRaw(conn, respData); err != nil {
-		return nil, err
-	}
+	if err := sendRaw(conn, respData); err != nil { return nil, err }
 
 	authStatus, err := recvRaw(conn)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	if !strings.Contains(string(authStatus), "\"ok\":true") {
 		return nil, fmt.Errorf("auth failed")
 	}
@@ -187,9 +177,7 @@ func sendRaw(conn net.Conn, data []byte) error {
 func recvRaw(conn net.Conn) ([]byte, error) {
 	lenBuf := make([]byte, 4)
 	_, err := io.ReadFull(conn, lenBuf)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	length := binary.LittleEndian.Uint32(lenBuf)
 	data := make([]byte, length)
 	_, err = io.ReadFull(conn, data)
@@ -197,23 +185,36 @@ func recvRaw(conn net.Conn) ([]byte, error) {
 }
 
 func sendEncrypted(conn net.Conn, s *CryptoSession, data []byte) error {
-	nonce := make([]byte, 12) // In real version, increment s.nonce
-	ciphertext := s.aesGCM.Seal(nil, nonce, data, nil)
+	nonce := make([]byte, 12)
+	binary.LittleEndian.PutUint64(nonce, s.nonce)
+	s.nonce++
 
-	// Matches our C++ logic: [Nonce(12)][Tag(16)][Ciphertext(N)]
-	// Note: Seal returns [Ciphertext][Tag], we may need to reorder
-	return sendRaw(conn, ciphertext)
+	// Seal appends [Ciphertext][Tag] to dst (nil here, so new slice)
+	sealed := s.aesGCM.Seal(nil, nonce, data, nil)
+
+	// C++ Logic: [Nonce(12)][Tag(16)][Ciphertext(N)]
+	// Sealed is: [Ciphertext(N)][Tag(16)]
+	tagSize := 16
+	if len(sealed) < tagSize {
+		return fmt.Errorf("encryption error")
+	}
+
+	realCipher := sealed[:len(sealed)-tagSize]
+	tag := sealed[len(sealed)-tagSize:]
+
+	total := make([]byte, 12 + 16 + len(realCipher))
+	copy(total[0:12], nonce)
+	copy(total[12:28], tag)
+	copy(total[28:], realCipher)
+
+	return sendRaw(conn, total)
 }
 
 func recvEncrypted(conn net.Conn, s *CryptoSession) ([]byte, error) {
 	data, err := recvRaw(conn)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	// In this scaffold, decrypt is just returning the slice past 28 bytes
-	if len(data) < 28 {
-		return nil, fmt.Errorf("malformed packet")
-	}
+	if len(data) < 28 { return nil, fmt.Errorf("malformed packet") }
 	return data[28:], nil
 }
 

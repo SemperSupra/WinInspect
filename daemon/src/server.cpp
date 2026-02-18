@@ -199,8 +199,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
   CloseHandle(hPipe);
 }
 
-void run_server(std::atomic<bool> *running, ServerState *st,
-                IBackend *backend) {
+void run_server(std::atomic<bool>* running, ServerState* st, IBackend* backend, bool read_only) {
   while (running->load()) {
     HANDLE hPipe = CreateNamedPipeW(
         PIPE_NAME, PIPE_ACCESS_DUPLEX,
@@ -262,18 +261,6 @@ int wmain(int argc, wchar_t **argv) {
   std::atomic<bool> running{true};
 
   std::thread server_thread(run_server, &running, &st, &backend, read_only);
-
-  // Start TCP server for cross-environment access (Host <-> Guest, Host <->
-  // Wine)
-  std::string auth_keys_u8;
-  if (!auth_keys.empty()) {
-    int len = WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(),
-                                  (int)auth_keys.size(), nullptr, 0, nullptr,
-                                  nullptr);
-    auth_keys_u8.resize(len);
-    WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(), (int)auth_keys.size(),
-                        auth_keys_u8.data(), len, nullptr, nullptr);
-  }
 
   std::thread([&, tcp_port, bind_public, auth_keys_u8, read_only]() {
     wininspectd::TcpServer tcp(tcp_port, &st, &backend);

@@ -21,6 +21,52 @@
 
 static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
 
+struct Conn {
+    bool is_tcp = false;
+    SOCKET s = INVALID_SOCKET;
+    HANDLE hPipe = INVALID_HANDLE_VALUE;
+
+    bool send(const std::string& data) {
+        uint32_t len = (uint32_t)data.size();
+        if (is_tcp) {
+            if (::send(s, (const char*)&len, 4, 0) != 4) return false;
+            return ::send(s, data.data(), (int)len, 0) == (int)len;
+        } else {
+            DWORD w = 0;
+            if (!WriteFile(hPipe, &len, 4, &w, nullptr)) return false;
+            return WriteFile(hPipe, data.data(), len, &w, nullptr) != FALSE;
+        }
+    }
+
+    bool recv(std::string& out) {
+        uint32_t len = 0;
+        if (is_tcp) {
+            if (::recv(s, (char*)&len, 4, 0) != 4) return false;
+            out.resize(len);
+            uint32_t n = 0;
+            while (n < len) {
+                int r = ::recv(s, out.data() + n, (int)(len - n), 0);
+                if (r <= 0) return false;
+                n += r;
+            }
+            return true;
+        } else {
+            DWORD r = 0;
+            if (!ReadFile(hPipe, &len, 4, &r, nullptr)) return false;
+            out.resize(len);
+            if (!ReadFile(hPipe, out.data(), len, &r, nullptr)) return false;
+            return true;
+        }
+    }
+
+    void close() {
+        if (is_tcp && s != INVALID_SOCKET) { closesocket(s); s = INVALID_SOCKET; }
+        if (!is_tcp && hPipe != INVALID_HANDLE_VALUE) { CloseHandle(hPipe); hPipe = INVALID_HANDLE_VALUE; }
+    }
+
+    ~Conn() { close(); }
+};
+
 static std::string get_config_path() {
   const char *home = getenv("USERPROFILE");
   if (!home)
