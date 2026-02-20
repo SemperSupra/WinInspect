@@ -49,7 +49,7 @@ public:
     ~SafeHandle() { if (h_ != INVALID_HANDLE_VALUE && h_ != NULL) CloseHandle(h_); }
     SafeHandle(SafeHandle&& other) noexcept : h_(other.h_) { other.h_ = INVALID_HANDLE_VALUE; }
     SafeHandle& operator=(SafeHandle&& other) noexcept {
-        if (this != &other) {
+        if (this != static_cast<const void*>(&other)) {
             if (h_ != INVALID_HANDLE_VALUE && h_ != NULL) CloseHandle(h_);
             h_ = other.h_;
             other.h_ = INVALID_HANDLE_VALUE;
@@ -71,7 +71,7 @@ public:
     ~HKey() { if (h_ != NULL && h_ != HKEY_LOCAL_MACHINE && h_ != HKEY_CURRENT_USER && h_ != HKEY_CLASSES_ROOT && h_ != HKEY_USERS) RegCloseKey(h_); }
     HKey(HKey&& other) noexcept : h_(other.h_) { other.h_ = NULL; }
     HKey& operator=(HKey&& other) noexcept {
-        if (this != &other) {
+        if (this != static_cast<const void*>(&other)) {
             if (h_ != NULL && h_ != HKEY_LOCAL_MACHINE && h_ != HKEY_CURRENT_USER && h_ != HKEY_CLASSES_ROOT && h_ != HKEY_USERS) RegCloseKey(h_);
             h_ = other.h_;
             other.h_ = NULL;
@@ -93,7 +93,7 @@ public:
     ~ScHandle() { if (h_ != NULL) CloseServiceHandle(h_); }
     ScHandle(ScHandle&& other) noexcept : h_(other.h_) { other.h_ = NULL; }
     ScHandle& operator=(ScHandle&& other) noexcept {
-        if (this != &other) {
+        if (this != static_cast<const void*>(&other)) {
             if (h_ != NULL) CloseServiceHandle(h_);
             h_ = other.h_;
             other.h_ = NULL;

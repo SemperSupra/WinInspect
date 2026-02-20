@@ -26,16 +26,25 @@ struct ServerState {
   std::mutex mu;
   std::uint64_t snap_counter = 1;
   std::map<std::string, Snapshot> snaps;
+  std::map<std::string, int> pinned_counts;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
-  static constexpr size_t MAX_SNAPSHOTS = 1000; // Increased limit
+  static constexpr size_t MAX_SNAPSHOTS = 1000;
   std::atomic<int> active_connections{0};
   static constexpr int MAX_CONNECTIONS = 32;
+
+  struct PersistentSession {
+    std::string last_snap_id;
+    bool subscribed = false;
+    std::chrono::steady_clock::time_point last_activity;
+  };
+  std::map<std::string, PersistentSession> sessions;
 };
 
 struct ClientSession {
+  std::string id;
+  bool authenticated = false;
   std::string last_snap_id;
   bool subscribed = false;
-  std::vector<Event> pending_events;
 };
 
 } // namespace wininspect
@@ -53,14 +62,15 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
   ClientSession session;
   st->active_connections++;
 
+  // Handle auto-auth for local pipes if no keys set
+  if (auth_keys_u8.empty()) session.authenticated = true;
+
   // Ensure decrement on exit
   struct ConnGuard {
     std::atomic<int>& count;
     ~ConnGuard() { count--; }
   } guard{st->active_connections};
 
-  // Each request uses snapshot_id if provided; otherwise uses a new snapshot
-  // for pure calls.
   while (true) {
     wininspectd::PipeMessage m;
     if (!wininspectd::pipe_read_message(hPipe, m))
@@ -68,21 +78,47 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
     CoreResponse resp;
     bool canonical = false;
+    std::string pinned_sid;
 
     try {
       auto req = parse_request_json(m.json);
       resp.id = req.id;
 
+      // 1. Handshake Enforcement
+      if (!session.authenticated && req.method != "hello") {
+        resp.ok = false;
+        resp.error_code = "E_UNAUTHORIZED";
+        resp.error_message = "authentication required";
+        goto send;
+      }
+
+      // session_id in params for persistence
+      auto itsid = req.params.find("session_id");
+      if (itsid != req.params.end() && itsid->second.is_str()) {
+        std::string sid = itsid->second.as_str();
+        std::lock_guard<std::mutex> lk(st->mu);
+        if (st->sessions.count(sid)) {
+          auto &ps = st->sessions[sid];
+          session.id = sid;
+          session.last_snap_id = ps.last_snap_id;
+          session.subscribed = ps.subscribed;
+          ps.last_activity = std::chrono::steady_clock::now();
+        } else {
+          // New session
+          session.id = sid;
+          st->sessions[sid] = { "", false, std::chrono::steady_clock::now() };
+        }
+      }
+
       // Security: Check Read-Only mode
       if (read_only &&
-          (req.method == "window.postMessage" || req.method == "input.send")) {
+          (req.method == "window.postMessage" || req.method == "input.send" || req.method.find("reg.write") != std::string::npos)) {
         resp.ok = false;
         resp.error_code = "E_ACCESS_DENIED";
         resp.error_message = "daemon is running in read-only mode";
         goto send;
       }
 
-      // canonical flag in params
       auto itc = req.params.find("canonical");
       if (itc != req.params.end() && itc->second.is_bool())
         canonical = itc->second.as_bool();
@@ -96,37 +132,25 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           st->snaps.emplace(sid, std::move(s));
           st->lru_order.push_back(sid);
 
-          if (st->lru_order.size() > ServerState::MAX_SNAPSHOTS) {
+          while (st->lru_order.size() > ServerState::MAX_SNAPSHOTS) {
             std::string oldest = st->lru_order.front();
+            // Check pinning
+            if (st->pinned_counts[oldest] > 0) {
+               // Move to back of LRU to give it more time, don't evict yet
+               st->lru_order.pop_front();
+               st->lru_order.push_back(oldest);
+               continue; 
+            }
             st->lru_order.pop_front();
             st->snaps.erase(oldest);
+            st->pinned_counts.erase(oldest);
           }
         }
         json::Object o;
         o["snapshot_id"] = sid;
         resp.ok = true;
         resp.result = o;
-      } else if (req.method == "events.subscribe") {
-        session.subscribed = true;
-        resp.ok = true;
-        resp.result = json::Object{};
-      } else if (req.method == "events.unsubscribe") {
-        session.subscribed = false;
-        resp.ok = true;
-        resp.result = json::Object{};
-      } else if (req.method == "daemon.status") {
-        json::Object o;
-        {
-          std::lock_guard<std::mutex> lk(st->mu);
-          o["active_snapshots"] = (double)st->snaps.size();
-          o["max_snapshots"] = (double)ServerState::MAX_SNAPSHOTS;
-        }
-        o["auth_enabled"] = !auth_keys_u8.empty();
-        o["version"] = "1.0.0";
-        resp.ok = true;
-        resp.result = o;
       } else {
-        // Find snapshot
         Snapshot snap;
         const Snapshot *old_snap_ptr = nullptr;
         Snapshot old_snap_storage;
@@ -143,7 +167,8 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
             goto send;
           }
           snap = it->second;
-          // LRU Bump
+          pinned_sid = sid;
+          st->pinned_counts[sid]++;
           st->lru_order.remove(sid);
           st->lru_order.push_back(sid);
         } else {
@@ -158,13 +183,8 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           if (it != st->snaps.end()) {
             old_snap_storage = it->second;
             old_snap_ptr = &old_snap_storage;
-            // LRU Bump for old snapshot too
-            st->lru_order.remove(osid);
-            st->lru_order.push_back(osid);
           }
-        } else if (req.method == "events.poll" &&
-                   !session.last_snap_id.empty()) {
-          // Auto-diff against session last state
+        } else if (req.method == "events.poll" && !session.last_snap_id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);
           auto it = st->snaps.find(session.last_snap_id);
           if (it != st->snaps.end()) {
@@ -176,9 +196,6 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         resp = core.handle(req, snap, old_snap_ptr);
 
         if (req.method == "events.poll" && resp.ok) {
-          // In a real system, we'd generate a temporary ID or similar.
-          // For now, we capture current state as the 'last known' for next
-          // poll.
           Snapshot fresh = backend->capture_snapshot();
           std::string sid;
           {
@@ -186,8 +203,11 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
             sid = make_snap_id(st->snap_counter++);
             st->snaps.emplace(sid, fresh);
             st->lru_order.push_back(sid);
+            session.last_snap_id = sid;
+            if (!session.id.empty()) {
+              st->sessions[session.id].last_snap_id = sid;
+            }
           }
-          session.last_snap_id = sid;
         }
       }
 
@@ -200,8 +220,13 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
   send:
     auto out = serialize_response_json(resp, canonical);
-    if (!wininspectd::pipe_write_message(hPipe, out))
-      break;
+    wininspectd::pipe_write_message(hPipe, out);
+    
+    // Unpin
+    if (!pinned_sid.empty()) {
+      std::lock_guard<std::mutex> lk(st->mu);
+      st->pinned_counts[pinned_sid]--;
+    }
   }
 
   FlushFileBuffers(hPipe);
