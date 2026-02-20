@@ -2,34 +2,51 @@
 set -euo pipefail
 
 WORKSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="${WORKSPACE_DIR}/build"
 DIST_DIR="${WORKSPACE_DIR}/dist"
 VERSION="${1:-dev}"
+WBAB_IMAGE="ghcr.io/sempersupra/winebotappbuilder-winbuild:latest"
+GOFLOW_IMAGE="supragoflow-build:local"
 
 mkdir -p "${DIST_DIR}"
 
-echo "--- Building WinInspect Core & Win32 Clients (Version: ${VERSION}) ---"
-cmake -S "${WORKSPACE_DIR}" -B "${BUILD_DIR}" -DWININSPECT_BUILD_TESTS=ON
-cmake --build "${BUILD_DIR}" --config Release
+echo "--- Pulling WBAB Canonical Image ---"
+docker pull "${WBAB_IMAGE}"
 
-cp "${BUILD_DIR}/wininspectd.exe" "${DIST_DIR}/wininspectd-${VERSION}-win-x64.exe" 2>/dev/null || cp "${BUILD_DIR}/Release/wininspectd.exe" "${DIST_DIR}/wininspectd-${VERSION}-win-x64.exe"
-cp "${BUILD_DIR}/wininspect.exe" "${DIST_DIR}/wininspect-${VERSION}-win-x64.exe" 2>/dev/null || cp "${BUILD_DIR}/Release/wininspect.exe" "${DIST_DIR}/wininspect-${VERSION}-win-x64.exe"
-cp "${BUILD_DIR}/wininspect-gui.exe" "${DIST_DIR}/wininspect-gui-${VERSION}-win-x64.exe" 2>/dev/null || cp "${BUILD_DIR}/Release/wininspect-gui.exe" "${DIST_DIR}/wininspect-gui-${VERSION}-win-x64.exe"
+echo "--- Building C/C++ Components via WBAB ---"
+docker run --rm \
+    -v "${WORKSPACE_DIR}:/v" \
+    -w /v \
+    -e VERSION="${VERSION}" \
+    "${WBAB_IMAGE}" \
+    wbab-build
 
-echo "--- Building Portable CLI (Go) ---"
-if command -v go &> /dev/null; then
-    pushd "${WORKSPACE_DIR}/clients/portable" > /dev/null
-    
-    echo "  Building for Linux (x64)..."
-    GOOS=linux GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-linux-x64"
-    
-    echo "  Building for Windows (x64)..."
-    GOOS=windows GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-win-x64.exe"
-    
-    popd > /dev/null
-else
-    echo "Skipping Go build (compiler not found)."
-fi
+echo "--- Building Portable CLI via SupraGoFlow ---"
+# SupraGoFlow expects to run at the root of the Go module
+docker run --rm \
+    -v "${WORKSPACE_DIR}/clients/portable:/v" \
+    -v "${DIST_DIR}:/dist" \
+    -w /v \
+    -e GOOS=windows \
+    -e GOARCH=amd64 \
+    "${GOFLOW_IMAGE}" \
+    bash -c "go build -o /dist/wi-portable-${VERSION}-win-x64.exe"
+
+# Robustly find binaries generated in the container and move them to versioned names if needed
+# (Though the bash script above handles the Go CLI, we still need to collect the C++ ones)
+find_and_cp() {
+    local name=$1
+    local target=$2
+    local found=$(find "${WORKSPACE_DIR}/build" -name "${name}" -type f | head -n 1)
+    if [[ -n "${found}" ]]; then
+        cp "${found}" "${target}"
+    else
+        echo "WARNING: Could not find ${name}"
+    fi
+}
+
+find_and_cp "wininspectd.exe" "${DIST_DIR}/wininspectd-${VERSION}-win-x64.exe"
+find_and_cp "wininspect.exe" "${DIST_DIR}/wininspect-${VERSION}-win-x64.exe"
+find_and_cp "wininspect-gui.exe" "${DIST_DIR}/wininspect-gui-${VERSION}-win-x64.exe"
 
 echo "--- Build Complete ---"
 echo "Artifacts located in: ${DIST_DIR}"

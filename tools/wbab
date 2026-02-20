@@ -31,14 +31,20 @@ case "${cmd}" in
     "${ROOT}/scripts/preflight.sh"
     ;;
   lint)
-    # Linting is kept local for now to avoid container dependency issues (clang-format)
-    "${ROOT}/scripts/lint.sh" "$@"
+    if [[ -d "${WBAB_DIR}" ]]; then
+      echo "--- Running WBAB Containerized Lint ---"
+      export WBAB_LINT_CMD="/workspace/scripts/lint.sh"
+      "${WBAB_DIR}/tools/wbab" lint "$@"
+    else
+      # Fallback to local
+      "${ROOT}/scripts/lint.sh" "$@"
+    fi
     ;;
   build)
     if [[ -d "${WBAB_DIR}" ]]; then
       echo "--- Running WBAB Containerized Build ---"
       # Delegate to WBAB container build
-      export WBAB_BUILD_CMD="./tools/ci-build.sh"
+      export WBAB_BUILD_CMD="/workspace/tools/ci-build.sh"
       "${WBAB_DIR}/tools/wbab" build "$@"
 
       # Post-process artifacts (copy from out/ to dist/)
@@ -53,17 +59,31 @@ case "${cmd}" in
       cp "${ROOT}/out/wininspect.exe" "${DIST_DIR}/wininspect-${VERSION}-win-x64.exe" 2>/dev/null || true
       cp "${ROOT}/out/wininspect-gui.exe" "${DIST_DIR}/wininspect-gui-${VERSION}-win-x64.exe" 2>/dev/null || true
 
-      # Run Go build locally
-      echo "--- Building Portable CLI (Go) Locally ---"
-      if command -v go &> /dev/null; then
-          if [ -d "${ROOT}/clients/portable" ]; then
-              pushd "${ROOT}/clients/portable" > /dev/null
-              GOOS=linux GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-linux-x64"
-              GOOS=windows GOARCH=amd64 go build -o "${DIST_DIR}/wi-portable-${VERSION}-win-x64.exe"
-              popd > /dev/null
-          fi
-      else
-          echo "Skipping Go build (compiler not found)."
+      # Run Go build via SupraGoFlow
+      echo "--- Building Portable CLI (Go) via SupraGoFlow ---"
+      GOFLOW_IMAGE="ghcr.io/sempersupra/supragoflow-build:latest"
+      # docker pull already done or will be done by docker run
+      
+      if [ -d "${ROOT}/clients/portable" ]; then
+          # Linux Build
+          docker run --rm \
+              -v "${ROOT}/clients/portable:/v" \
+              -v "${DIST_DIR}:/dist" \
+              -w /v \
+              -e GOOS=linux \
+              -e GOARCH=amd64 \
+              "${GOFLOW_IMAGE}" \
+              bash -c "go build -o /dist/wi-portable-${VERSION}-linux-x64"
+          
+          # Windows Build
+          docker run --rm \
+              -v "${ROOT}/clients/portable:/v" \
+              -v "${DIST_DIR}:/dist" \
+              -w /v \
+              -e GOOS=windows \
+              -e GOARCH=amd64 \
+              "${GOFLOW_IMAGE}" \
+              bash -c "go build -o /dist/wi-portable-${VERSION}-win-x64.exe"
       fi
     else
       echo "WBAB submodule not found. Running local build..."
@@ -75,7 +95,7 @@ case "${cmd}" in
       echo "--- Running WBAB Containerized Test ---"
       # Delegate to WBAB container test
       # We use ctest on the build directory which is persisted in workspace
-      export WBAB_TEST_CMD="ctest --test-dir build -C Release --output-on-failure"
+      export WBAB_TEST_CMD="ctest --test-dir /workspace/build -C Release --output-on-failure"
       "${WBAB_DIR}/tools/wbab" test "$@"
     else
       run_local_test "$@"
@@ -85,9 +105,10 @@ case "${cmd}" in
     if [[ -d "${WBAB_DIR}" ]]; then
        echo "--- Running WBAB Containerized Packaging ---"
        # Delegate to WBAB container package
-       export WBAB_PACKAGE_CMD="./tools/package-nsis.sh"
-       # Tell package-nsis.sh to look for binaries in ../out (relative to tools/)
-       export BUILD_SRC="../out"
+       VERSION="${1:-dev}"
+       # We run makensis directly inside the packager container.
+       # The .nsi script is in tools/, so BUILD_SRC relative to tools/ is ../out
+       export WBAB_PACKAGE_CMD="makensis -DVERSION=${VERSION} -DBUILD_SRC=../out tools/wininspect.nsi"
        "${WBAB_DIR}/tools/wbab" package "$@"
     else
        "${ROOT}/tools/package-nsis.sh" "$@"

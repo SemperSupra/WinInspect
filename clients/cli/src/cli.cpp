@@ -21,6 +21,68 @@
 
 static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
 
+struct Conn {
+  HANDLE hPipe = INVALID_HANDLE_VALUE;
+  SOCKET s = INVALID_SOCKET;
+  bool is_tcp = false;
+
+  void close() {
+    if (is_tcp) {
+      if (s != INVALID_SOCKET) {
+        closesocket(s);
+        s = INVALID_SOCKET;
+      }
+    } else {
+      if (hPipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(hPipe);
+        hPipe = INVALID_HANDLE_VALUE;
+      }
+    }
+  }
+
+  bool send(const std::string &m) {
+    if (is_tcp) {
+      uint32_t len = (uint32_t)m.size();
+      if (::send(s, (const char *)&len, 4, 0) <= 0)
+        return false;
+      if (::send(s, m.data(), (int)len, 0) <= 0)
+        return false;
+      return true;
+    } else {
+      DWORD written;
+      uint32_t len = (uint32_t)m.size();
+      if (!WriteFile(hPipe, &len, 4, &written, nullptr))
+        return false;
+      if (!WriteFile(hPipe, m.data(), (DWORD)len, &written, nullptr))
+        return false;
+      return true;
+    }
+  }
+
+  bool recv(std::string &m) {
+    if (is_tcp) {
+      uint32_t len;
+      int r = ::recv(s, (char *)&len, 4, 0);
+      if (r <= 0)
+        return false;
+      m.resize(len);
+      r = ::recv(s, m.data(), (int)len, 0);
+      if (r <= 0)
+        return false;
+      return true;
+    } else {
+      DWORD read;
+      uint32_t len;
+      if (!ReadFile(hPipe, &len, 4, &read, nullptr))
+        return false;
+      m.resize(len);
+      if (!ReadFile(hPipe, m.data(), (DWORD)len, &read, nullptr))
+        return false;
+      return true;
+    }
+  }
+};
+
 static std::string get_config_path() {
   const char *home = getenv("USERPROFILE");
   if (!home)
@@ -151,8 +213,39 @@ static int usage() {
             << "  top [--snapshot s-..]\n"
             << "  info <hwnd> [--snapshot s-..]\n"
             << "  children <hwnd> [--snapshot s-..]\n"
+            << "  tree [hwnd] [--snapshot s-..]\n"
             << "  pick <x> <y> [--snapshot s-..]\n"
-            << "  events-poll <new_snap_id> [old_snap_id]\n"
+            << "  highlight <hwnd>\n"
+            << "  set-prop <hwnd> <name> <value>\n"
+            << "  control-click <hwnd> <x> <y> [button]\n"
+            << "  control-send <hwnd> <text>\n"
+            << "  get-pixel <x> <y>\n"
+            << "  pixel-search <left> <top> <right> <bottom> <r> <g> <b> [variation]\n"
+            << "  capture <left> <top> <right> <bottom>\n"
+            << "  ps\n"
+            << "  kill <pid>\n"
+            << "  file-info <path>\n"
+            << "  file-read <path>\n"
+            << "  find-regex [title_regex] [class_regex]\n"
+            << "  reg-read <path>\n"
+            << "  reg-write <path> <name> <type> <data>\n"
+            << "  reg-delete <path> [name]\n"
+            << "  clip-read\n"
+            << "  clip-write <text>\n"
+            << "  svc-list\n"
+            << "  svc-status <name>\n"
+            << "  svc-control <name> <start|stop>\n"
+            << "  env-get\n"
+            << "  env-set <name> <value>\n"
+            << "  wine-drives\n"
+            << "  wine-overrides\n"
+            << "  mutex-check <name>\n"
+            << "  mutex-create <name> [own]\n"
+            << "  mem-read <pid> <address> <size>\n"
+            << "  mem-write <pid> <address> <base64_data>\n"
+            << "  image-match <left> <top> <right> <bottom> <base64_bmp>\n"
+            << "  input-hook <true|false>\n"
+            << "  events-poll <new_snap_id> [old_snap_id] [--wait-ms ms]\n"
             << "  events-subscribe\n"
             << "  events-unsubscribe\n"
             << "  watch\n"
@@ -161,6 +254,9 @@ static int usage() {
             << "  ensure-foreground <hwnd>\n"
             << "  post-message <hwnd> <msg> [wparam] [lparam]\n"
             << "  send-input <base64_data>\n"
+            << "  ui-inspect <hwnd>\n"
+            << "  ui-invoke <hwnd> <automation_id>\n"
+            << "  health\n"
             << "  config --key <path>\n";
   return 2;
 }
@@ -259,6 +355,27 @@ int main(int argc, char **argv) {
     return send_and_print("window.listChildren");
   }
 
+  if (cmd == "tree") {
+    if (args.size() >= 2 && args[1].rfind("0x", 0) == 0) {
+      params["hwnd"] = args[1];
+      for (size_t i = 2; i < args.size();)
+        if (!get_snapshot(i))
+          i++;
+    } else {
+      for (size_t i = 1; i < args.size();)
+        if (!get_snapshot(i))
+          i++;
+    }
+    return send_and_print("window.getTree");
+  }
+
+  if (cmd == "highlight") {
+    if (args.size() < 2)
+      return usage();
+    params["hwnd"] = args[1];
+    return send_and_print("window.highlight");
+  }
+
   if (cmd == "pick") {
     if (args.size() < 3)
       return usage();
@@ -270,12 +387,201 @@ int main(int argc, char **argv) {
     return send_and_print("window.pickAtPoint");
   }
 
+  if (cmd == "set-prop") {
+    if (args.size() < 4) return usage();
+    params["hwnd"] = args[1];
+    params["name"] = args[2];
+    params["value"] = args[3];
+    return send_and_print("window.setProperty");
+  }
+
+  if (cmd == "control-click") {
+    if (args.size() < 4) return usage();
+    params["hwnd"] = args[1];
+    params["x"] = std::stod(args[2]);
+    params["y"] = std::stod(args[3]);
+    if (args.size() > 4) params["button"] = std::stod(args[4]);
+    return send_and_print("window.controlClick");
+  }
+
+  if (cmd == "control-send") {
+    if (args.size() < 3) return usage();
+    params["hwnd"] = args[1];
+    params["text"] = args[2];
+    return send_and_print("window.controlSend");
+  }
+
+  if (cmd == "get-pixel") {
+    if (args.size() < 3) return usage();
+    params["x"] = std::stod(args[1]);
+    params["y"] = std::stod(args[2]);
+    return send_and_print("screen.getPixel");
+  }
+
+  if (cmd == "pixel-search") {
+    if (args.size() < 8) return usage();
+    params["left"] = std::stod(args[1]);
+    params["top"] = std::stod(args[2]);
+    params["right"] = std::stod(args[3]);
+    params["bottom"] = std::stod(args[4]);
+    params["r"] = std::stod(args[5]);
+    params["g"] = std::stod(args[6]);
+    params["b"] = std::stod(args[7]);
+    if (args.size() > 8) params["variation"] = std::stod(args[8]);
+    return send_and_print("screen.pixelSearch");
+  }
+
+  if (cmd == "capture") {
+    if (args.size() < 5) return usage();
+    params["left"] = std::stod(args[1]);
+    params["top"] = std::stod(args[2]);
+    params["right"] = std::stod(args[3]);
+    params["bottom"] = std::stod(args[4]);
+    return send_and_print("screen.capture");
+  }
+
+  if (cmd == "ps") {
+    return send_and_print("process.list");
+  }
+
+  if (cmd == "kill") {
+    if (args.size() < 2) return usage();
+    params["pid"] = std::stod(args[1]);
+    return send_and_print("process.kill");
+  }
+
+  if (cmd == "file-info") {
+    if (args.size() < 2) return usage();
+    params["path"] = args[1];
+    return send_and_print("file.getInfo");
+  }
+
+  if (cmd == "file-read") {
+    if (args.size() < 2) return usage();
+    params["path"] = args[1];
+    return send_and_print("file.read");
+  }
+
+  if (cmd == "find-regex") {
+    if (args.size() > 1) params["title_regex"] = args[1];
+    if (args.size() > 2) params["class_regex"] = args[2];
+    return send_and_print("window.findRegex");
+  }
+
+  if (cmd == "reg-read") {
+    if (args.size() < 2) return usage();
+    params["path"] = args[1];
+    return send_and_print("reg.read");
+  }
+
+  if (cmd == "reg-write") {
+    if (args.size() < 5) return usage();
+    params["path"] = args[1];
+    params["name"] = args[2];
+    params["type"] = args[3];
+    params["data"] = args[4];
+    return send_and_print("reg.write");
+  }
+
+  if (cmd == "reg-delete") {
+    if (args.size() < 2) return usage();
+    params["path"] = args[1];
+    if (args.size() > 2) params["name"] = args[2];
+    return send_and_print("reg.delete");
+  }
+
+  if (cmd == "clip-read") return send_and_print("clipboard.read");
+  
+  if (cmd == "clip-write") {
+    if (args.size() < 2) return usage();
+    params["text"] = args[1];
+    return send_and_print("clipboard.write");
+  }
+
+  if (cmd == "svc-list") return send_and_print("service.list");
+
+  if (cmd == "svc-status") {
+    if (args.size() < 2) return usage();
+    params["name"] = args[1];
+    return send_and_print("service.status");
+  }
+
+  if (cmd == "svc-control") {
+    if (args.size() < 3) return usage();
+    params["name"] = args[1];
+    params["action"] = args[2];
+    return send_and_print("service.control");
+  }
+
+  if (cmd == "env-get") return send_and_print("env.get");
+
+  if (cmd == "env-set") {
+    if (args.size() < 3) return usage();
+    params["name"] = args[1];
+    params["value"] = args[2];
+    return send_and_print("env.set");
+  }
+
+  if (cmd == "wine-drives") return send_and_print("wine.drives");
+  if (cmd == "wine-overrides") return send_and_print("wine.overrides");
+
+  if (cmd == "mutex-check") {
+    if (args.size() < 2) return usage();
+    params["name"] = args[1];
+    return send_and_print("sync.checkMutex");
+  }
+
+  if (cmd == "mutex-create") {
+    if (args.size() < 2) return usage();
+    params["name"] = args[1];
+    if (args.size() > 2) params["own"] = (args[2] == "true");
+    return send_and_print("sync.createMutex");
+  }
+
+  if (cmd == "mem-read") {
+    if (args.size() < 4) return usage();
+    params["pid"] = std::stod(args[1]);
+    params["address"] = (double)std::stoull(args[2], nullptr, 0);
+    params["size"] = std::stod(args[3]);
+    return send_and_print("mem.read");
+  }
+
+  if (cmd == "mem-write") {
+    if (args.size() < 4) return usage();
+    params["pid"] = std::stod(args[1]);
+    params["address"] = (double)std::stoull(args[2], nullptr, 0);
+    params["data_b64"] = args[3];
+    return send_and_print("mem.write");
+  }
+
+  if (cmd == "image-match") {
+    if (args.size() < 6) return usage();
+    params["left"] = std::stod(args[1]);
+    params["top"] = std::stod(args[2]);
+    params["right"] = std::stod(args[3]);
+    params["bottom"] = std::stod(args[4]);
+    params["sub_image_b64"] = args[5];
+    return send_and_print("image.match");
+  }
+
+  if (cmd == "input-hook") {
+    if (args.size() < 2) return usage();
+    params["enabled"] = (args[1] == "true");
+    return send_and_print("input.hook");
+  }
+
   if (cmd == "events-poll") {
     if (args.size() < 2)
       return usage();
     params["snapshot_id"] = args[1];
-    if (args.size() > 2)
+    if (args.size() > 2 && args[2].rfind("0x", 0) != 0 && args[2].find("--") == std::string::npos)
       params["old_snapshot_id"] = args[2];
+    
+    for (int i = 1; i < argc; ++i) {
+      if (std::string(argv[i]) == "--wait-ms" && i + 1 < argc) {
+        params["wait_ms"] = std::stod(argv[i+1]);
+      }
+    }
     return send_and_print("events.poll");
   }
 
@@ -345,6 +651,25 @@ int main(int argc, char **argv) {
       return usage();
     params["data_b64"] = args[1];
     return send_and_print("input.send");
+  }
+
+  if (cmd == "ui-inspect") {
+    if (args.size() < 2)
+      return usage();
+    params["hwnd"] = args[1];
+    return send_and_print("ui.inspect");
+  }
+
+  if (cmd == "ui-invoke") {
+    if (args.size() < 3)
+      return usage();
+    params["hwnd"] = args[1];
+    params["automation_id"] = args[2];
+    return send_and_print("ui.invoke");
+  }
+
+  if (cmd == "health") {
+    return send_and_print("daemon.health");
   }
 
   if (cmd == "config") {

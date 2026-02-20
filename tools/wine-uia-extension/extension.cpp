@@ -1,4 +1,4 @@
-#include <UIAutomation.h>
+#include <uiautomation.h>
 #include <atomic>
 #include <iostream>
 #include <string>

@@ -48,3 +48,48 @@ DOCTEST_TEST_CASE("trace replay: two_clients_non_interference") {
   DOCTEST_REQUIRE(r2.ok);
   DOCTEST_REQUIRE_EQ(r2.result.as_obj().at("changed").as_bool(), false);
 }
+
+DOCTEST_TEST_CASE("trace replay: uia_recursive_tree") {
+  auto trace = wininspect::json::parse(
+                   read_file("formal/traces/uia_recursive_tree.json"))
+                   .as_obj();
+  
+  FakeBackend fb({});
+  // In a real replay we would populate the fake backend based on the trace 
+  // 'initial_world' or specific step mocks. For now, we simulate the response 
+  // to verify the core serializes correctly.
+  
+  UIElementInfo root;
+  root.automation_id = "root_pane";
+  root.name = "Root Pane";
+  root.control_type = "50033";
+  root.bounding_rect = {0, 0, 800, 600};
+  root.enabled = true;
+  root.visible = true;
+  
+  UIElementInfo child;
+  child.automation_id = "submit_btn";
+  child.name = "Submit";
+  child.control_type = "50000";
+  child.bounding_rect = {100, 100, 200, 130};
+  child.enabled = true;
+  child.visible = true;
+  
+  root.children.push_back(child);
+  fb.add_fake_ui_element(0x1001, root);
+  
+  CoreEngine core(&fb);
+  Snapshot s;
+  CoreRequest req;
+  req.id = "trace-uia-1";
+  req.method = "ui.inspect";
+  req.params["hwnd"] = "0x1001";
+  
+  CoreResponse resp = core.handle(req, s);
+  DOCTEST_REQUIRE(resp.ok);
+  
+  auto res = resp.result.as_arr()[0].as_obj();
+  DOCTEST_REQUIRE(res.at("automation_id").as_str() == "root_pane");
+  DOCTEST_REQUIRE(res.at("children").as_arr().size() == 1);
+  DOCTEST_REQUIRE(res.at("children").as_arr()[0].as_obj().at("automation_id").as_str() == "submit_btn");
+}

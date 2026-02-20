@@ -11,6 +11,7 @@
 #include "wininspect/core.hpp"
 #include "wininspect/fake_backend.hpp"
 #include "wininspect/win32_backend.hpp"
+#include "wininspect/util_win32.hpp"
 
 #include "tcp_server.hpp"
 #include "tray.hpp"
@@ -27,6 +28,8 @@ struct ServerState {
   std::map<std::string, Snapshot> snaps;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
   static constexpr size_t MAX_SNAPSHOTS = 1000; // Increased limit
+  std::atomic<int> active_connections{0};
+  static constexpr int MAX_CONNECTIONS = 32;
 };
 
 struct ClientSession {
@@ -44,9 +47,17 @@ const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
 std::string make_snap_id(std::uint64_t n) { return "s-" + std::to_string(n); }
 
 void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
-                   bool read_only) {
+                   bool read_only, const std::string& auth_keys_u8) {
+  CoInitGuard coinit;
   CoreEngine core(backend);
   ClientSession session;
+  st->active_connections++;
+
+  // Ensure decrement on exit
+  struct ConnGuard {
+    std::atomic<int>& count;
+    ~ConnGuard() { count--; }
+  } guard{st->active_connections};
 
   // Each request uses snapshot_id if provided; otherwise uses a new snapshot
   // for pure calls.
@@ -199,7 +210,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 }
 
 void run_server(std::atomic<bool> *running, ServerState *st,
-                IBackend *backend) {
+                IBackend *backend, bool read_only, std::string auth_keys_u8) {
   while (running->load()) {
     HANDLE hPipe = CreateNamedPipeW(
         PIPE_NAME, PIPE_ACCESS_DUPLEX,
@@ -217,29 +228,36 @@ void run_server(std::atomic<bool> *running, ServerState *st,
       continue;
     }
 
-    std::thread(handle_client, hPipe, st, backend, read_only).detach();
+    if (st->active_connections >= ServerState::MAX_CONNECTIONS) {
+      // Too many connections, drop this one
+      DisconnectNamedPipe(hPipe);
+      CloseHandle(hPipe);
+      continue;
+    }
+
+    std::thread(handle_client, hPipe, st, backend, read_only, auth_keys_u8).detach();
   }
 }
 
 } // namespace
 
-int wmain(int argc, wchar_t **argv) {
+int main(int argc, char **argv) {
   bool headless = false;
   bool bind_public = false;
   bool read_only = false;
-  std::wstring auth_keys;
+  std::string auth_keys;
   int tcp_port = 1985;
   for (int i = 1; i < argc; ++i) {
-    if (std::wstring(argv[i]) == L"--headless")
+    if (std::string(argv[i]) == "--headless")
       headless = true;
-    if (std::wstring(argv[i]) == L"--public")
+    if (std::string(argv[i]) == "--public")
       bind_public = true;
-    if (std::wstring(argv[i]) == L"--read-only")
+    if (std::string(argv[i]) == "--read-only")
       read_only = true;
-    if (std::wstring(argv[i]) == L"--auth-keys" && i + 1 < argc) {
+    if (std::string(argv[i]) == "--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
     }
-    if (std::wstring(argv[i]) == L"--port" && i + 1 < argc) {
+    if (std::string(argv[i]) == "--port" && i + 1 < argc) {
       tcp_port = std::stoi(argv[++i]);
     }
   }
@@ -248,20 +266,12 @@ int wmain(int argc, wchar_t **argv) {
   Win32Backend backend;
   std::atomic<bool> running{true};
 
-  std::thread server_thread(run_server, &running, &st, &backend, read_only);
+  std::string auth_keys_u8 = auth_keys;
+
+  std::thread server_thread(run_server, &running, &st, &backend, read_only, auth_keys_u8);
 
   // Start TCP server for cross-environment access (Host <-> Guest, Host <->
   // Wine)
-  std::string auth_keys_u8;
-  if (!auth_keys.empty()) {
-    int len = WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(),
-                                  (int)auth_keys.size(), nullptr, 0, nullptr,
-                                  nullptr);
-    auth_keys_u8.resize(len);
-    WideCharToMultiByte(CP_UTF8, 0, auth_keys.c_str(), (int)auth_keys.size(),
-                        auth_keys_u8.data(), len, nullptr, nullptr);
-  }
-
   std::thread([&, tcp_port, bind_public, auth_keys_u8, read_only]() {
     wininspectd::TcpServer tcp(tcp_port, &st, &backend);
     tcp.start(&running, bind_public, auth_keys_u8, read_only);

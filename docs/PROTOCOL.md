@@ -39,15 +39,38 @@ Error:
 ```
 
 ## Methods
-- `snapshot.capture`
-- `window.listTop`
-- `window.listChildren`
-- `window.getInfo`
-- `window.pickAtPoint`
-- `window.ensureVisible` (desired-state)
-- `window.ensureForeground` (desired-state)
-- `window.postMessage` (injection)
-- `input.send` (injection: raw base64 data)
-- `events.subscribe`
-- `events.unsubscribe`
-- `events.poll`
+- `snapshot.capture`: Captures a new global snapshot. Returns `snapshot_id`.
+- `window.listTop`: List top-level windows in a snapshot.
+- `window.listChildren`: List immediate children of a window.
+- `window.getInfo`: Get detailed metadata for a window handle.
+- `window.pickAtPoint`: Find window at screen coordinates `x,y`.
+- `window.ensureVisible`: Force a window to be shown/hidden.
+- `window.ensureForeground`: Bring a window to the front.
+- `window.postMessage`: Post a Win32 message to a window.
+- `input.send`: Send raw `INPUT` structures (base64).
+- `input.mouseClick`: High-level mouse click.
+- `input.keyPress`: High-level key press (VK code).
+- `input.text`: Send UTF-8 text as keyboard input.
+
+### UI Automation (UIA)
+- `ui.inspect`: Perform recursive UIA discovery on a window.
+  - Params: `hwnd`
+  - Returns: Tree of elements with `automation_id`, `name`, `control_type`, and `children`.
+- `ui.invoke`: Trigger the `Invoke` pattern on a specific element.
+  - Params: `hwnd`, `automation_id`
+  - Returns: `{"invoked": true}`
+
+### Events
+- `events.subscribe`: Enable event tracking for this session.
+- `events.unsubscribe`: Disable event tracking.
+- `events.poll`: Retrieve pending events.
+  - Behavior: If `old_snapshot_id` is not provided, the daemon compares the current state against the state at the time of the *last* poll for this session.
+  - Returns: Array of `{"type": "window.created|destroyed", "hwnd": "0x..."}`.
+
+## Event Subscription Model
+WinInspect uses a **State-Sync Polling** model for events. 
+1. Client calls `events.subscribe`.
+2. Client calls `events.poll` periodically.
+3. The daemon maintains a "last known state" for each subscribed client.
+4. On `poll`, the daemon captures a new snapshot, diffs it against the last known state, returns the diff, and updates the last known state.
+This ensures no events are missed even if the client polls slowly, and it avoids the complexity of server-side push in heterogeneous Wine environments.

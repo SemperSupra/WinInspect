@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <bcrypt.h>
 #include <fstream>
 #include <iostream>
@@ -74,8 +75,8 @@ bool CryptoSession::compute_shared_secret(
     return false;
   }
 
-  BCRYPT_BUFFER_DESC derDesc = {0};
-  BCRYPT_BUFFER derBuffers[1] = {0};
+  BCryptBufferDesc derDesc = {0};
+  BCryptBuffer derBuffers[1] = {0};
   derDesc.cBuffers = 1;
   derDesc.pBuffers = derBuffers;
   derDesc.ulVersion = BCRYPTBUFFER_VERSION;
@@ -101,7 +102,7 @@ bool CryptoSession::compute_shared_secret(
     return false;
   if (BCryptSetProperty(st->hAlgAES, BCRYPT_CHAINING_MODE,
                         (PUCHAR)BCRYPT_CHAIN_MODE_GCM,
-                        sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != 0)
+                        (ULONG)((wcslen(BCRYPT_CHAIN_MODE_GCM) + 1) * sizeof(wchar_t)), 0) != 0)
     return false;
 
   if (BCryptGenerateSymmetricKey(st->hAlgAES, &st->hSessionKey, nullptr, 0,
@@ -131,17 +132,20 @@ std::vector<uint8_t> CryptoSession::encrypt(const std::string &plaintext) {
   authInfo.cbTag = 16;
 
   ULONG cbCipher = 0;
-  BCryptEncrypt(st->hSessionKey, (PUCHAR)plaintext.data(),
-                (ULONG)plaintext.size(), &authInfo, nullptr, 0, nullptr, 0,
-                &cbCipher, 0);
+  if (BCryptEncrypt(st->hSessionKey, (PUCHAR)plaintext.data(),
+                    (ULONG)plaintext.size(), &authInfo, nullptr, 0, nullptr, 0,
+                    &cbCipher, 0) != 0)
+    return {};
 
   std::vector<uint8_t> out(12 + 16 + cbCipher);
   memcpy(out.data(), nonce, 12);
-  memcpy(out.data() + 12, tag, 16);
 
-  BCryptEncrypt(st->hSessionKey, (PUCHAR)plaintext.data(),
-                (ULONG)plaintext.size(), &authInfo, nullptr, 0, out.data() + 28,
-                cbCipher, &cbCipher, 0);
+  if (BCryptEncrypt(st->hSessionKey, (PUCHAR)plaintext.data(),
+                    (ULONG)plaintext.size(), &authInfo, nullptr, 0, out.data() + 28,
+                    cbCipher, &cbCipher, 0) != 0)
+    return {};
+
+  memcpy(out.data() + 12, tag, 16);
   return out;
 }
 
@@ -153,9 +157,14 @@ std::string CryptoSession::decrypt(const std::vector<uint8_t> &ciphertext) {
   BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
   BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
 
-  authInfo.pbNonce = (PUCHAR)ciphertext.data();
+  uint8_t nonce[12];
+  uint8_t tag[16];
+  memcpy(nonce, ciphertext.data(), 12);
+  memcpy(tag, ciphertext.data() + 12, 16);
+
+  authInfo.pbNonce = nonce;
   authInfo.cbNonce = 12;
-  authInfo.pbTag = (PUCHAR)ciphertext.data() + 12;
+  authInfo.pbTag = tag;
   authInfo.cbTag = 16;
 
   ULONG cbPlain = 0;
@@ -231,7 +240,7 @@ bool verify_ssh_sig(const std::vector<uint8_t> &message,
   // For BCrypt, we need to wrap the raw 32-byte pubkey in a BCRYPT_ECCKEY_BLOB
   std::vector<uint8_t> blob(sizeof(BCRYPT_ECCKEY_BLOB) + 32);
   PBCRYPT_ECCKEY_BLOB pBlob = (PBCRYPT_ECCKEY_BLOB)blob.data();
-  pBlob->dwMagic = BCRYPT_ECD_PUBLIC_GENERIC_MAGIC;
+  pBlob->dwMagic = BCRYPT_ECDH_PUBLIC_GENERIC_MAGIC;
   pBlob->cbKey = 32;
   memcpy(blob.data() + sizeof(BCRYPT_ECCKEY_BLOB), raw_pubkey.data(), 32);
 

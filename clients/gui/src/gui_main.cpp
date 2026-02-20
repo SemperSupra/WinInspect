@@ -1,10 +1,16 @@
 #ifdef _WIN32
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
 #define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <commctrl.h>
 #include <memory>
 #include <string>
 #include <vector>
-#include <windows.h>
 
 #include "viewmodel.hpp"
 #include "wininspect/tinyjson.hpp"
@@ -17,10 +23,10 @@ using namespace wininspect_gui;
 class PipeTransport : public ITransport {
 public:
   std::string request(const std::string &json) override {
-    HANDLE h = CreateFileW(L"\.\pipe\wininspectd", GENERIC_READ | GENERIC_WRITE,
+    HANDLE h = CreateFileW(L"\\\\.\\pipe\\wininspectd", GENERIC_READ | GENERIC_WRITE,
                            0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE)
-      return "{" ok ":false," error ":" no daemon "}";
+      return "{\"ok\":false,\"error\":\"no daemon\"}";
 
     uint32_t len = (uint32_t)json.size();
     DWORD w = 0;
@@ -31,7 +37,7 @@ public:
     DWORD r = 0;
     if (!ReadFile(h, &rlen, 4, &r, nullptr)) {
       CloseHandle(h);
-      return "{" ok ":false}";
+      return "{\"ok\":false}";
     }
     std::string resp;
     resp.resize(rlen);
@@ -201,8 +207,8 @@ private:
   std::vector<std::string> hwnd_storage_;
 };
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int nCmdShow) {
-  INITCOMMONCONTROLSEX icc{sizeof(icc),
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
+  INITCOMMONCONTROLSEX icc = {sizeof(icc),
                            ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES};
   InitCommonControlsEx(&icc);
 

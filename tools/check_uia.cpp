@@ -1,5 +1,5 @@
 #include <windows.h>
-#include <UIAutomation.h>
+#include <uiautomation.h>
 #include <iostream>
 #include <string>
 

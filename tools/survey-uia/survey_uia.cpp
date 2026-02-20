@@ -1,4 +1,4 @@
-#include <UIAutomation.h>
+#include <uiautomation.h>
 #include <iostream>
 #include <map>
 #include <string>

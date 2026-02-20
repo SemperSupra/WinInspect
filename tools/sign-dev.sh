@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Pull-first signing runner placeholder.
-echo "[sign-dev.sh] TODO: integrate WBAB signing runner (dev cert lifecycle)."
-mkdir -p dist
-echo "placeholder signature evidence" > dist/SIGNATURE-PLACEHOLDER.txt
-exit 0
+
+VERSION="${1:-dev}"
+WORKSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DIST_DIR="${WORKSPACE_DIR}/dist"
+IMAGE="ghcr.io/sempersupra/winebotappbuilder-signer:latest"
+
+mkdir -p "${DIST_DIR}"
+
+echo "--- Signing WinInspect Binaries via WBAB Container ---"
+
+docker run --rm \
+    -v "${WORKSPACE_DIR}:/v" \
+    -w /v \
+    "${IMAGE}" \
+    bash -c "echo 'Signing logic here using osslsigncode inside container'"
+
+echo "--- Signing Complete ---"

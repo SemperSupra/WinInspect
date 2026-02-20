@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(WinInspect LANGUAGES CXX)
 
+enable_testing()
+
 option(WININSPECT_BUILD_TESTS "Build tests" ON)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -20,7 +22,8 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
-  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid)
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt)
+  target_link_options(wininspect_core PUBLIC -static-libgcc -static-libstdc++)
 endif()
 
 if (WIN32)
@@ -31,20 +34,20 @@ if (WIN32)
     daemon/src/tcp_server.cpp
   )
   target_include_directories(wininspectd PRIVATE core/include third_party daemon/src)
-  target_link_libraries(wininspectd PRIVATE wininspect_core)
+  target_link_libraries(wininspectd PRIVATE wininspect_core ws2_32)
 
   add_executable(wininspect
     clients/cli/src/cli.cpp
   )
   target_include_directories(wininspect PRIVATE core/include third_party)
-  target_link_libraries(wininspect PRIVATE wininspect_core)
+  target_link_libraries(wininspect PRIVATE wininspect_core ws2_32)
 
   add_executable(wininspect-gui
     clients/gui/src/gui_main.cpp
     clients/gui/viewmodel/viewmodel.cpp
   )
   target_include_directories(wininspect-gui PRIVATE core/include third_party clients/gui/viewmodel)
-  target_link_libraries(wininspect-gui PRIVATE wininspect_core)
+  target_link_libraries(wininspect-gui PRIVATE wininspect_core comctl32)
 endif()
 
 if (WININSPECT_BUILD_TESTS)

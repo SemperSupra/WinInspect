@@ -1,0 +1,46 @@
+{
+  "name": "UIA Recursive Tree Discovery",
+  "description": "Canonical trace for a nested UI tree (Window -> Panel -> Button)",
+  "initial_world": {
+    "windows": [
+      {
+        "hwnd": "0x1001",
+        "title": "Test App",
+        "class": "TestClass",
+        "visible": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "id": "trace-uia-1",
+        "method": "ui.inspect",
+        "params": {
+          "hwnd": "0x1001"
+        }
+      },
+      "expected_result": [
+        {
+          "automation_id": "root_pane",
+          "name": "Root Pane",
+          "control_type": "50033",
+          "bounding_rect": { "left": 0, "top": 0, "right": 800, "bottom": 600 },
+          "enabled": true,
+          "visible": true,
+          "children": [
+            {
+              "automation_id": "submit_btn",
+              "name": "Submit",
+              "control_type": "50000",
+              "bounding_rect": { "left": 100, "top": 100, "right": 200, "bottom": 130 },
+              "enabled": true,
+              "visible": true,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

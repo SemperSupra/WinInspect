@@ -30,7 +30,7 @@ RequestExecutionLevel admin
 Section "WinInspect Core" SecCore
   SetOutPath "$INSTDIR"
   
-  ; Binaries (assuming they are in build/Release/)
+  ; Binaries
   File "${BUILD_SRC}\wininspectd.exe"
   File "${BUILD_SRC}\wininspect.exe"
   File "${BUILD_SRC}\wininspect-gui.exe"

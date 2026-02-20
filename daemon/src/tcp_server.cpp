@@ -6,6 +6,8 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <fstream>
+#include <wincrypt.h>
 
 #include "tcp_server.hpp"
 #include "wininspect/core.hpp"
@@ -13,6 +15,30 @@
 #include "wininspect/crypto.hpp"
 
 namespace wininspectd {
+
+static bool socket_read_all(SOCKET s, void *buf, uint32_t len) {
+  char *p = (char *)buf;
+  while (len > 0) {
+    int r = recv(s, p, (int)len, 0);
+    if (r <= 0)
+      return false;
+    p += r;
+    len -= r;
+  }
+  return true;
+}
+
+static bool socket_write_all(SOCKET s, const void *buf, uint32_t len) {
+  const char *p = (const char *)buf;
+  while (len > 0) {
+    int r = send(s, p, (int)len, 0);
+    if (r <= 0)
+      return false;
+    p += r;
+    len -= r;
+  }
+  return true;
+}
 
 static std::string base64_encode(const std::vector<uint8_t> &in) {
   static const char *b64 =
