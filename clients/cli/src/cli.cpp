@@ -169,17 +169,34 @@ static bool connect_daemon(Conn &conn, bool tcp, const std::string &host,
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
       return false;
+    
     conn.s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (conn.s == INVALID_SOCKET)
       return false;
+
+    u_long mode = 1;
+    ioctlsocket(conn.s, FIONBIO, &mode);
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short)port);
     inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
-    if (connect(conn.s, (sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    
+    connect(conn.s, (sockaddr *)&addr, sizeof(addr));
+
+    fd_set write_fds;
+    FD_ZERO(&write_fds);
+    FD_SET(conn.s, &write_fds);
+    timeval tv{2, 0};
+
+    if (select(0, NULL, &write_fds, NULL, &tv) <= 0) {
       closesocket(conn.s);
       return false;
     }
+
+    mode = 0;
+    ioctlsocket(conn.s, FIONBIO, &mode);
+
     conn.is_tcp = true;
     if (!perform_auth(conn)) {
       conn.close();
@@ -269,6 +286,7 @@ int main(int argc, char **argv) {
   bool use_tcp = false;
   std::string tcp_host = "127.0.0.1";
   int tcp_port = 1985;
+  std::string session_id_arg;
 
   std::vector<std::string> args;
   for (int i = 1; i < argc; ++i) {
@@ -285,6 +303,9 @@ int main(int argc, char **argv) {
         }
         i++;
       }
+    } else if (std::string(argv[i]) == "--session-id" && i + 1 < argc) {
+      session_id_arg = argv[i+1];
+      i++;
     } else {
       args.push_back(argv[i]);
     }
@@ -297,6 +318,9 @@ int main(int argc, char **argv) {
   using namespace wininspect::json;
   Object params;
   params["canonical"] = true;
+  if (!session_id_arg.empty()) {
+    params["session_id"] = session_id_arg;
+  }
 
   auto get_snapshot = [&](size_t &i) {
     if (i + 1 < args.size() && args[i] == "--snapshot") {
@@ -351,6 +375,13 @@ int main(int argc, char **argv) {
     addr.sin_addr.s_addr = INADDR_BROADCAST;
 
     std::string msg = "WININSPECT_DISCOVER";
+    sendto(s, msg.data(), (int)msg.size(), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    // Also try loopback directly as broadcast is often blocked/restricted in containers
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    sendto(s, msg.data(), (int)msg.size(), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    addr.sin_addr.s_addr = INADDR_ANY;
     sendto(s, msg.data(), (int)msg.size(), 0, (struct sockaddr *)&addr, sizeof(addr));
 
     std::cout << "Scanning for WinInspect daemons on port " << disc_port << "...\n";

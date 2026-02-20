@@ -6,6 +6,22 @@
 namespace wininspect {
 
 using hwnd_u64 = std::uint64_t;
+
+struct Hwnd {
+  hwnd_u64 val{};
+  explicit Hwnd(hwnd_u64 h = 0) : val(h) {}
+  bool operator==(const Hwnd& other) const { return val == other.val; }
+  bool operator<(const Hwnd& other) const { return val < other.val; }
+  bool is_valid() const { return val != 0; }
+  std::string to_string() const;
+};
+
+struct SessionID {
+  std::string val;
+  explicit SessionID(const std::string& s = "") : val(s) {}
+  bool empty() const { return val.empty(); }
+};
+
 inline constexpr std::string_view PROTOCOL_VERSION = "1.0.0";
 
 struct Rect {

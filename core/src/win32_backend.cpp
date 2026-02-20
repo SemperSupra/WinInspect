@@ -66,7 +66,7 @@ static std::string try_process_image_path(DWORD pid) {
     return out;
   wchar_t buf[32768];
   DWORD sz = (DWORD)(sizeof(buf) / sizeof(buf[0]));
-  if (QueryFullProcessImageNameW(h, 0, buf, &sz)) {
+  if (QueryFullProcessImageNameW((HANDLE)h, 0, buf, &sz)) {
     out = w2u8(std::wstring(buf, buf + sz));
   }
   return out;
@@ -778,7 +778,7 @@ std::string Win32Backend::service_status(const std::string &name) {
   SERVICE_STATUS_PROCESS ssp;
   DWORD bytes = 0;
   std::string status = "UNKNOWN";
-  if (QueryServiceStatusEx(hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+  if (QueryServiceStatusEx((SC_HANDLE)hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
     switch (ssp.dwCurrentState) {
       case SERVICE_RUNNING: status = "RUNNING"; break;
       case SERVICE_STOPPED: status = "STOPPED"; break;
@@ -803,10 +803,10 @@ bool Win32Backend::service_control(const std::string &name, const std::string &a
   DWORD target_state = (action == "start") ? SERVICE_RUNNING : SERVICE_STOPPED;
 
   if (action == "start") {
-    ok = StartServiceW(hSvc, 0, NULL) != FALSE;
+    ok = StartServiceW((SC_HANDLE)hSvc, 0, NULL) != FALSE;
   } else if (action == "stop") {
     SERVICE_STATUS status;
-    ok = ControlService(hSvc, SERVICE_CONTROL_STOP, &status) != FALSE;
+    ok = ControlService((SC_HANDLE)hSvc, SERVICE_CONTROL_STOP, &status) != FALSE;
   }
 
   if (ok) {
@@ -815,7 +815,7 @@ bool Win32Backend::service_control(const std::string &name, const std::string &a
     while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < 30) {
       SERVICE_STATUS_PROCESS ssp;
       DWORD bytes = 0;
-      if (QueryServiceStatusEx(hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+      if (QueryServiceStatusEx((SC_HANDLE)hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
         if (ssp.dwCurrentState == target_state) return true;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -912,7 +912,7 @@ bool Win32Backend::sync_create_mutex(const std::string &name, bool own) {
 
 // Advanced Automation
 std::optional<MemoryRegion> Win32Backend::mem_read(uint32_t pid, uint64_t address, size_t size) {
-  static constexpr size_t MAX_MEM_READ_SIZE = 1024 * 1024; // 1MB Limit
+  static constexpr size_t MAX_MEM_READ_SIZE = static_cast<size_t>(1024) * 1024; // 1MB Limit
   if (size > MAX_MEM_READ_SIZE) size = MAX_MEM_READ_SIZE;
 
   SafeHandle h = OpenProcess(PROCESS_VM_READ, FALSE, pid);
@@ -920,7 +920,7 @@ std::optional<MemoryRegion> Win32Backend::mem_read(uint32_t pid, uint64_t addres
 
   std::vector<uint8_t> buffer(size);
   SIZE_T read;
-  if (ReadProcessMemory(h, (LPCVOID)address, buffer.data(), (SIZE_T)size, &read)) {
+  if (ReadProcessMemory((HANDLE)h, reinterpret_cast<LPCVOID>(address), buffer.data(), (SIZE_T)size, &read)) {
     MemoryRegion mr;
     mr.address = address;
     buffer.resize(read);
@@ -935,7 +935,7 @@ bool Win32Backend::mem_write(uint32_t pid, uint64_t address, const std::vector<u
   if (!h.is_valid()) return false;
 
   SIZE_T written;
-  return WriteProcessMemory(h, (LPVOID)address, data.data(), (SIZE_T)data.size(), &written) != FALSE;
+  return WriteProcessMemory((HANDLE)h, reinterpret_cast<LPVOID>(address), data.data(), (SIZE_T)data.size(), &written) != FALSE;
 }
 
 std::optional<ImageMatchResult> Win32Backend::image_match(Rect region, const std::vector<uint8_t> &sub_image_bmp) {

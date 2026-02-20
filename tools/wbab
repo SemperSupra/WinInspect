@@ -33,8 +33,22 @@ case "${cmd}" in
   lint)
     if [[ -d "${WBAB_DIR}" ]]; then
       echo "--- Running WBAB Containerized Lint ---"
-      export WBAB_LINT_CMD="/workspace/scripts/lint.sh"
+      
+      # 1. C++ Linting via WinBuild
+      echo "[lint] Running C++ linting (clang-tidy)..."
+      # We use --header-filter to focus on our own headers and -checks=-* to start clean, 
+      # then add specific useful checks. We also skip system headers to avoid MinGW/Clang conflicts.
+      export WBAB_LINT_CMD="clang-tidy core/src/*.cpp daemon/src/*.cpp --checks=-*,bugprone-*,performance-*,readability-function-size --header-filter=core/include/.* -- -target x86_64-w64-mingw32 -fms-extensions -fms-compatibility -Icore/include -Ithird_party -I/usr/x86_64-w64-mingw32/include"
       "${WBAB_DIR}/tools/wbab" lint "$@"
+
+      # 2. Go Linting via SupraGoFlow
+      echo "[lint] Running Go linting (gofmt)..."
+      GOFLOW_IMAGE="ghcr.io/sempersupra/supragoflow-build:latest"
+      docker run --rm \
+          -v "${ROOT}/clients/portable:/v" \
+          -w /v \
+          "${GOFLOW_IMAGE}" \
+          bash -c "gofmt -l ."
     else
       # Fallback to local
       "${ROOT}/scripts/lint.sh" "$@"
@@ -62,10 +76,10 @@ case "${cmd}" in
       # Run Go build via SupraGoFlow
       echo "--- Building Portable CLI (Go) via SupraGoFlow ---"
       GOFLOW_IMAGE="ghcr.io/sempersupra/supragoflow-build:latest"
-      # docker pull already done or will be done by docker run
       
       if [ -d "${ROOT}/clients/portable" ]; then
           # Linux Build
+          echo "[build] Building Portable CLI (Linux x64)..."
           docker run --rm \
               -v "${ROOT}/clients/portable:/v" \
               -v "${DIST_DIR}:/dist" \
@@ -76,6 +90,7 @@ case "${cmd}" in
               bash -c "go build -o /dist/wi-portable-${VERSION}-linux-x64"
           
           # Windows Build
+          echo "[build] Building Portable CLI (Windows x64)..."
           docker run --rm \
               -v "${ROOT}/clients/portable:/v" \
               -v "${DIST_DIR}:/dist" \
@@ -92,11 +107,14 @@ case "${cmd}" in
     ;;
   test)
     if [[ -d "${WBAB_DIR}" ]]; then
-      echo "--- Running WBAB Containerized Test ---"
-      # Delegate to WBAB container test
-      # We use ctest on the build directory which is persisted in workspace
-      export WBAB_TEST_CMD="ctest --test-dir /workspace/build -C Release --output-on-failure"
+      echo "--- Running WBAB Containerized Core Tests ---"
+      # core tests (logic only) run in build container
+      export WBAB_TEST_CMD="ctest --test-dir /workspace/build -C Release -E test_discovery --output-on-failure"
       "${WBAB_DIR}/tools/wbab" test "$@"
+      
+      echo "--- Running WineBot Environment Integration Tests ---"
+      # Integration tests (networking/UIA) run in the real WineBot container via smoke.sh
+      ./scripts/smoke.sh
     else
       run_local_test "$@"
     fi

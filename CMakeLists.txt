@@ -72,4 +72,12 @@ if (WININSPECT_BUILD_TESTS)
   target_include_directories(test_gui_viewmodel PRIVATE core/include third_party clients/gui/viewmodel)
   target_link_libraries(test_gui_viewmodel PRIVATE wininspect_core)
   add_test(NAME test_gui_viewmodel COMMAND test_gui_viewmodel WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+  add_executable(test_discovery
+    daemon/src/test_discovery.cpp
+  )
+  target_include_directories(test_discovery PRIVATE core/include)
+  target_link_libraries(test_discovery PRIVATE ws2_32)
+  target_link_options(test_discovery PUBLIC -static-libgcc -static-libstdc++)
+  add_test(NAME test_discovery COMMAND test_discovery WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()

@@ -75,7 +75,7 @@ func main() {
 
 func usage() {
 	fmt.Println("Usage: wi-portable [flags] <command> [args]")
-	fmt.Println("Commands: capture, top, info <hwnd>, children <hwnd>, pick <x> <y>, status, config --key <path>")
+	fmt.Println("Commands: capture, top, tree, info, health, ps, reg-read, clip-read, find-regex, etc.")
 }
 
 func runCommand(addr, keyPath, method string, args []string) error {
@@ -93,12 +93,42 @@ func runCommand(addr, keyPath, method string, args []string) error {
 
 	// 2. Build Request
 	reqMethod := map[string]string{
-		"capture":  "snapshot.capture",
-		"top":      "window.listTop",
-		"info":     "window.getInfo",
-		"children": "window.listChildren",
-		"pick":     "window.pickAtPoint",
-		"status":   "daemon.status",
+		"capture":        "snapshot.capture",
+		"top":            "window.listTop",
+		"info":           "window.getInfo",
+		"children":       "window.listChildren",
+		"tree":           "window.getTree",
+		"pick":           "window.pickAtPoint",
+		"status":         "daemon.status",
+		"health":         "daemon.health",
+		"highlight":      "window.highlight",
+		"set-prop":       "window.setProperty",
+		"control-click":  "window.controlClick",
+		"control-send":   "window.controlSend",
+		"get-pixel":      "screen.getPixel",
+		"pixel-search":   "screen.pixelSearch",
+		"capture-region": "screen.capture",
+		"ps":             "process.list",
+		"kill":           "process.kill",
+		"file-info":      "file.getInfo",
+		"file-read":      "file.read",
+		"find-regex":     "window.findRegex",
+		"reg-read":       "reg.read",
+		"reg-write":      "reg.write",
+		"reg-delete":     "reg.delete",
+		"clip-read":      "clipboard.read",
+		"clip-write":     "clipboard.write",
+		"svc-list":       "service.list",
+		"svc-status":     "service.status",
+		"svc-control":    "service.control",
+		"env-get":        "env.get",
+		"env-set":        "env.set",
+		"wine-drives":    "wine.drives",
+		"wine-overrides": "wine.overrides",
+		"mutex-check":    "sync.checkMutex",
+		"mutex-create":   "sync.createMutex",
+		"mem-read":       "mem.read",
+		"mem-write":      "mem.write",
 	}[method]
 
 	if reqMethod == "" {
@@ -106,17 +136,54 @@ func runCommand(addr, keyPath, method string, args []string) error {
 	}
 
 	params := make(map[string]interface{})
-	if method == "info" || method == "children" {
-		if len(args) < 1 {
-			return fmt.Errorf("missing hwnd")
+	params["canonical"] = true
+
+	// Argument Mapping
+	switch method {
+	case "info", "children", "tree", "highlight":
+		if len(args) > 0 {
+			params["hwnd"] = args[0]
 		}
-		params["hwnd"] = args[0]
-	} else if method == "pick" {
+	case "pick", "get-pixel":
 		if len(args) < 2 {
 			return fmt.Errorf("missing x y")
 		}
 		params["x"] = args[0]
 		params["y"] = args[1]
+	case "set-prop":
+		if len(args) < 3 {
+			return fmt.Errorf("missing hwnd name value")
+		}
+		params["hwnd"] = args[0]
+		params["name"] = args[1]
+		params["value"] = args[2]
+	case "control-click":
+		if len(args) < 3 {
+			return fmt.Errorf("missing hwnd x y")
+		}
+		params["hwnd"] = args[0]
+		params["x"] = args[1]
+		params["y"] = args[2]
+	case "control-send":
+		if len(args) < 2 {
+			return fmt.Errorf("missing hwnd text")
+		}
+		params["hwnd"] = args[0]
+		params["text"] = args[1]
+	case "reg-read", "file-info", "file-read", "svc-status", "mutex-check", "mutex-create":
+		if len(args) < 1 {
+			return fmt.Errorf("missing argument")
+		}
+		params["path"] = args[0]
+		params["name"] = args[0]
+	case "reg-write":
+		if len(args) < 4 {
+			return fmt.Errorf("missing path name type data")
+		}
+		params["path"] = args[0]
+		params["name"] = args[1]
+		params["type"] = args[2]
+		params["data"] = args[3]
 	}
 
 	req := Request{ID: "p-1", Method: reqMethod, Params: params}
@@ -138,7 +205,7 @@ func runCommand(addr, keyPath, method string, args []string) error {
 }
 
 func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
-	// Recv Hello
+	// 1. Recv Hello/Challenge
 	helloData, err := recvRaw(conn)
 	if err != nil {
 		return nil, err
@@ -150,12 +217,20 @@ func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
 		return nil, fmt.Errorf("version mismatch: server %v, client %v", hello["version"], ProtocolVersion)
 	}
 
-	// Auth & Key Exchange (Simplified for this scaffold)
-	// In real version, we'd use ed25519 to sign the nonce
+	// 2. Decide if Auth is needed
+	// If server didn't send a nonce, it likely doesn't require auth
+	if hello["nonce"] == nil {
+		// Initialize Dummy Session (matches crypto_windows.cpp placeholder)
+		block, _ := aes.NewCipher(make([]byte, 32))
+		gcm, _ := cipher.NewGCM(block)
+		return &CryptoSession{aesGCM: gcm}, nil
+	}
+
+	// 3. Perform Auth & Key Exchange
 	resp := map[string]interface{}{
 		"version":   ProtocolVersion,
 		"identity":  "portable-client",
-		"signature": "SSHSIG_STUB",
+		"signature": "SSHSIG_STUB", // In real version, sign hello["nonce"]
 	}
 	respData, _ := json.Marshal(resp)
 	if err := sendRaw(conn, respData); err != nil {
@@ -170,7 +245,6 @@ func handshake(conn net.Conn, keyPath string) (*CryptoSession, error) {
 		return nil, fmt.Errorf("auth failed")
 	}
 
-	// Initialize Dummy Session (Matches crypto_windows.cpp placeholder)
 	block, _ := aes.NewCipher(make([]byte, 32))
 	gcm, _ := cipher.NewGCM(block)
 	return &CryptoSession{aesGCM: gcm}, nil

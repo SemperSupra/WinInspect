@@ -9,6 +9,7 @@
 #include <ws2tcpip.h>
 
 #include "pipe.hpp"
+#include "server_state.hpp"
 
 #include "wininspect/core.hpp"
 #include "wininspect/fake_backend.hpp"
@@ -19,50 +20,13 @@
 #include "tray.hpp"
 
 #include <list>
-
 #include <future>
+#include <memory>
 
 using namespace wininspect;
 
-namespace wininspect {
-
-struct ServerState {
-  std::mutex mu;
-  std::uint64_t snap_counter = 1;
-  std::map<std::string, Snapshot> snaps;
-  std::map<std::string, int> pinned_counts;
-  std::list<std::string> lru_order; // LRU: front is oldest, back is newest
-  
-  // Configurable limits
-  size_t max_snapshots = 1000;
-  int max_connections = 32;
-  int session_ttl_sec = 3600; // 1 hour default
-  std::atomic<int> active_connections{0};
-
-  // Temporal limits
-  int request_timeout_ms = 5000; // 5s watchdog
-  int poll_interval_ms = 100;
-  int max_wait_ms = 30000; // 30s max for long polls
-  int discovery_port = 1986; // Discovery UDP port
-
-  struct PersistentSession {
-    std::string last_snap_id;
-    bool subscribed = false;
-    std::chrono::steady_clock::time_point last_activity;
-  };
-  std::map<std::string, PersistentSession> sessions;
-};
-
-struct ClientSession {
-  std::string id;
-  bool authenticated = false;
-  std::string last_snap_id;
-  bool subscribed = false;
-};
-
-} // namespace wininspect
-
 namespace {
+
 
 const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
 
@@ -126,23 +90,22 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         goto send;
       }
 
-      // session_id in params for persistence
       auto itsid = req.params.find("session_id");
       if (itsid != req.params.end() && itsid->second.is_str()) {
-        std::string sid = itsid->second.as_str();
+        std::string sid_str = itsid->second.as_str();
         std::lock_guard<std::mutex> lk(st->mu);
-        if (st->sessions.count(sid)) {
-          auto &ps = st->sessions[sid];
-          session.id = sid;
+        if (st->sessions.count(sid_str)) {
+          auto &ps = st->sessions[sid_str];
+          session.id = SessionID(sid_str);
           session.last_snap_id = ps.last_snap_id;
           session.subscribed = ps.subscribed;
           ps.last_activity = std::chrono::steady_clock::now();
-          LOG_DEBUG("Recovered session: " + sid);
+          LOG_DEBUG("Recovered session: " + sid_str);
         } else {
           // New session
-          session.id = sid;
-          st->sessions[sid] = { "", false, std::chrono::steady_clock::now() };
-          LOG_DEBUG("Created persistent session: " + sid);
+          session.id = SessionID(sid_str);
+          st->sessions[sid_str] = { "", false, std::chrono::steady_clock::now() };
+          LOG_DEBUG("Created persistent session: " + sid_str);
         }
       }
 
@@ -252,7 +215,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
             st->lru_order.push_back(sid);
             session.last_snap_id = sid;
             if (!session.id.empty()) {
-              st->sessions[session.id].last_snap_id = sid;
+              st->sessions[session.id.val].last_snap_id = sid;
             }
           }
         }
@@ -283,7 +246,37 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
 void run_server(std::atomic<bool> *running, ServerState *st,
                 IBackend *backend, bool read_only, std::string auth_keys_u8) {
-  // ... existing code ...
+  LOG_INFO("Named Pipe server thread starting...");
+  while (running->load()) {
+    HANDLE hPipe = CreateNamedPipeW(
+        PIPE_NAME, PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, nullptr);
+
+    if (hPipe == INVALID_HANDLE_VALUE) {
+      LOG_ERROR("Failed to create Named Pipe: " + std::to_string(GetLastError()));
+      break;
+    }
+
+    BOOL ok = ConnectNamedPipe(hPipe, nullptr)
+                  ? TRUE
+                  : (GetLastError() == ERROR_PIPE_CONNECTED);
+    if (!ok) {
+      CloseHandle(hPipe);
+      continue;
+    }
+
+    LOG_DEBUG("Named Pipe connection accepted.");
+
+    if (st->active_connections >= st->max_connections) {
+      // Too many connections, drop this one
+      DisconnectNamedPipe(hPipe);
+      CloseHandle(hPipe);
+      continue;
+    }
+
+    std::thread(handle_client, hPipe, st, backend, read_only, auth_keys_u8).detach();
+  }
 }
 
 void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend) {
@@ -310,6 +303,7 @@ void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tc
     int r = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_addr_len);
     if (r > 0) {
       std::string msg(buf, r);
+      LOG_DEBUG("Discovery packet received: " + msg);
       if (msg == "WININSPECT_DISCOVER") {
         auto env = backend->get_env_metadata();
         json::Object resp;
@@ -390,66 +384,70 @@ int main(int argc, char **argv) {
     }
   }
 
-  ServerState st;
-  st.max_snapshots = (size_t)max_snaps;
-  st.max_connections = max_conns;
-  st.session_ttl_sec = session_ttl;
-  st.request_timeout_ms = req_timeout;
-  st.poll_interval_ms = poll_interval;
-  st.max_wait_ms = max_wait;
-  st.discovery_port = discovery_port;
+  auto st = std::make_unique<ServerState>();
+  st->max_snapshots = (size_t)max_snaps;
+  st->max_connections = max_conns;
+  st->session_ttl_sec = session_ttl;
+  st->request_timeout_ms = req_timeout;
+  st->poll_interval_ms = poll_interval;
+  st->max_wait_ms = max_wait;
+  st->discovery_port = discovery_port;
 
-  Win32Backend backend;
+  auto backend = std::make_unique<Win32Backend>();
   std::atomic<bool> running{true};
 
   LOG_INFO("WinInspect Daemon starting up...");
-  auto env = backend.get_env_metadata();
+  auto env = backend->get_env_metadata();
   LOG_INFO("Environment: " + env.at("os").as_str() + " (" + env.at("arch").as_str() + ")");
   if (env.count("wine_version")) LOG_INFO("Wine Version: " + env.at("wine_version").as_str());
 
   std::string auth_keys_u8 = auth_keys;
 
-  std::thread server_thread(run_server, &running, &st, &backend, read_only, auth_keys_u8);
+  // 1. Start discovery responder
+  LOG_INFO("Starting Discovery responder...");
+  struct DiscoveryArgs { std::atomic<bool>* running; ServerState* st; int port; IBackend* backend; };
+  auto d_args = new DiscoveryArgs{&running, st.get(), tcp_port, backend.get()};
+  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+    auto a = (DiscoveryArgs*)p;
+    run_discovery_responder(a->running, a->st, a->port, a->backend);
+    delete a;
+    return 0;
+  }, d_args, 0, NULL);
 
-  // Start discovery responder
-  std::thread discovery_thread(run_discovery_responder, &running, &st, tcp_port, &backend);
-  discovery_thread.detach();
-
-  // Start cleanup thread
-  std::thread cleanup_thread([&st, &running]() {
-    while (running.load()) {
-      std::this_thread::sleep_for(std::chrono::minutes(1));
-      cleanup_sessions(&st);
+  // 2. Start cleanup thread
+  LOG_INFO("Starting Cleanup thread...");
+  struct CleanupArgs { ServerState* st; std::atomic<bool>* running; };
+  auto c_args = new CleanupArgs{st.get(), &running};
+  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+    auto a = (CleanupArgs*)p;
+    while (a->running->load()) {
+      Sleep(60000);
+      cleanup_sessions(a->st);
     }
-  });
-  cleanup_thread.detach();
+    delete a;
+    return 0;
+  }, c_args, 0, NULL);
 
-  // Start TCP server for cross-environment access (Host <-> Guest, Host <->
-  // Wine)
-  std::thread([&, tcp_port, bind_public, auth_keys_u8, read_only]() {
-    wininspectd::TcpServer tcp(tcp_port, &st, &backend);
+  // 3. Start Named Pipe server (background)
+  LOG_INFO("Starting Named Pipe server (background)...");
+  struct ServerArgs { std::atomic<bool>* running; ServerState* st; IBackend* backend; bool ro; std::string keys; };
+  auto s_args = new ServerArgs{&running, st.get(), backend.get(), read_only, auth_keys_u8};
+  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+    auto a = (ServerArgs*)p;
+    run_server(a->running, a->st, a->backend, a->ro, a->keys);
+    delete a;
+    return 0;
+  }, s_args, 0, NULL);
+
+  // 4. Run TCP server (BLOCKING MAIN THREAD)
+  LOG_INFO("Starting TCP Server (blocking main thread)...");
+  try {
+    wininspectd::TcpServer tcp(tcp_port, st.get(), backend.get());
     tcp.start(&running, bind_public, auth_keys_u8, read_only);
-  }).detach();
-
-  if (!headless) {
-    wininspectd::TrayManager tray([&]() {
-      running = false;
-      // We use exit(0) to ensure the process terminates even if server_thread
-      // is blocked on ConnectNamedPipe
-      exit(0);
-    });
-
-    if (tray.init(GetModuleHandle(nullptr))) {
-      tray.run();
-    }
-  }
-
-  if (server_thread.joinable()) {
-    if (headless) {
-      server_thread.join();
-    } else {
-      server_thread.detach(); // if not headless, we likely exited via tray
-    }
+  } catch (const std::exception& e) {
+    LOG_ERROR("TCP Server fatal error: " + std::string(e.what()));
+  } catch (...) {
+    LOG_ERROR("TCP Server fatal error (unknown).");
   }
 
   return 0;

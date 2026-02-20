@@ -1,0 +1,1 @@
+{"id":"cli-1","ok":true,"result":{"arch":"x64","diagnostics":{"clipboard":true,"registry_write":true,"uia_available":true},"is_wine":true,"os":"windows (wine)","win_build":19043,"win_major":10,"win_minor":0,"wine_version":"10.0"}}

@@ -2,9 +2,9 @@
 #include <atomic>
 #include <functional>
 #include <string>
+#include "server_state.hpp"
 
 namespace wininspect {
-struct ServerState;
 class IBackend;
 } // namespace wininspect
 

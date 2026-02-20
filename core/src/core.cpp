@@ -2,8 +2,15 @@
 #include <sstream>
 #include <chrono>
 #include <thread>
+#include <iomanip>
 
 namespace wininspect {
+
+std::string Hwnd::to_string() const {
+  std::ostringstream oss;
+  oss << "0x" << std::hex << std::uppercase << val;
+  return oss.str();
+}
 
 static json::Value make_error(const std::string &code, const std::string &msg) {
   json::Object e;
@@ -69,16 +76,10 @@ static std::optional<hwnd_u64> parse_hwnd(const std::string &s) {
   return (hwnd_u64)v;
 }
 
-static std::string fmt_hwnd(hwnd_u64 h) {
-  std::ostringstream oss;
-  oss << "0x" << std::hex << std::uppercase << (std::uint64_t)h;
-  return oss.str();
-}
-
 static json::Object event_to_json(const Event &e) {
   json::Object o;
   o["type"] = e.type;
-  o["hwnd"] = fmt_hwnd(e.hwnd);
+  o["hwnd"] = Hwnd(e.hwnd).to_string();
   if (!e.property.empty())
     o["property"] = e.property;
   return o;
@@ -86,7 +87,7 @@ static json::Object event_to_json(const Event &e) {
 
 static json::Object window_node_to_json(const WindowNode &n) {
   json::Object o;
-  o["hwnd"] = fmt_hwnd(n.hwnd);
+  o["hwnd"] = Hwnd(n.hwnd).to_string();
   o["title"] = n.title;
   o["class_name"] = n.class_name;
   if (!n.children.empty()) {
@@ -100,9 +101,9 @@ static json::Object window_node_to_json(const WindowNode &n) {
 
 static json::Object window_info_to_json(const WindowInfo &wi) {
   json::Object o;
-  o["hwnd"] = fmt_hwnd(wi.hwnd);
-  o["parent"] = fmt_hwnd(wi.parent);
-  o["owner"] = fmt_hwnd(wi.owner);
+  o["hwnd"] = Hwnd(wi.hwnd).to_string();
+  o["parent"] = Hwnd(wi.parent).to_string();
+  o["owner"] = Hwnd(wi.owner).to_string();
   o["class_name"] = wi.class_name;
   o["title"] = wi.title;
 
@@ -130,8 +131,8 @@ static json::Object window_info_to_json(const WindowInfo &wi) {
   o["pid"] = (double)wi.pid;
   o["tid"] = (double)wi.tid;
 
-  o["style"] = fmt_hwnd((hwnd_u64)wi.style);
-  o["exstyle"] = fmt_hwnd((hwnd_u64)wi.exstyle);
+  o["style"] = Hwnd(wi.style).to_string();
+  o["exstyle"] = Hwnd(wi.exstyle).to_string();
 
   json::Array sf;
   for (const auto &s : wi.style_flags) sf.push_back(s);
@@ -263,7 +264,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       json::Array arr;
       for (auto h : top) {
         json::Object e;
-        e["hwnd"] = fmt_hwnd(h);
+        e["hwnd"] = Hwnd(h).to_string();
         arr.emplace_back(e);
       }
       resp.result = arr;
@@ -281,7 +282,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       json::Array arr;
       for (auto h : ch) {
         json::Object e;
-        e["hwnd"] = fmt_hwnd(h);
+        e["hwnd"] = Hwnd(h).to_string();
         arr.emplace_back(e);
       }
       resp.result = arr;
@@ -352,7 +353,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
         return resp;
       }
       json::Object o;
-      o["hwnd"] = fmt_hwnd(*h);
+      o["hwnd"] = Hwnd(*h).to_string();
       resp.result = o;
       return resp;
     }
@@ -683,7 +684,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       auto hwnds = backend_->find_windows_regex(t_re, c_re);
       json::Array arr;
       for (auto h : hwnds) {
-        json::Object e; e["hwnd"] = fmt_hwnd(h);
+        json::Object e; e["hwnd"] = Hwnd(h).to_string();
         arr.push_back(e);
       }
       resp.result = arr;

@@ -29,3 +29,19 @@ DOCTEST_TEST_CASE("ensureVisible is idempotent on FakeBackend") {
   DOCTEST_REQUIRE(obj.at("changed").is_bool());
   DOCTEST_REQUIRE_EQ(obj.at("changed").as_bool(), false);
 }
+
+DOCTEST_TEST_CASE("Discovery payload schema is correct") {
+  using namespace wininspect::json;
+  Object resp;
+  resp["type"] = std::string("announcement");
+  resp["port"] = 1985.0;
+  resp["os"] = std::string("windows");
+  resp["is_wine"] = true;
+  resp["hostname"] = std::string("test-host");
+
+  std::string out = dumps(Value(resp));
+  auto v = parse(out);
+  DOCTEST_REQUIRE(v.is_obj());
+  DOCTEST_REQUIRE(v.as_obj().at("type").as_str() == "announcement");
+  DOCTEST_REQUIRE(v.as_obj().at("hostname").as_str() == "test-host");
+}

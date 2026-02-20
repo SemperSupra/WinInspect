@@ -25,6 +25,11 @@ Logger& Logger::get() {
     return instance;
 }
 
+bool Logger::should_log(LogLevel level) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return level >= min_level_;
+}
+
 void Logger::log(LogLevel level, const std::string& msg) {
     std::lock_guard<std::mutex> lk(mu_);
     
@@ -35,9 +40,8 @@ void Logger::log(LogLevel level, const std::string& msg) {
     ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %X");
     std::string ts = ss.str();
 
-    std::string formatted = "[" + ts + "] [" + level_to_str(level) + "] " + msg;
-
     if (level >= min_level_) {
+        std::string formatted = "[" + ts + "] [" + level_to_str(level) + "] " + msg;
         std::cerr << formatted << std::endl;
 #ifdef _WIN32
         std::string win_msg = formatted + "\n";
@@ -45,8 +49,7 @@ void Logger::log(LogLevel level, const std::string& msg) {
 #endif
     }
 
-    LogMessage lm{level, ts, msg};
-    buffer_.push_back(lm);
+    buffer_.push_back({level, ts, msg});
     if (buffer_.size() > MAX_LOGS) {
         buffer_.erase(buffer_.begin());
     }
