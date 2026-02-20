@@ -73,6 +73,28 @@ static std::string try_process_image_path(DWORD pid) {
   return out;
 }
 
+Win32Backend::Win32Backend() {
+  HMODULE hntdll = GetModuleHandleW(L"ntdll.dll");
+  if (hntdll && GetProcAddress(hntdll, "wine_get_version")) {
+    is_wine_ = true;
+  }
+
+  // Use RtlGetVersion if available for accurate OS version
+  typedef LONG (WINAPI *RtlGetVersionPtr)(OSVERSIONINFOW*);
+  if (hntdll) {
+    auto pRtlGetVersion = (RtlGetVersionPtr)GetProcAddress(hntdll, "RtlGetVersion");
+    if (pRtlGetVersion) {
+      OSVERSIONINFOW osvi = {0};
+      osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOW);
+      if (pRtlGetVersion(&osvi) == 0) { // STATUS_SUCCESS
+        win_major_ = osvi.dwMajorVersion;
+        win_minor_ = osvi.dwMinorVersion;
+        win_build_ = osvi.dwBuildNumber;
+      }
+    }
+  }
+}
+
 Snapshot Win32Backend::capture_snapshot() {
   Snapshot s;
   EnumWindows(
@@ -1072,8 +1094,8 @@ static UIElementInfo get_element_info(IUIAutomationElement *pNode) {
 }
 
 static void walk_uia_tree(IUIAutomation *pAutomation, IUIAutomationElement *pRoot,
-                          std::vector<UIElementInfo> &results, int depth) {
-  if (depth > 5)
+                          std::vector<UIElementInfo> &results, int depth, int max_depth) {
+  if (depth > max_depth)
     return;
 
   ComPtr<IUIAutomationCondition> pTrueCondition;
@@ -1090,7 +1112,7 @@ static void walk_uia_tree(IUIAutomation *pAutomation, IUIAutomationElement *pRoo
       ComPtr<IUIAutomationElement> pNode;
       if (SUCCEEDED(pChildren->GetElement(i, &pNode)) && pNode) {
         UIElementInfo info = get_element_info(pNode);
-        walk_uia_tree(pAutomation, pNode, info.children, depth + 1);
+        walk_uia_tree(pAutomation, pNode, info.children, depth + 1, max_depth);
         results.push_back(info);
       }
     }
@@ -1113,7 +1135,8 @@ std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64 parent) {
   }
 
   if (SUCCEEDED(hr) && pRoot) {
-    walk_uia_tree(pAutomation, pRoot, results, 0);
+    int limit = is_wine_ ? 5 : 50;
+    walk_uia_tree(pAutomation, pRoot, results, 0, limit);
   }
 
   return results;
@@ -1170,18 +1193,32 @@ static std::vector<hwnd_u64> sorted(std::vector<hwnd_u64> v) {
 
 json::Object Win32Backend::get_env_metadata() {
   json::Object o;
-  o["os"] = "windows";
   
-  // Detect Wine
-  HMODULE hntdll = GetModuleHandleW(L"ntdll.dll");
-  if (hntdll && GetProcAddress(hntdll, "wine_get_version")) {
+  if (is_wine_) {
+    o["os"] = "windows (wine)";
     o["is_wine"] = true;
+    // We can't easily get the Wine string version here without re-querying, 
+    // but the constructor already set up the boolean. 
+    // Let's re-query the string just for the report if needed, or omit it.
+    // For completeness, we'll re-query the string:
+    HMODULE hntdll = GetModuleHandleW(L"ntdll.dll");
     typedef const char *(*p_wine_get_version)(void);
     auto p_version = (p_wine_get_version)GetProcAddress(hntdll, "wine_get_version");
     if (p_version) o["wine_version"] = std::string(p_version());
   } else {
+    if (win_build_ >= 22000) {
+      o["os"] = "windows 11";
+    } else if (win_major_ == 10) {
+      o["os"] = "windows 10";
+    } else {
+      o["os"] = "windows";
+    }
     o["is_wine"] = false;
   }
+
+  o["win_major"] = (double)win_major_;
+  o["win_minor"] = (double)win_minor_;
+  o["win_build"] = (double)win_build_;
 
 #ifdef _WIN64
   o["arch"] = "x64";

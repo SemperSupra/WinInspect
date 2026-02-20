@@ -5,6 +5,8 @@ namespace wininspect {
 
 class Win32Backend final : public IBackend {
 public:
+  Win32Backend();
+
   Snapshot capture_snapshot() override;
 
   std::vector<hwnd_u64> list_top(const Snapshot &s) override;
@@ -80,6 +82,12 @@ public:
 
   std::vector<Event> poll_events(const Snapshot &old_snap,
                                  const Snapshot &new_snap) override;
+
+private:
+  bool is_wine_ = false;
+  uint32_t win_major_ = 0;
+  uint32_t win_minor_ = 0;
+  uint32_t win_build_ = 0;
 };
 
 } // namespace wininspect
