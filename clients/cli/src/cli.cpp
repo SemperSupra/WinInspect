@@ -209,6 +209,7 @@ static std::string make_req(const std::string &id, const std::string &method,
 static int usage() {
   std::cerr << "Usage: wininspect <command> [args] [--tcp host:port]\n"
             << "Commands:\n"
+            << "  discover\n"
             << "  capture\n"
             << "  top [--snapshot s-..]\n"
             << "  info <hwnd> [--snapshot s-..]\n"
@@ -306,7 +307,7 @@ int main(int argc, char **argv) {
     return false;
   };
 
-  auto send_and_print = [&](const std::string &method) {
+  auto send_and_print = [&](const std::string &method) -> int {
     Conn conn;
     if (!connect_daemon(conn, use_tcp, tcp_host, tcp_port)) {
       std::cerr << "failed to connect to daemon\n";
@@ -323,6 +324,59 @@ int main(int argc, char **argv) {
     conn.close();
     return 0;
   };
+
+  if (cmd == "discover") {
+    int disc_port = 1986;
+    int disc_timeout_ms = 2000;
+
+    for (int i = 1; i < argc; ++i) {
+      if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
+        disc_port = std::stoi(argv[++i]);
+      }
+      if (std::string(argv[i]) == "--discovery-timeout" && i + 1 < argc) {
+        disc_timeout_ms = std::stoi(argv[++i]);
+      }
+    }
+
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    bool broadcast = true;
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char *)&broadcast, sizeof(broadcast));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((u_short)disc_port);
+    addr.sin_addr.s_addr = INADDR_BROADCAST;
+
+    std::string msg = "WININSPECT_DISCOVER";
+    sendto(s, msg.data(), (int)msg.size(), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    std::cout << "Scanning for WinInspect daemons on port " << disc_port << "...\n";
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(s, &fds);
+    timeval tv{disc_timeout_ms / 1000, (disc_timeout_ms % 1000) * 1000};
+
+    while (select(0, &fds, NULL, NULL, &tv) > 0) {
+      char buf[1024];
+      struct sockaddr_in from;
+      int from_len = sizeof(from);
+      int r = recvfrom(s, buf, sizeof(buf) - 1, 0, (struct sockaddr *)&from, &from_len);
+      if (r > 0) {
+        buf[r] = '\0';
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &from.sin_addr, ip, INET_ADDRSTRLEN);
+        std::cout << "[" << ip << "] " << buf << "\n";
+      }
+      FD_ZERO(&fds);
+      FD_SET(s, &fds);
+      tv = {0, 500000}; // quick check for more
+    }
+    closesocket(s);
+    return 0;
+  }
 
   if (cmd == "capture") {
     return send_and_print("snapshot.capture");

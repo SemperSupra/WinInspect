@@ -5,6 +5,8 @@
 #include <mutex>
 #include <thread>
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 #include "pipe.hpp"
 
@@ -41,6 +43,7 @@ struct ServerState {
   int request_timeout_ms = 5000; // 5s watchdog
   int poll_interval_ms = 100;
   int max_wait_ms = 30000; // 30s max for long polls
+  int discovery_port = 1986; // Discovery UDP port
 
   struct PersistentSession {
     std::string last_snap_id;
@@ -280,32 +283,51 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
 void run_server(std::atomic<bool> *running, ServerState *st,
                 IBackend *backend, bool read_only, std::string auth_keys_u8) {
-  while (running->load()) {
-    HANDLE hPipe = CreateNamedPipeW(
-        PIPE_NAME, PIPE_ACCESS_DUPLEX,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-        PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, nullptr);
+  // ... existing code ...
+}
 
-    if (hPipe == INVALID_HANDLE_VALUE)
-      break;
+void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend) {
+  SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s == INVALID_SOCKET) return;
 
-    BOOL ok = ConnectNamedPipe(hPipe, nullptr)
-                  ? TRUE
-                  : (GetLastError() == ERROR_PIPE_CONNECTED);
-    if (!ok) {
-      CloseHandle(hPipe);
-      continue;
-    }
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons((unsigned short)st->discovery_port);
+  addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (st->active_connections >= st->max_connections) {
-      // Too many connections, drop this one
-      DisconnectNamedPipe(hPipe);
-      CloseHandle(hPipe);
-      continue;
-    }
-
-    std::thread(handle_client, hPipe, st, backend, read_only, auth_keys_u8).detach();
+  if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    closesocket(s);
+    return;
   }
+
+  LOG_INFO("Discovery responder listening on UDP " + std::to_string(st->discovery_port));
+
+  while (running->load()) {
+    char buf[512];
+    struct sockaddr_in client_addr;
+    int client_addr_len = sizeof(client_addr);
+    int r = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_addr_len);
+    if (r > 0) {
+      std::string msg(buf, r);
+      if (msg == "WININSPECT_DISCOVER") {
+        auto env = backend->get_env_metadata();
+        json::Object resp;
+        resp["type"] = "announcement";
+        resp["port"] = (double)tcp_port;
+        resp["os"] = env.at("os").as_str();
+        resp["is_wine"] = env.at("is_wine").as_bool();
+        
+        char hostname_buf[256];
+        gethostname(hostname_buf, sizeof(hostname_buf));
+        resp["hostname"] = std::string(hostname_buf);
+
+        std::string out = json::dumps(resp);
+        sendto(s, out.data(), (int)out.size(), 0, (struct sockaddr *)&client_addr, client_addr_len);
+      }
+    }
+  }
+  closesocket(s);
 }
 
 } // namespace
@@ -322,6 +344,7 @@ int main(int argc, char **argv) {
   int req_timeout = 5000;
   int poll_interval = 100;
   int max_wait = 30000;
+  int discovery_port = 1986;
 
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--headless")
@@ -354,6 +377,9 @@ int main(int argc, char **argv) {
     if (std::string(argv[i]) == "--max-wait" && i + 1 < argc) {
       max_wait = std::stoi(argv[++i]);
     }
+    if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
+      discovery_port = std::stoi(argv[++i]);
+    }
     if (std::string(argv[i]) == "--log-level" && i + 1 < argc) {
       std::string lvl = argv[++i];
       if (lvl == "TRACE") Logger::get().set_level(LogLevel::TRACE);
@@ -371,6 +397,7 @@ int main(int argc, char **argv) {
   st.request_timeout_ms = req_timeout;
   st.poll_interval_ms = poll_interval;
   st.max_wait_ms = max_wait;
+  st.discovery_port = discovery_port;
 
   Win32Backend backend;
   std::atomic<bool> running{true};
@@ -383,6 +410,10 @@ int main(int argc, char **argv) {
   std::string auth_keys_u8 = auth_keys;
 
   std::thread server_thread(run_server, &running, &st, &backend, read_only, auth_keys_u8);
+
+  // Start discovery responder
+  std::thread discovery_thread(run_discovery_responder, &running, &st, tcp_port, &backend);
+  discovery_thread.detach();
 
   // Start cleanup thread
   std::thread cleanup_thread([&st, &running]() {
