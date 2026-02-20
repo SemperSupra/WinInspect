@@ -1,6 +1,7 @@
 #pragma once
 #include "backend.hpp"
 #include "tinyjson.hpp"
+#include "logger.hpp"
 #include <string>
 
 namespace wininspect {
@@ -17,6 +18,7 @@ struct CoreResponse {
   json::Value result;
   std::string error_code;
   std::string error_message;
+  json::Object metrics;
 
   json::Object to_json_obj(bool canonical) const;
 };

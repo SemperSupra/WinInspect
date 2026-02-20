@@ -20,6 +20,10 @@ json::Object CoreResponse::to_json_obj(bool /*canonical*/) const {
     o["result"] = result;
   else
     o["error"] = make_error(error_code, error_message);
+  
+  if (!metrics.empty()) {
+    o["metrics"] = metrics;
+  }
   return o;
 }
 
@@ -217,6 +221,9 @@ static json::Object ui_element_to_json(const UIElementInfo &el) {
 CoreResponse CoreEngine::handle(const CoreRequest &req,
                                 const Snapshot &snapshot,
                                 const Snapshot *old_snapshot) {
+  auto start_time = std::chrono::steady_clock::now();
+  LOG_DEBUG("Handling request: " + req.method + " (id=" + req.id + ")");
+
   CoreResponse resp;
   resp.id = req.id;
   resp.ok = true;
@@ -224,6 +231,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
 
   try {
     if (req.method == "events.poll") {
+      // ... existing events.poll logic ...
       if (!old_snapshot)
         throw std::runtime_error("events.poll requires two snapshots");
       
@@ -893,19 +901,39 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       return resp;
     }
 
+    if (req.method == "daemon.logs") {
+      auto logs = Logger::get().get_recent_logs();
+      json::Array arr;
+      for (const auto &l : logs) {
+        json::Object lo;
+        lo["timestamp"] = l.timestamp;
+        lo["level"] = (double)static_cast<int>(l.level);
+        lo["message"] = l.message;
+        arr.push_back(lo);
+      }
+      resp.result = arr;
+      return resp;
+    }
+
     // snapshot.capture/events.* are handled in daemon layer (session/scoped
     // state)
     resp.ok = false;
     resp.error_code = "E_BAD_METHOD";
     resp.error_message = "method not implemented in core";
-    return resp;
+    LOG_WARN("Method not implemented: " + req.method);
 
   } catch (const std::exception &e) {
     resp.ok = false;
     resp.error_code = "E_BAD_REQUEST";
     resp.error_message = e.what();
-    return resp;
+    LOG_ERROR("Request failed: " + std::string(e.what()));
   }
+
+  auto end_time = std::chrono::steady_clock::now();
+  auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+  resp.metrics["duration_ms"] = (double)duration_ms;
+
+  return resp;
 }
 
 CoreRequest parse_request_json(std::string_view json_utf8) {

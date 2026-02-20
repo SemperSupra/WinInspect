@@ -84,14 +84,21 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
   CoreEngine core(backend);
   ClientSession session;
   st->active_connections++;
+  LOG_INFO("New client connection established.");
 
   // Handle auto-auth for local pipes if no keys set
-  if (auth_keys_u8.empty()) session.authenticated = true;
+  if (auth_keys_u8.empty()) {
+    session.authenticated = true;
+    LOG_DEBUG("Local auto-auth enabled (no keys).");
+  }
 
   // Ensure decrement on exit
   struct ConnGuard {
     std::atomic<int>& count;
-    ~ConnGuard() { count--; }
+    ~ConnGuard() { 
+      count--; 
+      LOG_INFO("Client connection closed.");
+    }
   } guard{st->active_connections};
 
   while (true) {
@@ -109,6 +116,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
       // 1. Handshake Enforcement
       if (!session.authenticated && req.method != "hello") {
+        LOG_WARN("Unauthorized request attempted: " + req.method);
         resp.ok = false;
         resp.error_code = "E_UNAUTHORIZED";
         resp.error_message = "authentication required";
@@ -126,10 +134,12 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           session.last_snap_id = ps.last_snap_id;
           session.subscribed = ps.subscribed;
           ps.last_activity = std::chrono::steady_clock::now();
+          LOG_DEBUG("Recovered session: " + sid);
         } else {
           // New session
           session.id = sid;
           st->sessions[sid] = { "", false, std::chrono::steady_clock::now() };
+          LOG_DEBUG("Created persistent session: " + sid);
         }
       }
 
@@ -344,6 +354,14 @@ int main(int argc, char **argv) {
     if (std::string(argv[i]) == "--max-wait" && i + 1 < argc) {
       max_wait = std::stoi(argv[++i]);
     }
+    if (std::string(argv[i]) == "--log-level" && i + 1 < argc) {
+      std::string lvl = argv[++i];
+      if (lvl == "TRACE") Logger::get().set_level(LogLevel::TRACE);
+      else if (lvl == "DEBUG") Logger::get().set_level(LogLevel::DEBUG);
+      else if (lvl == "INFO") Logger::get().set_level(LogLevel::INFO);
+      else if (lvl == "WARN") Logger::get().set_level(LogLevel::WARN);
+      else if (lvl == "ERROR") Logger::get().set_level(LogLevel::ERR);
+    }
   }
 
   ServerState st;
@@ -356,6 +374,11 @@ int main(int argc, char **argv) {
 
   Win32Backend backend;
   std::atomic<bool> running{true};
+
+  LOG_INFO("WinInspect Daemon starting up...");
+  auto env = backend.get_env_metadata();
+  LOG_INFO("Environment: " + env.at("os").as_str() + " (" + env.at("arch").as_str() + ")");
+  if (env.count("wine_version")) LOG_INFO("Wine Version: " + env.at("wine_version").as_str());
 
   std::string auth_keys_u8 = auth_keys;
 
