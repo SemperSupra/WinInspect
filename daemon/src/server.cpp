@@ -18,6 +18,8 @@
 
 #include <list>
 
+#include <future>
+
 using namespace wininspect;
 
 namespace wininspect {
@@ -28,9 +30,17 @@ struct ServerState {
   std::map<std::string, Snapshot> snaps;
   std::map<std::string, int> pinned_counts;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
-  static constexpr size_t MAX_SNAPSHOTS = 1000;
+  
+  // Configurable limits
+  size_t max_snapshots = 1000;
+  int max_connections = 32;
+  int session_ttl_sec = 3600; // 1 hour default
   std::atomic<int> active_connections{0};
-  static constexpr int MAX_CONNECTIONS = 32;
+
+  // Temporal limits
+  int request_timeout_ms = 5000; // 5s watchdog
+  int poll_interval_ms = 100;
+  int max_wait_ms = 30000; // 30s max for long polls
 
   struct PersistentSession {
     std::string last_snap_id;
@@ -54,6 +64,19 @@ namespace {
 const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
 
 std::string make_snap_id(std::uint64_t n) { return "s-" + std::to_string(n); }
+
+void cleanup_sessions(ServerState *st) {
+  std::lock_guard<std::mutex> lk(st->mu);
+  auto now = std::chrono::steady_clock::now();
+  for (auto it = st->sessions.begin(); it != st->sessions.end(); ) {
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second.last_activity).count();
+    if (elapsed > st->session_ttl_sec) {
+      it = st->sessions.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
 
 void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
                    bool read_only, const std::string& auth_keys_u8) {
@@ -132,7 +155,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           st->snaps.emplace(sid, std::move(s));
           st->lru_order.push_back(sid);
 
-          while (st->lru_order.size() > ServerState::MAX_SNAPSHOTS) {
+          while (st->lru_order.size() > st->max_snapshots) {
             std::string oldest = st->lru_order.front();
             // Check pinning
             if (st->pinned_counts[oldest] > 0) {
@@ -193,7 +216,18 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           }
         }
 
-        resp = core.handle(req, snap, old_snap_ptr);
+        // Watchdog: run core in async task
+        auto future = std::async(std::launch::async, [&]() {
+          return core.handle(req, snap, old_snap_ptr);
+        });
+
+        if (future.wait_for(std::chrono::milliseconds(st->request_timeout_ms)) == std::future_status::timeout) {
+          resp.ok = false;
+          resp.error_code = "E_TIMEOUT";
+          resp.error_message = "request timed out in core engine";
+        } else {
+          resp = future.get();
+        }
 
         if (req.method == "events.poll" && resp.ok) {
           Snapshot fresh = backend->capture_snapshot();
@@ -253,7 +287,7 @@ void run_server(std::atomic<bool> *running, ServerState *st,
       continue;
     }
 
-    if (st->active_connections >= ServerState::MAX_CONNECTIONS) {
+    if (st->active_connections >= st->max_connections) {
       // Too many connections, drop this one
       DisconnectNamedPipe(hPipe);
       CloseHandle(hPipe);
@@ -272,6 +306,13 @@ int main(int argc, char **argv) {
   bool read_only = false;
   std::string auth_keys;
   int tcp_port = 1985;
+  int max_snaps = 1000;
+  int max_conns = 32;
+  int session_ttl = 3600;
+  int req_timeout = 5000;
+  int poll_interval = 100;
+  int max_wait = 30000;
+
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--headless")
       headless = true;
@@ -285,15 +326,49 @@ int main(int argc, char **argv) {
     if (std::string(argv[i]) == "--port" && i + 1 < argc) {
       tcp_port = std::stoi(argv[++i]);
     }
+    if (std::string(argv[i]) == "--max-snapshots" && i + 1 < argc) {
+      max_snaps = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--max-conns" && i + 1 < argc) {
+      max_conns = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--session-ttl" && i + 1 < argc) {
+      session_ttl = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--request-timeout" && i + 1 < argc) {
+      req_timeout = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--poll-interval" && i + 1 < argc) {
+      poll_interval = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--max-wait" && i + 1 < argc) {
+      max_wait = std::stoi(argv[++i]);
+    }
   }
 
   ServerState st;
+  st.max_snapshots = (size_t)max_snaps;
+  st.max_connections = max_conns;
+  st.session_ttl_sec = session_ttl;
+  st.request_timeout_ms = req_timeout;
+  st.poll_interval_ms = poll_interval;
+  st.max_wait_ms = max_wait;
+
   Win32Backend backend;
   std::atomic<bool> running{true};
 
   std::string auth_keys_u8 = auth_keys;
 
   std::thread server_thread(run_server, &running, &st, &backend, read_only, auth_keys_u8);
+
+  // Start cleanup thread
+  std::thread cleanup_thread([&st, &running]() {
+    while (running.load()) {
+      std::this_thread::sleep_for(std::chrono::minutes(1));
+      cleanup_sessions(&st);
+    }
+  });
+  cleanup_thread.detach();
 
   // Start TCP server for cross-environment access (Host <-> Guest, Host <->
   // Wine)

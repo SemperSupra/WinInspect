@@ -227,7 +227,8 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       if (!old_snapshot)
         throw std::runtime_error("events.poll requires two snapshots");
       
-      auto timeout_ms = get_num(req.params, "wait_ms").value_or(0);
+      auto wait_ms = get_num(req.params, "wait_ms").value_or(0);
+      auto interval_ms = get_num(req.params, "interval_ms").value_or(100);
       auto start = std::chrono::steady_clock::now();
       
       while (true) {
@@ -235,14 +236,14 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start).count();
 
-        if (!events.empty() || timeout_ms == 0 || elapsed >= (long long)timeout_ms) {
+        if (!events.empty() || wait_ms == 0 || elapsed >= (long long)wait_ms) {
           json::Array arr;
           for (const auto &e : events)
             arr.push_back(event_to_json(e));
           resp.result = arr;
           return resp;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds((int)interval_ms));
         break; 
       }
       resp.result = json::Array{};

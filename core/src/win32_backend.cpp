@@ -99,6 +99,7 @@ Snapshot Win32Backend::capture_snapshot() {
   EnumWindows(
       [](HWND h, LPARAM lp) -> BOOL {
         auto *vec = reinterpret_cast<std::vector<hwnd_u64> *>(lp);
+        if (vec->size() >= 5000) return FALSE; // Safety limit
         vec->push_back(to_u64(h));
         return TRUE;
       },
@@ -799,12 +800,28 @@ bool Win32Backend::service_control(const std::string &name, const std::string &a
   if (!hSvc.is_valid()) { return false; }
 
   bool ok = false;
+  DWORD target_state = (action == "start") ? SERVICE_RUNNING : SERVICE_STOPPED;
+
   if (action == "start") {
     ok = StartServiceW(hSvc, 0, NULL) != FALSE;
   } else if (action == "stop") {
     SERVICE_STATUS status;
     ok = ControlService(hSvc, SERVICE_CONTROL_STOP, &status) != FALSE;
   }
+
+  if (ok) {
+    // Polling convergence (max 30s)
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < 30) {
+      SERVICE_STATUS_PROCESS ssp;
+      DWORD bytes = 0;
+      if (QueryServiceStatusEx(hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+        if (ssp.dwCurrentState == target_state) return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+  }
+
   return ok;
 }
 
