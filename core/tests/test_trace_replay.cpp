@@ -93,3 +93,34 @@ DOCTEST_TEST_CASE("trace replay: uia_recursive_tree") {
   DOCTEST_REQUIRE(res.at("children").as_arr().size() == 1);
   DOCTEST_REQUIRE(res.at("children").as_arr()[0].as_obj().at("automation_id").as_str() == "submit_btn");
 }
+
+DOCTEST_TEST_CASE("trace replay: system_orchestration") {
+  FakeBackend fb({});
+  CoreEngine core(&fb);
+  Snapshot s;
+
+  // Process List
+  CoreRequest req1{"t-1", "process.list", {}};
+  auto r1 = core.handle(req1, s);
+  DOCTEST_REQUIRE(r1.ok);
+  DOCTEST_REQUIRE(r1.result.as_arr().size() == 1);
+  DOCTEST_REQUIRE(r1.result.as_arr()[0].as_obj().at("name").as_str() == "fake.exe");
+
+  // Registry Read
+  json::Object p2; p2["path"] = std::string("HKCU\\Software\\Test");
+  CoreRequest req2{"t-2", "reg.read", p2};
+  auto r2 = core.handle(req2, s);
+  DOCTEST_REQUIRE(r2.ok);
+  DOCTEST_REQUIRE(r2.result.as_obj().at("values").as_arr().size() == 1);
+
+  // Clipboard
+  json::Object p3; p3["text"] = std::string("TraceData");
+  CoreRequest req3{"t-3", "clipboard.write", p3};
+  auto r3 = core.handle(req3, s);
+  DOCTEST_REQUIRE(r3.ok);
+
+  CoreRequest req4{"t-4", "clipboard.read", {}};
+  auto r4 = core.handle(req4, s);
+  DOCTEST_REQUIRE(r4.ok);
+  DOCTEST_REQUIRE(r4.result.as_obj().at("text").as_str() == "fake clipboard");
+}

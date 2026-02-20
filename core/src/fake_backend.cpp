@@ -313,6 +313,13 @@ json::Object FakeBackend::get_env_metadata() {
   o["os"] = "fake_windows";
   o["is_wine"] = false;
   o["arch"] = "x64";
+  
+  json::Object diag;
+  diag["clipboard"] = true;
+  diag["registry_write"] = true;
+  diag["uia_available"] = true;
+  o["diagnostics"] = diag;
+  
   return o;
 }
 

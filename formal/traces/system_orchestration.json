@@ -1,0 +1,28 @@
+{
+  "name": "System Orchestration Challenge",
+  "description": "Canonical trace for Process, Registry, and Clipboard operations.",
+  "steps": [
+    {
+      "request": { "id": "t-1", "method": "process.list", "params": {} },
+      "expected_result": [
+        { "pid": 1234, "name": "fake.exe", "path": "C:\fake.exe" }
+      ]
+    },
+    {
+      "request": { "id": "t-2", "method": "reg.read", "params": { "path": "HKCU\Software\Test" } },
+      "expected_result": {
+        "path": "HKCU\Software\Test",
+        "subkeys": ["SubKey1"],
+        "values": [{"name": "TestValue", "type": "SZ", "data": "TestData"}]
+      }
+    },
+    {
+      "request": { "id": "t-3", "method": "clipboard.write", "params": { "text": "TraceData" } },
+      "expected_result": { "ok": true }
+    },
+    {
+      "request": { "id": "t-4", "method": "clipboard.read", "params": {} },
+      "expected_result": { "text": "fake clipboard" }
+    }
+  ]
+}

@@ -1189,6 +1189,28 @@ json::Object Win32Backend::get_env_metadata() {
   o["arch"] = "x86";
 #endif
 
+  // Self-Diagnostics (Circuit Checks)
+  json::Object diag;
+  
+  // 1. Clipboard Check
+  diag["clipboard"] = OpenClipboard(NULL) != FALSE;
+  if (diag["clipboard"].as_bool()) CloseClipboard();
+
+  // 2. Registry Write Check (HKCU)
+  HKEY hKey;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\WinInspectHealthCheck", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    diag["registry_write"] = true;
+    RegCloseKey(hKey);
+    RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\WinInspectHealthCheck");
+  } else {
+    diag["registry_write"] = false;
+  }
+
+  // 3. UIA Check
+  ComPtr<IUIAutomation> pAutomation;
+  diag["uia_available"] = SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, IID_IUIAutomation, (void **)&pAutomation));
+
+  o["diagnostics"] = diag;
   return o;
 }
 
