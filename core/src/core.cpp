@@ -78,6 +78,7 @@ static std::optional<hwnd_u64> parse_hwnd(const std::string &s) {
 
 static json::Object event_to_json(const Event &e) {
   json::Object o;
+  o["seq"] = (double)e.seq;
   o["type"] = e.type;
   o["hwnd"] = Hwnd(e.hwnd).to_string();
   if (!e.property.empty())
@@ -247,8 +248,10 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
 
         if (!events.empty() || wait_ms == 0 || elapsed >= (long long)wait_ms) {
           json::Array arr;
-          for (const auto &e : events)
-            arr.push_back(event_to_json(e));
+          for (size_t i = 0; i < events.size(); ++i) {
+            events[i].seq = i + 1; // local sequence for the poll result
+            arr.push_back(event_to_json(events[i]));
+          }
           resp.result = arr;
           return resp;
         }
@@ -256,6 +259,14 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
         break; 
       }
       resp.result = json::Array{};
+      return resp;
+    }
+
+    if (req.method == "session.terminate") {
+      // Logic handled in daemon layer by checking this method name
+      json::Object o;
+      o["terminated"] = true;
+      resp.result = o;
       return resp;
     }
 

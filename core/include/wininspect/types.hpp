@@ -131,6 +131,7 @@ struct Snapshot {
 };
 
 struct Event {
+  std::uint64_t seq{};
   std::string type; // "window.created", "window.destroyed", "window.changed"
   hwnd_u64 hwnd{};
   std::string property; // for "window.changed"

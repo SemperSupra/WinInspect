@@ -109,6 +109,15 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         }
       }
 
+      if (req.method == "session.terminate") {
+        if (!session.id.empty()) {
+          std::lock_guard<std::mutex> lk(st->mu);
+          st->sessions.erase(session.id.val);
+          LOG_INFO("Session terminated explicitly: " + session.id.val);
+          session.id = SessionID(""); // Clear local ref
+        }
+      }
+
       // Security: Check Read-Only mode
       if (read_only &&
           (req.method == "window.postMessage" || req.method == "input.send" || req.method.find("reg.write") != std::string::npos)) {
@@ -441,13 +450,30 @@ int main(int argc, char **argv) {
 
   // 4. Run TCP server (BLOCKING MAIN THREAD)
   LOG_INFO("Starting TCP Server (blocking main thread)...");
+  auto tcp = std::make_shared<wininspectd::TcpServer>(tcp_port, st.get(), backend.get());
+
+  if (!headless) {
+    wininspectd::TrayManager tray([&]() {
+      LOG_INFO("Shutdown requested via tray.");
+      running = false;
+      tcp->stop();
+      exit(0);
+    });
+    if (tray.init(GetModuleHandle(nullptr))) {
+      // Create a background thread for TCP if tray is running
+      std::thread([&, tcp, bind_public, auth_keys_u8, read_only]() {
+        try {
+          tcp->start(&running, bind_public, auth_keys_u8, read_only);
+        } catch (...) {}
+      }).detach();
+      tray.run();
+    }
+  }
+
   try {
-    wininspectd::TcpServer tcp(tcp_port, st.get(), backend.get());
-    tcp.start(&running, bind_public, auth_keys_u8, read_only);
-  } catch (const std::exception& e) {
-    LOG_ERROR("TCP Server fatal error: " + std::string(e.what()));
+    tcp->start(&running, bind_public, auth_keys_u8, read_only);
   } catch (...) {
-    LOG_ERROR("TCP Server fatal error (unknown).");
+    LOG_ERROR("TCP Server fatal error.");
   }
 
   return 0;

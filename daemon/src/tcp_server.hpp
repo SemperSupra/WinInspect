@@ -18,11 +18,13 @@ public:
 
   void start(std::atomic<bool> *running, bool bind_public = false,
              const std::string &auth_keys = "", bool read_only = false);
+  void stop();
 
 private:
   int port_;
   wininspect::ServerState *state_;
   wininspect::IBackend *backend_;
+  uintptr_t listen_sock_ = 0; // Use uintptr_t to avoid including winsock2.h here
 };
 
 } // namespace wininspectd

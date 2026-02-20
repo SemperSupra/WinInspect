@@ -207,6 +207,14 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         }
       }
 
+      if (req.method == "session.terminate") {
+        if (!session.id.empty()) {
+          std::lock_guard<std::mutex> lk(st->mu);
+          st->sessions.erase(session.id.val);
+          session.id = SessionID("");
+        }
+      }
+
       // Security: Check Read-Only mode
       if (read_only &&
           (req.method == "window.postMessage" || req.method == "input.send" || req.method.find("reg.write") != std::string::npos)) {
@@ -337,6 +345,13 @@ TcpServer::TcpServer(int port, wininspect::ServerState *state,
 
 TcpServer::~TcpServer() {}
 
+void TcpServer::stop() {
+  if (listen_sock_ != 0 && listen_sock_ != (uintptr_t)INVALID_SOCKET) {
+    closesocket((SOCKET)listen_sock_);
+    listen_sock_ = 0;
+  }
+}
+
 void TcpServer::start(std::atomic<bool> *running, bool bind_public,
                       const std::string &auth_keys, bool read_only) {
   LOG_DEBUG("TCP Server: Initializing Winsock...");
@@ -353,6 +368,7 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     WSACleanup();
     return;
   }
+  listen_sock_ = (uintptr_t)listen_sock;
 
   sockaddr_in addr{};
   addr.sin_family = AF_INET;

@@ -1269,13 +1269,13 @@ std::vector<Event> Win32Backend::poll_events(const Snapshot &old_snap,
   std::set_difference(n.begin(), n.end(), o.begin(), o.end(),
                       std::back_inserter(created));
   for (auto h : created)
-    out.push_back({"window.created", h, ""});
+    out.push_back({0, "window.created", h, ""});
 
   std::vector<hwnd_u64> destroyed;
   std::set_difference(o.begin(), o.end(), n.begin(), n.end(),
                       std::back_inserter(destroyed));
   for (auto h : destroyed)
-    out.push_back({"window.destroyed", h, ""});
+    out.push_back({0, "window.destroyed", h, ""});
 
   return out;
 }

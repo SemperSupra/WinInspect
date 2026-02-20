@@ -16,6 +16,11 @@ struct ServerState {
   std::map<std::string, int> pinned_counts;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
   
+  // Event Sequencing
+  std::atomic<std::uint64_t> event_counter{1};
+  std::vector<Event> event_log;
+  size_t max_event_log = 1000;
+
   // Configurable limits
   size_t max_snapshots = 1000;
   int max_connections = 32;
