@@ -61,15 +61,14 @@ static std::wstring get_class_name_w(HWND hwnd) {
 
 static std::string try_process_image_path(DWORD pid) {
   std::string out;
-  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-  if (!h)
+  SafeHandle h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!h.is_valid())
     return out;
   wchar_t buf[32768];
   DWORD sz = (DWORD)(sizeof(buf) / sizeof(buf[0]));
   if (QueryFullProcessImageNameW(h, 0, buf, &sz)) {
     out = w2u8(std::wstring(buf, buf + sz));
   }
-  CloseHandle(h);
   return out;
 }
 
@@ -486,11 +485,9 @@ std::vector<ProcessInfo> Win32Backend::list_processes() {
 }
 
 bool Win32Backend::kill_process(uint32_t pid) {
-  HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-  if (!h) return false;
-  bool ok = TerminateProcess(h, 1) != FALSE;
-  CloseHandle(h);
-  return ok;
+  SafeHandle h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+  if (!h.is_valid()) return false;
+  return TerminateProcess(h, 1) != FALSE;
 }
 
 std::optional<ScreenCapture> Win32Backend::capture_screen(Rect region) {
@@ -554,16 +551,15 @@ std::optional<FileInfo> Win32Backend::get_file_info(const std::string &path) {
 
 std::optional<std::string> Win32Backend::read_file_content(const std::string &path) {
   std::wstring wpath(path.begin(), path.end());
-  HANDLE h = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+  SafeHandle h = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+  if (!h.is_valid()) return std::nullopt;
 
   DWORD size = GetFileSize(h, NULL);
   std::string out;
   out.resize(size);
   DWORD read;
   ReadFile(h, out.data(), size, &read, NULL);
-  CloseHandle(h);
   return out;
 }
 
@@ -609,7 +605,7 @@ std::optional<RegistryKeyInfo> Win32Backend::reg_read(const std::string &path) {
   HKEY root = parse_hkey(path, subpath);
   if (!root) return std::nullopt;
 
-  HKEY hKey;
+  HKey hKey;
   std::wstring wsubpath(subpath.begin(), subpath.end());
   if (RegOpenKeyExW(root, wsubpath.c_str(), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
     return std::nullopt;
@@ -648,7 +644,6 @@ std::optional<RegistryKeyInfo> Win32Backend::reg_read(const std::string &path) {
     data_size = 4096;
   }
 
-  RegCloseKey(hKey);
   return info;
 }
 
@@ -657,7 +652,7 @@ bool Win32Backend::reg_write(const std::string &path, const RegistryValue &val) 
   HKEY root = parse_hkey(path, subpath);
   if (!root) return false;
 
-  HKEY hKey;
+  HKey hKey;
   std::wstring wsubpath(subpath.begin(), subpath.end());
   if (RegCreateKeyExW(root, wsubpath.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
     return false;
@@ -673,7 +668,6 @@ bool Win32Backend::reg_write(const std::string &path, const RegistryValue &val) 
     status = RegSetValueExW(hKey, wname.c_str(), 0, REG_DWORD, (BYTE*)&d, sizeof(DWORD));
   }
 
-  RegCloseKey(hKey);
   return status == ERROR_SUCCESS;
 }
 
@@ -686,12 +680,11 @@ bool Win32Backend::reg_delete(const std::string &path, const std::string &value_
   if (value_name.empty()) {
     return RegDeleteKeyW(root, wsubpath.c_str()) == ERROR_SUCCESS;
   } else {
-    HKEY hKey;
+    HKey hKey;
     if (RegOpenKeyExW(root, wsubpath.c_str(), 0, KEY_SET_VALUE, &hKey) != ERROR_SUCCESS)
       return false;
     std::wstring wname(value_name.begin(), value_name.end());
     bool ok = RegDeleteValueW(hKey, wname.c_str()) == ERROR_SUCCESS;
-    RegCloseKey(hKey);
     return ok;
   }
 }
@@ -719,29 +712,39 @@ std::optional<std::string> Win32Backend::clipboard_read() {
 bool Win32Backend::clipboard_write(const std::string &text) {
   if (!OpenClipboard(NULL)) return false;
   EmptyClipboard();
-  std::wstring wtext(text.begin(), text.end()); // Simple conversion
   int len = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
+  std::wstring wtext;
   if (len > 0) {
-    wtext.resize(len);
+    wtext.resize(len - 1);
     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), len);
   }
   
   HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (wtext.size() + 1) * sizeof(wchar_t));
+  bool success = false;
   if (hMem) {
     void *p = GlobalLock(hMem);
-    memcpy(p, wtext.c_str(), (wtext.size() + 1) * sizeof(wchar_t));
-    GlobalUnlock(hMem);
-    SetClipboardData(CF_UNICODETEXT, hMem);
+    if (p) {
+      memcpy(p, wtext.c_str(), (wtext.size() + 1) * sizeof(wchar_t));
+      GlobalUnlock(hMem);
+      if (SetClipboardData(CF_UNICODETEXT, hMem)) {
+        success = true;
+        // System now owns hMem
+      } else {
+        GlobalFree(hMem);
+      }
+    } else {
+      GlobalFree(hMem);
+    }
   }
   CloseClipboard();
-  return hMem != NULL;
+  return success;
 }
 
 // Services
 std::vector<ServiceInfo> Win32Backend::service_list() {
   std::vector<ServiceInfo> out;
-  SC_HANDLE hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
-  if (!hSCM) return out;
+  ScHandle hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+  if (!hSCM.is_valid()) return out;
 
   DWORD bytesNeeded = 0, count = 0, resume = 0;
   EnumServicesStatusExW(hSCM, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
@@ -761,16 +764,15 @@ std::vector<ServiceInfo> Win32Backend::service_list() {
       }
     }
   }
-  CloseServiceHandle(hSCM);
   return out;
 }
 
 std::string Win32Backend::service_status(const std::string &name) {
-  SC_HANDLE hSCM = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-  if (!hSCM) return "UNKNOWN";
+  ScHandle hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+  if (!hSCM.is_valid()) return "UNKNOWN";
   std::wstring wname(name.begin(), name.end());
-  SC_HANDLE hSvc = OpenServiceW(hSCM, wname.c_str(), SERVICE_QUERY_STATUS);
-  if (!hSvc) { CloseServiceHandle(hSCM); return "NOT_FOUND"; }
+  ScHandle hSvc = OpenServiceW(hSCM, wname.c_str(), SERVICE_QUERY_STATUS);
+  if (!hSvc.is_valid()) { return "NOT_FOUND"; }
   
   SERVICE_STATUS_PROCESS ssp;
   DWORD bytes = 0;
@@ -785,18 +787,16 @@ std::string Win32Backend::service_status(const std::string &name) {
       default: status = "OTHER"; break;
     }
   }
-  CloseServiceHandle(hSvc);
-  CloseServiceHandle(hSCM);
   return status;
 }
 
 bool Win32Backend::service_control(const std::string &name, const std::string &action) {
-  SC_HANDLE hSCM = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-  if (!hSCM) return false;
+  ScHandle hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+  if (!hSCM.is_valid()) return false;
   std::wstring wname(name.begin(), name.end());
   DWORD access = (action == "start") ? SERVICE_START : (SERVICE_STOP | SERVICE_QUERY_STATUS);
-  SC_HANDLE hSvc = OpenServiceW(hSCM, wname.c_str(), access);
-  if (!hSvc) { CloseServiceHandle(hSCM); return false; }
+  ScHandle hSvc = OpenServiceW(hSCM, wname.c_str(), access);
+  if (!hSvc.is_valid()) { return false; }
 
   bool ok = false;
   if (action == "start") {
@@ -805,8 +805,6 @@ bool Win32Backend::service_control(const std::string &name, const std::string &a
     SERVICE_STATUS status;
     ok = ControlService(hSvc, SERVICE_CONTROL_STOP, &status) != FALSE;
   }
-  CloseServiceHandle(hSvc);
-  CloseServiceHandle(hSCM);
   return ok;
 }
 
@@ -882,52 +880,45 @@ std::vector<std::string> Win32Backend::wine_get_overrides() {
 // Sync
 bool Win32Backend::sync_check_mutex(const std::string &name) {
   std::wstring wname(name.begin(), name.end());
-  HANDLE h = OpenMutexW(SYNCHRONIZE, FALSE, wname.c_str());
-  if (h) {
-    CloseHandle(h);
-    return true;
-  }
-  return false;
+  SafeHandle h = OpenMutexW(SYNCHRONIZE, FALSE, wname.c_str());
+  return h.is_valid();
 }
 
 bool Win32Backend::sync_create_mutex(const std::string &name, bool own) {
   std::wstring wname(name.begin(), name.end());
-  HANDLE h = CreateMutexW(NULL, own ? TRUE : FALSE, wname.c_str());
-  if (h) {
-    bool already = (GetLastError() == ERROR_ALREADY_EXISTS);
-    CloseHandle(h);
-    return !already;
+  SafeHandle h = CreateMutexW(NULL, own ? TRUE : FALSE, wname.c_str());
+  if (h.is_valid()) {
+    return (GetLastError() != ERROR_ALREADY_EXISTS);
   }
   return false;
 }
 
 // Advanced Automation
 std::optional<MemoryRegion> Win32Backend::mem_read(uint32_t pid, uint64_t address, size_t size) {
-  HANDLE h = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-  if (!h) return std::nullopt;
+  static constexpr size_t MAX_MEM_READ_SIZE = 1024 * 1024; // 1MB Limit
+  if (size > MAX_MEM_READ_SIZE) size = MAX_MEM_READ_SIZE;
+
+  SafeHandle h = OpenProcess(PROCESS_VM_READ, FALSE, pid);
+  if (!h.is_valid()) return std::nullopt;
 
   std::vector<uint8_t> buffer(size);
   SIZE_T read;
-  if (ReadProcessMemory(h, (LPCVOID)address, buffer.data(), size, &read)) {
+  if (ReadProcessMemory(h, (LPCVOID)address, buffer.data(), (SIZE_T)size, &read)) {
     MemoryRegion mr;
     mr.address = address;
     buffer.resize(read);
     mr.data_b64 = base64_encode(buffer);
-    CloseHandle(h);
     return mr;
   }
-  CloseHandle(h);
   return std::nullopt;
 }
 
 bool Win32Backend::mem_write(uint32_t pid, uint64_t address, const std::vector<uint8_t> &data) {
-  HANDLE h = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
-  if (!h) return false;
+  SafeHandle h = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
+  if (!h.is_valid()) return false;
 
   SIZE_T written;
-  bool ok = WriteProcessMemory(h, (LPVOID)address, data.data(), data.size(), &written) != FALSE;
-  CloseHandle(h);
-  return ok;
+  return WriteProcessMemory(h, (LPVOID)address, data.data(), (SIZE_T)data.size(), &written) != FALSE;
 }
 
 std::optional<ImageMatchResult> Win32Backend::image_match(Rect region, const std::vector<uint8_t> &sub_image_bmp) {
