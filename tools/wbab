@@ -4,7 +4,7 @@ cmd="${1:-}"
 shift || true
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WBAB_DIR="${ROOT}/tools/WineBotAppBuilder"
+WBAB_DIR="${ROOT}/external/WineBotAppBuilder"
 
 usage() {
   cat <<'EOF'
@@ -57,16 +57,31 @@ case "${cmd}" in
   build)
     if [[ -d "${WBAB_DIR}" ]]; then
       echo "--- Running WBAB Containerized Build ---"
+      
+      # Handle optional project dir as first arg
+      PROJECT_DIR="."
+      VERSION="dev"
+      if [[ $# -gt 0 ]]; then
+        if [[ -d "$1" ]]; then
+          PROJECT_DIR="$1"
+          shift
+        fi
+      fi
+      if [[ $# -gt 0 ]]; then
+        VERSION="$1"
+        shift
+      fi
+
       # Delegate to WBAB container build
       export WBAB_BUILD_CMD="/workspace/tools/ci-build.sh"
-      "${WBAB_DIR}/tools/wbab" build "$@"
+      "${WBAB_DIR}/tools/wbab" build "${PROJECT_DIR}"
 
       # Post-process artifacts (copy from out/ to dist/)
-      VERSION="${1:-dev}"
       DIST_DIR="${ROOT}/dist"
       mkdir -p "${DIST_DIR}"
 
-      echo "--- Post-processing Artifacts ---"
+      echo "--- Post-processing Artifacts (Version: ${VERSION}) ---"
+      # ... (rest of the copy logic)
       # wbab-build/ci-build puts them in out/
       # We need to mimic tools/winbuild-build.sh naming:
       cp "${ROOT}/out/wininspectd.exe" "${DIST_DIR}/wininspectd-${VERSION}-win-x64.exe" 2>/dev/null || true
@@ -122,12 +137,26 @@ case "${cmd}" in
   package)
     if [[ -d "${WBAB_DIR}" ]]; then
        echo "--- Running WBAB Containerized Packaging ---"
+       
+       # Handle optional project dir as first arg
+       PROJECT_DIR="."
+       VERSION="dev"
+       if [[ $# -gt 0 ]]; then
+         if [[ -d "$1" ]]; then
+           PROJECT_DIR="$1"
+           shift
+         fi
+       fi
+       if [[ $# -gt 0 ]]; then
+         VERSION="$1"
+         shift
+       fi
+
        # Delegate to WBAB container package
-       VERSION="${1:-dev}"
        # We run makensis directly inside the packager container.
        # The .nsi script is in tools/, so BUILD_SRC relative to tools/ is ../out
        export WBAB_PACKAGE_CMD="makensis -DVERSION=${VERSION} -DBUILD_SRC=../out tools/wininspect.nsi"
-       "${WBAB_DIR}/tools/wbab" package "$@"
+       "${WBAB_DIR}/tools/wbab" package "${PROJECT_DIR}"
     else
        "${ROOT}/tools/package-nsis.sh" "$@"
     fi

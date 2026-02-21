@@ -1,3 +1,9 @@
 [submodule "tools/WineBotAppBuilder"]
-	path = tools/WineBotAppBuilder
+	path = external/WineBotAppBuilder
 	url = https://github.com/SemperSupra/WineBotAppBuilder
+[submodule "clients/portable/supragoflow"]
+	path = external/supragoflow
+	url = https://github.com/SemperSupra/supragoflow
+[submodule "tools/WineBot"]
+	path = external/WineBot
+	url = https://github.com/mark-e-deyoung/WineBot

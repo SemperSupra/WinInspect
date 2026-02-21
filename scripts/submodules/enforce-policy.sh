@@ -11,7 +11,7 @@ echo "[superproject] Configuring core.hooksPath..."
 git -C "$ROOT" config core.hooksPath "$HOOKS_DIR"
 
 # 2. Configure submodules
-git -C "$ROOT" submodule foreach --recursive '
+git -C "$ROOT" submodule foreach '
     echo "[$sm_path] Configuring hooks and disabling pushes..."
     
     # Set hooks path relative to submodule root

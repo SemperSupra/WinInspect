@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT}/out"
-WBAB_WINEBOT_DIR="${ROOT}/tools/WineBotAppBuilder/tools/WineBot"
+WBAB_WINEBOT_DIR="${ROOT}/external/WineBot"
 COMPOSE_DIR="${WBAB_WINEBOT_DIR}/compose"
 PROJECT_NAME="wininspect-smoke"
 WINEBOT_IMAGE="ghcr.io/mark-e-deyoung/winebot:v0.9.5"
