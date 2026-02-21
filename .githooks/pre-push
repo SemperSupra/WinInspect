@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+# Submodule Co-Evolution Policy Guardrail
+# Blocks pushing to upstream remotes.
+
+remote="$1"
+url="$2"
+
+# Block by remote name
+if [[ "$remote" == "origin" || "$remote" == "upstream" ]]; then
+    echo "ERROR: Pushing to remote '$remote' is blocked by Submodule Co-Evolution Policy." >&2
+    echo "Please use scripts/submodules/export-issue-package.sh to share changes upstream." >&2
+    exit 1
+fi
+
+# Block by URL pattern (GitHub upstream repos)
+UPSTREAM_PATTERNS=(
+    "SemperSupra/WinInspect"
+    "SemperSupra/WineBotAppBuilder"
+    "SemperSupra/supragoflow"
+    "mark-e-deyoung/WineBot"
+)
+
+for pattern in "${UPSTREAM_PATTERNS[@]}"; do
+    if [[ "$url" == *"$pattern"* ]]; then
+        echo "ERROR: Pushing to upstream repository '$pattern' is blocked." >&2
+        echo "URL: $url" >&2
+        exit 1
+    fi
+done
+
+exit 0

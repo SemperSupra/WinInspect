@@ -34,6 +34,20 @@ build\Debug\wininspectd.exe
 build\Debug\wininspect.exe top
 ```
 
+## Submodule Policy
+
+This project follows a **Submodule Co-Evolution Policy**.
+- Submodules may be modified locally for development and testing.
+- **Pushes to upstream submodule repositories are strictly forbidden.**
+- Upstream synchronization happens via issues and patches.
+
+For full details, see [docs/SUBMODULE_POLICY.md](docs/SUBMODULE_POLICY.md).
+
+To ensure your local guardrails are active, run:
+```bash
+./scripts/submodules/enforce-policy.sh
+```
+
 ## Architecture
 See:
 - `docs/ARCHITECTURE.md`
