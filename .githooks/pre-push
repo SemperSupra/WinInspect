@@ -6,16 +6,19 @@
 remote="$1"
 url="$2"
 
-# Block by remote name
-if [[ "$remote" == "origin" || "$remote" == "upstream" ]]; then
-    echo "ERROR: Pushing to remote '$remote' is blocked by Submodule Co-Evolution Policy." >&2
-    echo "Please use scripts/submodules/export-issue-package.sh to share changes upstream." >&2
-    exit 1
+# 1. Block by remote name ONLY if inside a submodule
+# We detect this by checking if we are in the superproject root
+ROOT_DIR=$(git rev-parse --show-toplevel)
+if [[ "$(pwd)" != "$ROOT_DIR" ]]; then
+    if [[ "$remote" == "origin" || "$remote" == "upstream" ]]; then
+        echo "ERROR: Pushing from a submodule is blocked by Submodule Co-Evolution Policy." >&2
+        echo "Please use scripts/submodules/export-issue-package.sh from the project root." >&2
+        exit 1
+    fi
 fi
 
-# Block by URL pattern (GitHub upstream repos)
+# 2. Block by URL pattern (Upstream Submodule Repos)
 UPSTREAM_PATTERNS=(
-    "SemperSupra/WinInspect"
     "SemperSupra/WineBotAppBuilder"
     "SemperSupra/supragoflow"
     "mark-e-deyoung/WineBot"
