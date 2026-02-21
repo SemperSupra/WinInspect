@@ -1,0 +1,48 @@
+graph TD
+    subgraph Superproject [WinInspect Repository]
+        Root[Root]
+        Scripts[scripts/]
+        Tools[tools/]
+    end
+
+    subgraph External [external/]
+        WBAB[WineBotAppBuilder]
+        WineBot[WineBot]
+        SGF[supragoflow]
+    end
+
+    subgraph Images [GHCR Container Registry]
+        WinBuild[winebotappbuilder-winbuild]
+        Packager[winebotappbuilder-packager]
+        Signer[winebotappbuilder-signer]
+        SGFBuild[supragoflow-build]
+        WBRuntime[winebot:v0.9.5]
+    end
+
+    %% Code Dependencies
+    Root --> WBAB
+    Root --> WineBot
+    Root --> SGF
+
+    %% Toolchain Dependencies
+    Tools/wbab --> WinBuild
+    Tools/wbab --> Packager
+    Tools/wbab --> SGFBuild
+    Scripts/smoke.sh --> WBRuntime
+
+    %% Infrastructure Definitions
+    WBAB -.-> WinBuild
+    WBAB -.-> Packager
+    WBAB -.-> Signer
+    SGF -.-> SGFBuild
+    WineBot -.-> WBRuntime
+
+    %% Policy Enforcement
+    subgraph Guardrails [Policy Enforcement]
+        Hook[.githooks/pre-push]
+        Puller[scripts/docker/pull-first.sh]
+    end
+
+    Tools/wbab -- Calls --> Puller
+    Scripts/smoke.sh -- Calls --> Puller
+    Puller -- Enforces --> Images

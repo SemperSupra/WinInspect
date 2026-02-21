@@ -36,6 +36,8 @@ case "${cmd}" in
       
       # 1. C++ Linting via WinBuild
       echo "[lint] Running C++ linting (clang-tidy)..."
+      TOOLCHAIN_IMAGE="ghcr.io/sempersupra/winebotappbuilder-winbuild:v0.3.7"
+      "${ROOT}/scripts/docker/pull-first.sh" "${TOOLCHAIN_IMAGE}" "${ROOT}/external/WineBotAppBuilder/tools/winbuild/Dockerfile"
       # We use --header-filter to focus on our own headers and -checks=-* to start clean, 
       # then add specific useful checks. We also skip system headers to avoid MinGW/Clang conflicts.
       export WBAB_LINT_CMD="clang-tidy core/src/*.cpp daemon/src/*.cpp --checks=-*,bugprone-*,performance-*,readability-function-size --header-filter=core/include/.* -- -target x86_64-w64-mingw32 -fms-extensions -fms-compatibility -Icore/include -Ithird_party -I/usr/x86_64-w64-mingw32/include"
@@ -44,8 +46,9 @@ case "${cmd}" in
       # 2. Go Linting via SupraGoFlow
       echo "[lint] Running Go linting (gofmt)..."
       GOFLOW_IMAGE="ghcr.io/sempersupra/supragoflow-build:latest"
+      "${ROOT}/scripts/docker/pull-first.sh" "${GOFLOW_IMAGE}" "${ROOT}/external/supragoflow/docker/Dockerfile"
       docker run --rm \
-          -v "${ROOT}/clients/portable:/v" \
+          -v "${ROOT}/external/supragoflow:/v" \
           -w /v \
           "${GOFLOW_IMAGE}" \
           bash -c "gofmt -l ."
@@ -58,6 +61,10 @@ case "${cmd}" in
     if [[ -d "${WBAB_DIR}" ]]; then
       echo "--- Running WBAB Containerized Build ---"
       
+      # 1. Enforce Pull-First for toolchain
+      TOOLCHAIN_IMAGE="ghcr.io/sempersupra/winebotappbuilder-winbuild:v0.3.7"
+      "${ROOT}/scripts/docker/pull-first.sh" "${TOOLCHAIN_IMAGE}" "${ROOT}/external/WineBotAppBuilder/tools/winbuild/Dockerfile"
+
       # Handle optional project dir as first arg
       PROJECT_DIR="."
       VERSION="dev"
@@ -91,6 +98,7 @@ case "${cmd}" in
       # Run Go build via SupraGoFlow
       echo "--- Building Portable CLI (Go) via SupraGoFlow ---"
       GOFLOW_IMAGE="ghcr.io/sempersupra/supragoflow-build:latest"
+      "${ROOT}/scripts/docker/pull-first.sh" "${GOFLOW_IMAGE}" "${ROOT}/external/supragoflow/docker/Dockerfile"
       
       if [ -d "${ROOT}/clients/portable" ]; then
           # Linux Build
@@ -138,6 +146,10 @@ case "${cmd}" in
     if [[ -d "${WBAB_DIR}" ]]; then
        echo "--- Running WBAB Containerized Packaging ---"
        
+       # 1. Enforce Pull-First for toolchain
+       PACKAGER_IMAGE="ghcr.io/sempersupra/winebotappbuilder-packager:v0.3.7"
+       "${ROOT}/scripts/docker/pull-first.sh" "${PACKAGER_IMAGE}" "${ROOT}/external/WineBotAppBuilder/tools/packaging/Dockerfile"
+
        # Handle optional project dir as first arg
        PROJECT_DIR="."
        VERSION="dev"

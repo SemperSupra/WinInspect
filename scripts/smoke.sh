@@ -34,7 +34,10 @@ services:
       - "6080:6080"
 EOF
 
-# 3. Start fresh session
+# 3. Enforce Pull-First for runtime
+"${ROOT}/scripts/docker/pull-first.sh" "${WINEBOT_IMAGE}" "${ROOT}/external/WineBot/docker/Dockerfile"
+
+# 4. Start fresh session
 echo "[smoke] Starting FRESH WineBot session..."
 docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_DIR}/docker-compose.yml" -f "${OVERRIDE_FILE}" --profile interactive up -d
 
