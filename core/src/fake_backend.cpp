@@ -8,6 +8,10 @@ FakeBackend::FakeBackend(std::vector<FakeWindow> windows) {
     w_.emplace(w.hwnd, std::move(w));
 }
 
+void FakeBackend::set_config(const json::Object &) {
+  // Fake backend doesn't currently use dynamic limits, but needs to implement the interface
+}
+
 Snapshot FakeBackend::capture_snapshot() {
   Snapshot s;
   // stable ordering by hwnd

@@ -23,6 +23,9 @@ struct ServerState {
 
   // Configurable limits
   size_t max_snapshots = 1000;
+  size_t max_mem_read_size = 1024 * 1024; // 1MB default
+  int uia_depth = 5;
+  int service_timeout_sec = 30;
   int max_connections = 32;
   int session_ttl_sec = 3600; // 1 hour default
   std::atomic<int> active_connections{0};

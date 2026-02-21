@@ -18,6 +18,8 @@ class FakeBackend final : public IBackend {
 public:
   explicit FakeBackend(std::vector<FakeWindow> windows);
 
+  void set_config(const json::Object &config) override;
+
   Snapshot capture_snapshot() override;
 
   std::vector<hwnd_u64> list_top(const Snapshot &s) override;

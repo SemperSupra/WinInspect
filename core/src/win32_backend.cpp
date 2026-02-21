@@ -92,6 +92,14 @@ Win32Backend::Win32Backend() {
       }
     }
   }
+
+  uia_depth_ = is_wine_ ? 5 : 50;
+}
+
+void Win32Backend::set_config(const json::Object &config) {
+  if (config.count("uia_depth")) uia_depth_ = (int)config.at("uia_depth").as_num();
+  if (config.count("max_mem_read")) max_mem_read_size_ = (size_t)config.at("max_mem_read").as_num();
+  if (config.count("service_timeout")) service_timeout_sec_ = (int)config.at("service_timeout").as_num();
 }
 
 Snapshot Win32Backend::capture_snapshot() {
@@ -810,9 +818,9 @@ bool Win32Backend::service_control(const std::string &name, const std::string &a
   }
 
   if (ok) {
-    // Polling convergence (max 30s)
+    // Polling convergence
     auto start = std::chrono::steady_clock::now();
-    while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < 30) {
+    while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < service_timeout_sec_) {
       SERVICE_STATUS_PROCESS ssp;
       DWORD bytes = 0;
       if (QueryServiceStatusEx((SC_HANDLE)hSvc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
@@ -912,8 +920,7 @@ bool Win32Backend::sync_create_mutex(const std::string &name, bool own) {
 
 // Advanced Automation
 std::optional<MemoryRegion> Win32Backend::mem_read(uint32_t pid, uint64_t address, size_t size) {
-  static constexpr size_t MAX_MEM_READ_SIZE = static_cast<size_t>(1024) * 1024; // 1MB Limit
-  if (size > MAX_MEM_READ_SIZE) size = MAX_MEM_READ_SIZE;
+  if (size > max_mem_read_size_) size = max_mem_read_size_;
 
   SafeHandle h = OpenProcess(PROCESS_VM_READ, FALSE, pid);
   if (!h.is_valid()) return std::nullopt;
@@ -1143,8 +1150,7 @@ std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64 parent) {
   }
 
   if (SUCCEEDED(hr) && pRoot) {
-    int limit = is_wine_ ? 5 : 50;
-    walk_uia_tree(pAutomation, pRoot, results, 0, limit);
+    walk_uia_tree(pAutomation, pRoot, results, 0, uia_depth_);
   }
 
   return results;

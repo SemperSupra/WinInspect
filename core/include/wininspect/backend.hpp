@@ -14,6 +14,8 @@ class IBackend {
 public:
   virtual ~IBackend() = default;
 
+  virtual void set_config(const json::Object &config) = 0;
+
   virtual Snapshot capture_snapshot() = 0;
 
   virtual std::vector<hwnd_u64> list_top(const Snapshot &s) = 0;

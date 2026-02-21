@@ -348,6 +348,10 @@ int main(int argc, char **argv) {
   int poll_interval = 100;
   int max_wait = 30000;
   int discovery_port = 1986;
+  int max_mem_read = 1024 * 1024;
+  int uia_depth = -1; // -1 means use backend default
+  int service_timeout = 30;
+  int max_event_log = 1000;
 
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--headless")
@@ -383,6 +387,18 @@ int main(int argc, char **argv) {
     if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
       discovery_port = std::stoi(argv[++i]);
     }
+    if (std::string(argv[i]) == "--max-mem-read" && i + 1 < argc) {
+      max_mem_read = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--uia-depth" && i + 1 < argc) {
+      uia_depth = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--service-timeout" && i + 1 < argc) {
+      service_timeout = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--max-event-log" && i + 1 < argc) {
+      max_event_log = std::stoi(argv[++i]);
+    }
     if (std::string(argv[i]) == "--log-level" && i + 1 < argc) {
       std::string lvl = argv[++i];
       if (lvl == "TRACE") Logger::get().set_level(LogLevel::TRACE);
@@ -401,8 +417,20 @@ int main(int argc, char **argv) {
   st->poll_interval_ms = poll_interval;
   st->max_wait_ms = max_wait;
   st->discovery_port = discovery_port;
+  st->max_mem_read_size = (size_t)max_mem_read;
+  if (uia_depth != -1) st->uia_depth = uia_depth;
+  st->service_timeout_sec = service_timeout;
+  st->max_event_log = (size_t)max_event_log;
 
   auto backend = std::make_unique<Win32Backend>();
+  
+  // Propagate config to backend
+  json::Object bcfg;
+  bcfg["max_mem_read"] = (double)st->max_mem_read_size;
+  bcfg["uia_depth"] = (double)st->uia_depth;
+  bcfg["service_timeout"] = (double)st->service_timeout_sec;
+  backend->set_config(bcfg);
+
   std::atomic<bool> running{true};
 
   LOG_INFO("WinInspect Daemon starting up...");

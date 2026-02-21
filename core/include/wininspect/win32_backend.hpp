@@ -7,6 +7,8 @@ class Win32Backend final : public IBackend {
 public:
   Win32Backend();
 
+  void set_config(const json::Object &config) override;
+
   Snapshot capture_snapshot() override;
 
   std::vector<hwnd_u64> list_top(const Snapshot &s) override;
@@ -88,6 +90,11 @@ private:
   uint32_t win_major_ = 0;
   uint32_t win_minor_ = 0;
   uint32_t win_build_ = 0;
+
+  // Runtime Config
+  int uia_depth_ = 5;
+  size_t max_mem_read_size_ = 1024 * 1024;
+  int service_timeout_sec_ = 30;
 };
 
 } // namespace wininspect
