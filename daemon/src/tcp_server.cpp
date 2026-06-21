@@ -169,7 +169,9 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
       auto it_pk = v.find("pubkey");
       if (it_pk != v.end() && it_pk->second.is_str()) {
         auto client_pk = base64::decode(it_pk->second.as_str());
-        crypto.compute_shared_secret(client_pk);
+        if (!crypto.compute_shared_secret(client_pk)) {
+          LOG_DEBUG("ECDH shared secret computation failed");
+        }
       }
     } catch (...) {
       closesocket(s);
