@@ -125,7 +125,7 @@ static bool perform_auth(Conn &conn) {
   }
 
   std::string sig =
-      wininspect::crypto::sign_ssh_msg(base64::decode(nonce_b64), key_path);
+      wininspect::crypto::sign_ssh_msg(wininspect::base64::decode(nonce_b64), key_path);
   if (sig.empty()) {
     std::cerr << "Failed to sign challenge with key: " << key_path << "\n";
     return false;
