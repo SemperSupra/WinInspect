@@ -15,6 +15,20 @@ This repository is scaffolded to follow the **WineBotAppBuilder (WBAB)** lifecyc
 - `wbab smoke`
 - `wbab discover`
 
+## Download
+
+Pre-built releases are available on the [GitHub Releases page](https://github.com/SemperSupra/WinInspect/releases).
+
+| Package | Description |
+|---|---|
+| `WinInspect-Installer-*.exe` | NSIS installer for Windows 10/11 and Wine 10.x/11.x |
+| `WinInspectPortable-*.zip` | Portable edition — extract anywhere, no installation |
+| `wi-portable-*-win-x64.exe` | Go portable CLI (Windows) |
+| `wi-portable-*-linux-x64` | Go portable CLI (Linux) |
+
+Release builds are code-signed through the **SignPath Foundation**.
+Checksums (SHA256) are provided for all artifacts.
+
 ## Quick start (developer)
 
 ### Prereqs
