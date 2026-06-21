@@ -22,7 +22,7 @@
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Advapi32.lib") // For CryptGenRandom
 
-static const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
+static std::wstring g_pipe_name = L"\\\\.\\pipe\\wininspectd";
 
 struct Conn {
   HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -187,7 +187,7 @@ static bool connect_daemon(Conn &conn, bool tcp, const std::string &host,
     }
     return true;
   } else {
-    conn.hPipe = CreateFileW(PIPE_NAME, GENERIC_READ | GENERIC_WRITE, 0,
+    conn.hPipe = CreateFileW(g_pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
                              nullptr, OPEN_EXISTING, 0, nullptr);
     if (conn.hPipe == INVALID_HANDLE_VALUE)
       return false;
@@ -207,7 +207,7 @@ static std::string make_req(const std::string &id, const std::string &method,
 }
 
 static int usage() {
-  std::cerr << "Usage: wininspect <command> [args] [--tcp host:port]\n"
+  std::cerr << "Usage: wininspect <command> [args] [--tcp host:port] [--pipe name]\n"
             << "Commands:\n"
             << "  discover\n"
             << "  capture\n"
@@ -276,6 +276,10 @@ int main(int argc, char **argv) {
 
   std::vector<std::string> args;
   for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--pipe" && i + 1 < argc) {
+      std::string pname = argv[++i];
+      g_pipe_name = L"\\\\.\\pipe\\" + std::wstring(pname.begin(), pname.end());
+    } else
     if (std::string(argv[i]) == "--tcp") {
       use_tcp = true;
       if (i + 1 < argc) {

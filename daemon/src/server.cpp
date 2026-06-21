@@ -29,8 +29,7 @@ using namespace wininspect;
 
 namespace {
 
-
-const wchar_t *PIPE_NAME = L"\\\\.\\pipe\\wininspectd";
+std::wstring g_pipe_name = L"\\\\.\\pipe\\wininspectd";
 
 std::string make_snap_id(std::uint64_t n) { return "s-" + std::to_string(n); }
 
@@ -305,10 +304,11 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
 void run_server(std::atomic<bool> *running, ServerState *st,
                 IBackend *backend, bool read_only, std::string auth_keys_u8) {
-  LOG_INFO("Named Pipe server thread starting...");
+  std::string pipe_name_narrow(g_pipe_name.begin(), g_pipe_name.end());
+  LOG_INFO("Named Pipe server starting on: " + pipe_name_narrow);
   while (running->load()) {
     HANDLE hPipe = CreateNamedPipeW(
-        PIPE_NAME, PIPE_ACCESS_DUPLEX,
+        g_pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, nullptr);
 
@@ -436,6 +436,11 @@ int main(int argc, char **argv) {
     }
     if (std::string(argv[i]) == "--max-wait" && i + 1 < argc) {
       max_wait = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--pipe-name" && i + 1 < argc) {
+      std::string name = argv[++i];
+      std::wstring wname(name.begin(), name.end());
+      g_pipe_name = L"\\\\.\\pipe\\" + wname;
     }
     if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
       discovery_port = std::stoi(argv[++i]);
