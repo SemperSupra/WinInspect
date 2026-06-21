@@ -209,7 +209,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         std::string sid;
         {
           std::lock_guard<std::mutex> lk(st->mu);
-          sid = make_snap_id(st->snap_counter++);
+          sid = "s-" + std::to_string(st->snap_counter++);
           st->snaps.emplace(sid, std::move(s));
           st->lru_order.push_back(sid);
           session.subscribed = true;

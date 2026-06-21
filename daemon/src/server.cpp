@@ -70,6 +70,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
     }
   } guard{st->active_connections};
 
+  std::string pinned_sid;
   while (true) {
     wininspectd::PipeMessage m;
     if (!wininspectd::pipe_read_message(hPipe, m))
@@ -77,7 +78,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
     CoreResponse resp;
     bool canonical = false;
-    std::string pinned_sid;
+    pinned_sid.clear();
 
     try {
       auto req = parse_request_json(m.json);

@@ -1,0 +1,21 @@
+{
+  "name": "Event Subscription Lifecycle",
+  "description": "Canonical trace for events.subscribe, events.poll, and events.unsubscribe. Verifies that subscribe captures a baseline, poll returns diffs, and unsubscribe cleans up.",
+  "steps": [
+    {
+      "request": { "id": "e-1", "method": "events.subscribe", "params": {} },
+      "expected_result": {
+        "subscribed": true,
+        "snapshot_id": "<any>"
+      }
+    },
+    {
+      "request": { "id": "e-2", "method": "events.poll", "params": {} },
+      "expected_result": []
+    },
+    {
+      "request": { "id": "e-3", "method": "events.unsubscribe", "params": {} },
+      "expected_result": { "unsubscribed": true }
+    }
+  ]
+}
