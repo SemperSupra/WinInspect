@@ -12,7 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build and Test
+      - name: Build and Test (Debug)
+        run: |
+          cmake -S . -B build-debug -DWININSPECT_BUILD_TESTS=ON
+          cmake --build build-debug --config Debug
+          ctest --test-dir build-debug -C Debug --output-on-failure
+
+      - name: Build and Test (Release)
         run: |
           cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
           cmake --build build --config Release
