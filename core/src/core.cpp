@@ -147,16 +147,16 @@ static json::Object ui_element_to_json(const UIElementInfo &el) {
 
 // --- dispatch table builder ---
 
-void CoreEngine::build_dispatch_table() {
-// Standalone helpers — no captures, callable from [this] dispatch lambdas.
 static json::Value ok_json(bool v)      { json::Object o; o["ok"] = v;      return o; }
 static json::Value sent_json(bool v)    { json::Object o; o["sent"] = v;    return o; }
 static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; return o; }
 
+void CoreEngine::build_dispatch_table() {
+  IBackend *b = backend_;  // stored in the class, but we capture by member ptr via this
 
 
   // --- snapshot + events (handled in daemon layer) ---
-  dispatch_["events.poll"] = [this](  const CoreRequest &req,
+  dispatch_["events.poll"] = [this]( const CoreRequest &req,
                                   const Snapshot &snap, const Snapshot *old) -> CoreResponse {
     CoreResponse resp;
     resp.id = req.id;
@@ -180,23 +180,26 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
       break;
     }
     resp.ok = true; resp.result = json::Array{}; return resp;
+  };
 
   dispatch_["session.terminate"] = []( const CoreRequest &,
                                         const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     json::Object o; o["terminated"] = true;
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- window methods ---
-  dispatch_["window.listTop"] = [this](  const CoreRequest &,
+  dispatch_["window.listTop"] = [this]( const CoreRequest &,
                                       const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto top = backend_->list_top(snap);
     json::Array arr;
     for (auto h : top) { json::Object e; e["hwnd"] = Hwnd(h).to_string(); arr.emplace_back(e); }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["window.listChildren"] = [this](  const CoreRequest &req,
+  dispatch_["window.listChildren"] = [this]( const CoreRequest &req,
                                           const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -207,8 +210,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Array arr;
     for (auto h : ch) { json::Object e; e["hwnd"] = Hwnd(h).to_string(); arr.emplace_back(e); }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["window.getTree"] = [this](  const CoreRequest &req,
+  dispatch_["window.getTree"] = [this]( const CoreRequest &req,
                                      const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -218,8 +222,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Array arr;
     for (const auto &n : nodes) arr.push_back(window_node_to_json(n));
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["window.highlight"] = [this](  const CoreRequest &req,
+  dispatch_["window.highlight"] = [this]( const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -228,8 +233,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     json::Object o; o["highlighted"] = backend_->highlight_window(*hwnd);
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["window.getInfo"] = [this](  const CoreRequest &req,
+  dispatch_["window.getInfo"] = [this]( const CoreRequest &req,
                                      const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -239,8 +245,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     auto info = backend_->get_info(snap, *hwnd);
     if (!info) { resp.ok = false; resp.error_code = "E_BAD_HWND"; resp.error_message = "not a valid window handle"; return resp; }
     resp.ok = true; resp.result = window_info_to_json(*info); return resp;
+  };
 
-  dispatch_["window.pickAtPoint"] = [this](  const CoreRequest &req,
+  dispatch_["window.pickAtPoint"] = [this]( const CoreRequest &req,
                                          const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -252,9 +259,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!h) { resp.ok = false; resp.error_code = "E_NOT_FOUND"; resp.error_message = "no window at point"; return resp; }
     json::Object o; o["hwnd"] = Hwnd(*h).to_string();
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- desired-state actions (idempotent) ---
-  dispatch_["window.ensureVisible"] = [this](  const CoreRequest &req,
+  dispatch_["window.ensureVisible"] = [this]( const CoreRequest &req,
                                            const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto vis = get_bool(req.params, "visible");
@@ -263,8 +271,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     resp.ok = true; resp.result = changed_json(backend_->ensure_visible(*hwnd, *vis).changed);
     return resp;
+  };
 
-  dispatch_["window.ensureForeground"] = [this](  const CoreRequest &req,
+  dispatch_["window.ensureForeground"] = [this]( const CoreRequest &req,
                                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -273,8 +282,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     resp.ok = true; resp.result = changed_json(backend_->ensure_foreground(*hwnd).changed);
     return resp;
+  };
 
-  dispatch_["window.setProperty"] = [this](  const CoreRequest &req,
+  dispatch_["window.setProperty"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto name = get_str(req.params, "name"); auto val = get_str(req.params, "value");
@@ -283,8 +293,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     resp.ok = true; resp.result = ok_json(backend_->set_property(*hwnd, *name, *val));
     return resp;
+  };
 
-  dispatch_["window.postMessage"] = [this](  const CoreRequest &req,
+  dispatch_["window.postMessage"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto msg = get_num(req.params, "msg");
@@ -296,17 +307,19 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
         backend_->post_message(*hwnd, (uint32_t)*msg,
                         (uint64_t)(wparam.value_or(0)), (uint64_t)(lparam.value_or(0))));
     return resp;
+  };
 
   // --- input methods ---
-  dispatch_["input.send"] = [this](  const CoreRequest &req,
+  dispatch_["input.send"] = [this]( const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto data_b64 = get_str(req.params, "data_b64");
     if (!data_b64) throw std::runtime_error("missing data_b64");
     resp.ok = true; resp.result = sent_json(backend_->send_input(base64::decode(*data_b64)));
     return resp;
+  };
 
-  dispatch_["input.mouseClick"] = [this](  const CoreRequest &req,
+  dispatch_["input.mouseClick"] = [this]( const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -314,25 +327,28 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     int btn = (int)get_num(req.params, "button").value_or(0);
     resp.ok = true; resp.result = sent_json(backend_->send_mouse_click((int)*x, (int)*y, btn));
     return resp;
+  };
 
-  dispatch_["input.keyPress"] = [this](  const CoreRequest &req,
+  dispatch_["input.keyPress"] = [this]( const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto vk = get_num(req.params, "vk");
     if (!vk) throw std::runtime_error("missing vk");
     resp.ok = true; resp.result = sent_json(backend_->send_key_press((int)*vk));
     return resp;
+  };
 
-  dispatch_["input.text"] = [this](  const CoreRequest &req,
+  dispatch_["input.text"] = [this]( const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = get_str(req.params, "text");
     if (!text) throw std::runtime_error("missing text");
     resp.ok = true; resp.result = sent_json(backend_->send_text(*text));
     return resp;
+  };
 
   // --- stealth input ---
-  dispatch_["window.controlClick"] = [this](  const CoreRequest &req,
+  dispatch_["window.controlClick"] = [this]( const CoreRequest &req,
                                           const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto x = get_num(req.params, "x"); auto y = get_num(req.params, "y");
@@ -342,8 +358,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     int btn = (int)get_num(req.params, "button").value_or(0);
     resp.ok = true; resp.result = sent_json(backend_->control_click(*hwnd, (int)*x, (int)*y, btn));
     return resp;
+  };
 
-  dispatch_["window.controlSend"] = [this](  const CoreRequest &req,
+  dispatch_["window.controlSend"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto text = get_str(req.params, "text");
@@ -352,9 +369,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     resp.ok = true; resp.result = sent_json(backend_->control_send(*hwnd, *text));
     return resp;
+  };
 
   // --- screen methods ---
-  dispatch_["screen.getPixel"] = [this](  const CoreRequest &req,
+  dispatch_["screen.getPixel"] = [this]( const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -364,8 +382,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Object o;
     o["hex"] = c->to_hex(); o["r"] = (double)c->r; o["g"] = (double)c->g; o["b"] = (double)c->b;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["screen.capture"] = [this](  const CoreRequest &req,
+  dispatch_["screen.capture"] = [this]( const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
@@ -377,8 +396,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Object o;
     o["width"] = (double)sc->width; o["height"] = (double)sc->height; o["data_b64"] = sc->data_b64;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["screen.pixelSearch"] = [this](  const CoreRequest &req,
+  dispatch_["screen.pixelSearch"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
@@ -392,9 +412,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (res) { json::Object o; o["x"] = (double)res->first; o["y"] = (double)res->second; resp.ok = true; resp.result = o; }
     else { resp.ok = false; resp.error_code = "E_NOT_FOUND"; resp.error_message = "color not found in region"; }
     return resp;
+  };
 
   // --- process ---
-  dispatch_["process.list"] = [this](  const CoreRequest &,
+  dispatch_["process.list"] = [this]( const CoreRequest &,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto procs = backend_->list_processes();
@@ -403,17 +424,19 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
       json::Object o; o["pid"] = (double)p.pid; o["name"] = p.name; o["path"] = p.path; arr.push_back(o);
     }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["process.kill"] = [this](  const CoreRequest &req,
+  dispatch_["process.kill"] = [this]( const CoreRequest &req,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid");
     if (!pid) throw std::runtime_error("missing pid");
     resp.ok = true; resp.result = ok_json(backend_->kill_process((uint32_t)*pid));
     return resp;
+  };
 
   // --- file ---
-  dispatch_["file.getInfo"] = [this](  const CoreRequest &req,
+  dispatch_["file.getInfo"] = [this]( const CoreRequest &req,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -422,8 +445,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!fi) { resp.ok = false; resp.error_code = "E_NOT_FOUND"; return resp; }
     json::Object o; o["path"] = fi->path; o["size"] = (double)fi->size; o["is_directory"] = fi->is_directory;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["file.read"] = [this](  const CoreRequest &req,
+  dispatch_["file.read"] = [this]( const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -432,25 +456,28 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!content) { resp.ok = false; resp.error_code = "E_READ_FAILED"; return resp; }
     json::Object o; o["content_b64"] = base64::encode(std::vector<uint8_t>(content->begin(), content->end()));
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- clipboard ---
-  dispatch_["clipboard.read"] = [this](  const CoreRequest &,
+  dispatch_["clipboard.read"] = [this]( const CoreRequest &,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = backend_->clipboard_read();
     json::Object o; if (text) o["text"] = *text;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["clipboard.write"] = [this](  const CoreRequest &req,
+  dispatch_["clipboard.write"] = [this]( const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = get_str(req.params, "text");
     if (!text) throw std::runtime_error("missing text");
     resp.ok = true; resp.result = ok_json(backend_->clipboard_write(*text));
     return resp;
+  };
 
   // --- services ---
-  dispatch_["service.list"] = [this](  const CoreRequest &,
+  dispatch_["service.list"] = [this]( const CoreRequest &,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto svcs = backend_->service_list();
@@ -459,42 +486,47 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
       json::Object o; o["name"] = s.name; o["display_name"] = s.display_name; o["state"] = s.state; arr.push_back(o);
     }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["service.status"] = [this](  const CoreRequest &req,
+  dispatch_["service.status"] = [this]( const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
     if (!name) throw std::runtime_error("missing name");
     json::Object o; o["status"] = backend_->service_status(*name);
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["service.control"] = [this](  const CoreRequest &req,
+  dispatch_["service.control"] = [this]( const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name"), action = get_str(req.params, "action");
     if (!name || !action) throw std::runtime_error("missing name/action");
     resp.ok = true; resp.result = ok_json(backend_->service_control(*name, *action));
     return resp;
+  };
 
   // --- env ---
-  dispatch_["env.get"] = [this](  const CoreRequest &,
+  dispatch_["env.get"] = [this]( const CoreRequest &,
                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto vars = backend_->env_get_all();
     json::Object o;
     for (const auto &v : vars) o[v.name] = v.value;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["env.set"] = [this](  const CoreRequest &req,
+  dispatch_["env.set"] = [this]( const CoreRequest &req,
                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name"), val = get_str(req.params, "value");
     if (!name || !val) throw std::runtime_error("missing name/value");
     resp.ok = true; resp.result = ok_json(backend_->env_set(*name, *val));
     return resp;
+  };
 
   // --- wine ---
-  dispatch_["wine.drives"] = [this](  const CoreRequest &,
+  dispatch_["wine.drives"] = [this]( const CoreRequest &,
                                   const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto drives = backend_->wine_get_drives();
@@ -503,24 +535,27 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
       json::Object o; o["letter"] = d.letter; o["mapping"] = d.mapping; o["type"] = d.type; arr.push_back(o);
     }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["wine.overrides"] = [this](  const CoreRequest &,
+  dispatch_["wine.overrides"] = [this]( const CoreRequest &,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto ovr = backend_->wine_get_overrides();
     json::Array arr; for (const auto &s : ovr) arr.push_back(s);
     resp.ok = true; resp.result = arr; return resp;
+  };
 
   // --- sync ---
-  dispatch_["sync.checkMutex"] = [this](  const CoreRequest &req,
+  dispatch_["sync.checkMutex"] = [this]( const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
     if (!name) throw std::runtime_error("missing name");
     json::Object o; o["exists"] = backend_->sync_check_mutex(*name);
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["sync.createMutex"] = [this](  const CoreRequest &req,
+  dispatch_["sync.createMutex"] = [this]( const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
@@ -528,9 +563,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     bool own = get_bool(req.params, "own").value_or(true);
     json::Object o; o["created"] = backend_->sync_create_mutex(*name, own);
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- memory ---
-  dispatch_["mem.read"] = [this](  const CoreRequest &req,
+  dispatch_["mem.read"] = [this]( const CoreRequest &req,
                                const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid"), addr = get_num(req.params, "address"), sz = get_num(req.params, "size");
@@ -539,8 +575,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!res) { resp.ok = false; return resp; }
     json::Object o; o["address"] = (double)res->address; o["data_b64"] = res->data_b64;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["mem.write"] = [this](  const CoreRequest &req,
+  dispatch_["mem.write"] = [this]( const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid"); auto addr = get_num(req.params, "address"); auto data_b64 = get_str(req.params, "data_b64");
@@ -548,14 +585,15 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     auto data = base64::decode(*data_b64);
     resp.ok = true; resp.result = ok_json(backend_->mem_write((uint32_t)*pid, (uint64_t)*addr, data));
     return resp;
+  };
 
   // --- image ---
-  dispatch_["image.match"] = [this](  const CoreRequest &req,
+  dispatch_["image.match"] = [this]( const CoreRequest &req,
                                   const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
-         r = get_num(req.params, "right"), bm = get_num(req.params, "bottom");
-    auto sub_b64 = get_str(req.params, "sub_image_b64");
+         r = get_num(req.params, "right"), bm = get_num(req.params, "bottom"),
+         sub_b64 = get_str(req.params, "sub_image_b64");
     if (!l || !t || !r || !bm || !sub_b64) throw std::runtime_error("missing parameters");
     Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
     auto sub = base64::decode(*sub_b64);
@@ -563,18 +601,20 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!res) { resp.ok = false; return resp; }
     json::Object o; o["x"] = (double)res->x; o["y"] = (double)res->y; o["confidence"] = res->confidence;
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- input hook ---
-  dispatch_["input.hook"] = [this](  const CoreRequest &req,
+  dispatch_["input.hook"] = [this]( const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto enabled = get_bool(req.params, "enabled");
     if (!enabled) throw std::runtime_error("missing enabled");
     resp.ok = true; resp.result = ok_json(backend_->input_hook_enable(*enabled));
     return resp;
+  };
 
   // --- regex ---
-  dispatch_["window.findRegex"] = [this](  const CoreRequest &req,
+  dispatch_["window.findRegex"] = [this]( const CoreRequest &req,
                                        const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto t_re = get_str(req.params, "title_regex").value_or(".*");
@@ -583,9 +623,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Array arr;
     for (auto h : hwnds) { json::Object e; e["hwnd"] = Hwnd(h).to_string(); arr.push_back(e); }
     resp.ok = true; resp.result = arr; return resp;
+  };
 
   // --- registry ---
-  dispatch_["reg.read"] = [this](  const CoreRequest &req,
+  dispatch_["reg.read"] = [this]( const CoreRequest &req,
                                const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -601,8 +642,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     }
     o["values"] = vals;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["reg.write"] = [this](  const CoreRequest &req,
+  dispatch_["reg.write"] = [this]( const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path"), name = get_str(req.params, "name"),
@@ -611,8 +653,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     RegistryValue rv; rv.name = *name; rv.type = *type; rv.data = *data;
     resp.ok = true; resp.result = ok_json(backend_->reg_write(*path, rv));
     return resp;
+  };
 
-  dispatch_["reg.delete"] = [this](  const CoreRequest &req,
+  dispatch_["reg.delete"] = [this]( const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -620,9 +663,10 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     auto name = get_str(req.params, "name").value_or("");
     resp.ok = true; resp.result = ok_json(backend_->reg_delete(*path, name));
     return resp;
+  };
 
   // --- ui automation ---
-  dispatch_["ui.inspect"] = [this](  const CoreRequest &req,
+  dispatch_["ui.inspect"] = [this]( const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -633,8 +677,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     json::Array arr;
     for (const auto &el : elements) arr.push_back(ui_element_to_json(el));
     resp.ok = true; resp.result = arr; return resp;
+  };
 
-  dispatch_["ui.invoke"] = [this](  const CoreRequest &req,
+  dispatch_["ui.invoke"] = [this]( const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"); auto aid = get_str(req.params, "automation_id");
@@ -643,14 +688,16 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (!hwnd) throw std::runtime_error("bad hwnd");
     json::Object o; o["invoked"] = backend_->invoke_ui_element(*hwnd, *aid);
     resp.ok = true; resp.result = o; return resp;
+  };
 
   // --- daemon meta ---
-  dispatch_["daemon.health"] = [this](  const CoreRequest &,
+  dispatch_["daemon.health"] = [this]( const CoreRequest &,
                                     const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     resp.ok = true; resp.result = backend_->get_env_metadata(); return resp;
+  };
 
-  dispatch_["daemon.capabilities"] = [this](  const CoreRequest &,
+  dispatch_["daemon.capabilities"] = [this]( const CoreRequest &,
                                           const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto caps = backend_->get_capabilities();
@@ -665,8 +712,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     features["window_highlight"] = caps.window_highlight;
     o["features"] = features;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["daemon.checkUpdate"] = [this](  const CoreRequest &,
+  dispatch_["daemon.checkUpdate"] = [this]( const CoreRequest &,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto info = backend_->check_for_update();
@@ -676,8 +724,9 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     o["portable_zip_url"] = info.portable_zip_url; o["release_notes"] = info.release_notes;
     if (!info.error.empty()) o["error"] = info.error;
     resp.ok = true; resp.result = o; return resp;
+  };
 
-  dispatch_["daemon.downloadUpdate"] = [this](  const CoreRequest &req,
+  dispatch_["daemon.downloadUpdate"] = [this]( const CoreRequest &req,
                                             const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto url = get_str(req.params, "url").value_or("");
@@ -687,6 +736,7 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
     if (path.empty()) { resp.ok = false; o["ok"] = false; o["error"] = "download failed"; }
     else { o["ok"] = true; o["path"] = path; }
     resp.result = o; return resp;
+  };
 
   dispatch_["daemon.logs"] = []( const CoreRequest &,
                                  const Snapshot &, const Snapshot *) {
@@ -699,6 +749,7 @@ static json::Value changed_json(bool v) { json::Object o; o["changed"] = v; retu
       arr.push_back(lo);
     }
     resp.ok = true; resp.result = arr; return resp;
+  };
 }
 
 // --- public interface ---
