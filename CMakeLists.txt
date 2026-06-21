@@ -14,14 +14,6 @@ if(MSVC)
   add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-# Pin runtime output so packaging/CI can find binaries reliably,
-# regardless of CMake generator or platform subdirectory conventions.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/out)
-foreach(CONFIG_TYPE ${CMAKE_CONFIGURATION_TYPES})
-  string(TOUPPER ${CONFIG_TYPE} CONFIG_UPPER)
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CONFIG_UPPER} ${CMAKE_BINARY_DIR}/out)
-endforeach()
-
 add_library(wininspect_core
   core/src/core.cpp
   core/src/fake_backend.cpp

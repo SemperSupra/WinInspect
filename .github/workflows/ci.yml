@@ -26,10 +26,17 @@ jobs:
       - name: Install NSIS
         run: choco install nsis --no-progress -y
 
+      - name: Stage Binaries
+        run: |
+          mkdir -Force dist\staging
+          Get-ChildItem -Path build -Recurse -Filter *.exe |
+            Where-Object { $_.Name -match '^(wininspectd|wininspect|wininspect-gui)\.exe$' } |
+            Copy-Item -Destination dist\staging\
+
       - name: Package Installer
         run: |
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          makensis -DVERSION=ci -DBUILD_SRC=build\out -DDIST_DIR=dist tools\wininspect.nsi
+          makensis -DVERSION=ci -DBUILD_SRC=dist\staging -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4
