@@ -276,6 +276,8 @@ static int usage() {
             << "  ui-invoke <hwnd> <automation_id>\n"
             << "  health\n"
             << "  capabilities\n"
+            << "  check-update\n"
+            << "  update\n"
             << "  config --key <path>\n";
   return 2;
 }
@@ -760,6 +762,19 @@ int main(int argc, char **argv) {
 
   if (cmd == "capabilities") {
     return send_and_print("daemon.capabilities");
+  }
+
+  if (cmd == "check-update") {
+    return send_and_print("daemon.checkUpdate");
+  }
+
+  if (cmd == "update") {
+    for (size_t i = 1; i < args.size(); ++i) {
+      if (args[i] == "--url" && i + 1 < args.size()) {
+        params["url"] = args[++i];
+      }
+    }
+    return send_and_print("daemon.downloadUpdate");
   }
 
   if (cmd == "config") {

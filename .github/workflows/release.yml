@@ -50,7 +50,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/WinInspect-Installer.exe
+            dist/WinInspect-Installer-*.exe
             dist/wi-portable-*-win-x64.exe
             dist/wi-portable-*-linux-x64
           generate_release_notes: true

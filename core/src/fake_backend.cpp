@@ -346,6 +346,17 @@ json::Object FakeBackend::get_env_metadata() {
   return o;
 }
 
+update::UpdateInfo FakeBackend::check_for_update() {
+  update::UpdateInfo info;
+  info.current_version = std::string(WININSPECT_VERSION);
+  info.error = "update check not available in fake backend";
+  return info;
+}
+
+std::string FakeBackend::download_update(const std::string &) {
+  return {};
+}
+
 void FakeBackend::add_fake_ui_element(hwnd_u64 parent,
                                       const UIElementInfo &info) {
   std::lock_guard<std::mutex> lk(mu_);

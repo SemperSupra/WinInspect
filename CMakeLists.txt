@@ -20,6 +20,7 @@ add_library(wininspect_core
   core/src/win32_backend.cpp
   core/src/crypto.cpp
   core/src/logger.cpp
+  core/src/update.cpp
 )
 target_include_directories(wininspect_core PUBLIC
   core/include
@@ -29,7 +30,7 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
-  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt)
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp)
   if(NOT MSVC)
     target_link_options(wininspect_core PUBLIC -static-libgcc -static-libstdc++)
   endif()

@@ -23,6 +23,7 @@ struct SessionID {
 };
 
 inline constexpr std::string_view PROTOCOL_VERSION = "0.0.1";
+inline constexpr std::string_view WININSPECT_VERSION = "v0.0.1";
 
 struct Rect {
   long left{}, top{}, right{}, bottom{};

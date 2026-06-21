@@ -938,6 +938,35 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       return resp;
     }
 
+    if (req.method == "daemon.checkUpdate") {
+      auto info = backend_->check_for_update();
+      json::Object o;
+      o["update_available"] = info.update_available;
+      o["current_version"] = info.current_version;
+      o["latest_version"] = info.latest_version;
+      o["download_url"] = info.download_url;
+      o["release_notes"] = info.release_notes;
+      if (!info.error.empty()) o["error"] = info.error;
+      resp.result = o;
+      return resp;
+    }
+
+    if (req.method == "daemon.downloadUpdate") {
+      auto url = get_str(req.params, "url").value_or("");
+      auto path = backend_->download_update(url);
+      json::Object o;
+      if (path.empty()) {
+        o["ok"] = false;
+        o["error"] = "download failed";
+        resp.ok = false;
+      } else {
+        o["ok"] = true;
+        o["path"] = path;
+      }
+      resp.result = o;
+      return resp;
+    }
+
     if (req.method == "daemon.logs") {
       auto logs = Logger::get().get_recent_logs();
       json::Array arr;

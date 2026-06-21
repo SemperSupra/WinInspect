@@ -13,7 +13,7 @@
 !endif
 
 Name "WinInspect ${VERSION}"
-OutFile "${DIST_DIR}\\WinInspect-Installer.exe"
+OutFile "${DIST_DIR}\\WinInspect-Installer-${VERSION}.exe"
 InstallDir "$PROGRAMFILES64\\WinInspect"
 RequestExecutionLevel admin
 

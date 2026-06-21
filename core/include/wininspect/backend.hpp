@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include "update.hpp"
 #include "tinyjson.hpp"
 #include <optional>
 #include <vector>
@@ -102,6 +103,10 @@ public:
 
   virtual Capabilities get_capabilities() = 0;
   virtual json::Object get_env_metadata() = 0;
+
+  // Auto-update
+  virtual update::UpdateInfo check_for_update() = 0;
+  virtual std::string download_update(const std::string &url) = 0;
 
   // Event polling
   virtual std::vector<Event> poll_events(const Snapshot &old_snap,

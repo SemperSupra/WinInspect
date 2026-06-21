@@ -1,5 +1,6 @@
 #include "wininspect/win32_backend.hpp"
 #include "wininspect/util_win32.hpp"
+#include "wininspect/update.hpp"
 #include <chrono>
 #include <thread>
 #include <regex>
@@ -1321,6 +1322,14 @@ std::vector<Event> Win32Backend::poll_events(const Snapshot &old_snap,
   return out;
 }
 
+update::UpdateInfo Win32Backend::check_for_update() {
+  return update::check_for_update(std::string(WININSPECT_VERSION));
+}
+
+std::string Win32Backend::download_update(const std::string &url) {
+  return update::download_update(url, std::string(WININSPECT_VERSION));
+}
+
 } // namespace wininspect
 #else
 namespace wininspect {
@@ -1361,6 +1370,16 @@ json::Object Win32Backend::get_env_metadata() {
   json::Object o;
   o["os"] = "unknown";
   return o;
+}
+
+update::UpdateInfo Win32Backend::check_for_update() {
+  update::UpdateInfo info;
+  info.error = "not supported on this platform";
+  return info;
+}
+
+std::string Win32Backend::download_update(const std::string &) {
+  return {};
 }
 
 bool Win32Backend::send_mouse_click(int, int, int) { return false; }

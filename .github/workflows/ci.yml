@@ -43,4 +43,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WinInspect-Installer
-          path: dist/WinInspect-Installer.exe
+          path: dist/WinInspect-Installer-ci.exe
