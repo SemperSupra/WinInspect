@@ -1,6 +1,6 @@
 {{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "wininspect:protocol:v1",
+  "$id": "wininspect:protocol:v0.1.0",
   "title": "wininspect protocol v1",
   "type": "object",
   "oneOf": [

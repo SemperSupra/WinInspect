@@ -1,5 +1,6 @@
 {
   "name": "UIA Recursive Tree Discovery",
+  "trace_version": "1",
   "description": "Canonical trace for a nested UI tree (Window -> Panel -> Button)",
   "initial_world": {
     "windows": [

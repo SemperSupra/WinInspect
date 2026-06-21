@@ -1,5 +1,6 @@
 {
   "name": "two_clients_non_interference",
+  "trace_version": "1",
   "initial_world": {
     "windows": [
       { "hwnd": "0x1", "visible": true,  "title": "A", "class": "C1" },

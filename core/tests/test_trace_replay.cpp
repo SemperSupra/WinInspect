@@ -16,12 +16,26 @@ static std::string read_file(const char *path) {
   return ss.str();
 }
 
+// Ensure a trace file has a supported version field.
+// Fail fast with a clear message if the version is missing or unsupported.
+static void require_trace_version(const char *path, const json::Object &trace) {
+  auto it = trace.find("trace_version");
+  DOCTEST_REQUIRE_MESSAGE(it != trace.end(),
+    std::string(path) + ": missing trace_version field");
+  DOCTEST_REQUIRE_MESSAGE(it->second.is_str(),
+    std::string(path) + ": trace_version must be a string");
+  auto ver = it->second.as_str();
+  DOCTEST_REQUIRE_MESSAGE(ver == "1",
+    std::string(path) + ": unsupported trace_version " + ver + " (expected \"1\")");
+}
+
 DOCTEST_TEST_CASE("trace replay: two_clients_non_interference") {
   // Minimal replay: validate key expectations using fake backend
   auto trace = wininspect::json::parse(
                    read_file("formal/traces/two_clients_non_interference.json"))
                    .as_obj();
   auto windows = trace.at("initial_world").as_obj().at("windows").as_arr();
+  require_trace_version("formal/traces/two_clients_non_interference.json", trace);
 
   std::vector<FakeWindow> fw;
   for (const auto &w : windows) {
@@ -55,6 +69,7 @@ DOCTEST_TEST_CASE("trace replay: two_clients_non_interference") {
 DOCTEST_TEST_CASE("trace replay: uia_recursive_tree") {
   auto trace = wininspect::json::parse(
                    read_file("formal/traces/uia_recursive_tree.json"))
+require_trace_version("formal/traces/uia_recursive_tree.json", trace);
                    .as_obj();
   
   FakeBackend fb({});

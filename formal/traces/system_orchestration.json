@@ -1,5 +1,6 @@
 {
   "name": "System Orchestration Challenge",
+  "trace_version": "1",
   "description": "Canonical trace for Process, Registry, and Clipboard operations.",
   "steps": [
     {

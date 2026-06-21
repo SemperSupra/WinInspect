@@ -4,11 +4,11 @@
 - **Windows Named Pipe**: `\\.\pipe\wininspectd` (Local IPC, no auth required by default)
 - **TCP**: `0.0.0.0:1985` (Cross-environment/Network, SSH Auth required if enabled)
 - **Framing**: 4-byte little-endian length prefix + UTF-8 JSON payload.
-- **Protocol Version**: 1.0.0
+- **Protocol Version**: 0.1.0
 
 ## Authentication & Encryption (Handshake)
-1. **Server $\rightarrow$ Client**: `{"type":"hello","version":"1.0.0","nonce":"<b64>","pubkey":"<b64_ecdh_pub>"}`
-2. **Client $\rightarrow$ Server**: `{"version":"1.0.0","identity":"<user>","signature":"<b64_ssh_sig>","pubkey":"<b64_ecdh_pub>"}`
+1. **Server $\rightarrow$ Client**: `{"type":"hello","version":"0.1.0","nonce":"<b64>","pubkey":"<b64_ecdh_pub>"}`
+2. **Client $\rightarrow$ Server**: `{"version":"0.1.0","identity":"<user>","signature":"<b64_ssh_sig>","pubkey":"<b64_ecdh_pub>"}`
 3. **Server $\rightarrow$ Client**: `{"type":"auth_status","ok":true}`
 
 **Post-Handshake:**
