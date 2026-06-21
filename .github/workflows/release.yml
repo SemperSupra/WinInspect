@@ -30,8 +30,8 @@ jobs:
         run: |
           GOOS=linux GOARCH=amd64 go build -C clients/portable -o ../../dist/wi-portable-${{ github.ref_name }}-linux-x64
 
-      - name: Install NSIS
-        run: choco install nsis --no-progress -y
+      - name: Install Tools (NSIS + 7zip)
+        run: choco install nsis 7zip --no-progress -y
 
       - name: Stage Binaries
         run: |
@@ -39,18 +39,25 @@ jobs:
           Get-ChildItem -Path build\* -Recurse -Include wininspectd.exe,wininspect.exe,wininspect-gui.exe -File |
             Copy-Item -Destination dist\staging\ -Verbose
 
-      - name: Package Installer
+      - name: Package Installer (NSIS)
         shell: bash
         run: |
           export PATH="/c/Program Files (x86)/NSIS:$PATH"
           ls -la dist/staging/
           makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
 
+      - name: Package PortableApps.com
+        shell: bash
+        run: |
+          export PATH="/c/Program Files/7-Zip:$PATH"
+          chmod +x scripts/build-portableapps.sh
+          scripts/build-portableapps.sh ${{ github.ref_name }} build/Release
+
       - name: Generate Checksums
         shell: bash
         run: |
           cd dist
-          for f in WinInspect-Installer-*.exe wi-portable-*.exe wi-portable-*-linux-x64; do
+          for f in *.exe *.zip *.paf.exe *-linux-x64; do
             if [ -f "$f" ]; then
               sha256sum "$f" > "$f.sha256"
               echo "--- $f ---"
@@ -64,15 +71,12 @@ jobs:
           files: |
             dist/WinInspect-Installer-*.exe
             dist/WinInspect-Installer-*.exe.sha256
+            dist/WinInspectPortable-*.zip
+            dist/WinInspectPortable-*.zip.sha256
+            dist/WinInspectPortable-*.paf.exe
+            dist/WinInspectPortable-*.paf.exe.sha256
             dist/wi-portable-*-win-x64.exe
             dist/wi-portable-*-win-x64.exe.sha256
             dist/wi-portable-*-linux-x64
             dist/wi-portable-*-linux-x64.sha256
-          generate_release_notes: true
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            dist/WinInspect-Installer-*.exe
-            dist/wi-portable-*-win-x64.exe
-            dist/wi-portable-*-linux-x64
           generate_release_notes: true
