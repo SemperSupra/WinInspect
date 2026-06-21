@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build and Test
         run: |
@@ -47,7 +47,7 @@ jobs:
           cat WinInspect-Installer-ci.exe.sha256
 
       - name: Upload Installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: WinInspect-Installer
           path: |

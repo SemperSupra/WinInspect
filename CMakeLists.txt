@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # MSVC compatibility
 if(MSVC)
-  add_compile_options(/utf-8)
+  add_compile_options(/utf-8 /wd4244)
   add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
