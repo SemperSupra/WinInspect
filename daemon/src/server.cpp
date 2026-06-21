@@ -24,6 +24,8 @@
 #include <list>
 #include <future>
 #include <memory>
+#include <sstream>
+#include <fstream>
 
 using namespace wininspect;
 
@@ -47,17 +49,18 @@ void cleanup_sessions(ServerState *st) {
 }
 
 void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
-                   bool read_only, const std::string& auth_keys_u8) {
+                   bool read_only, bool require_auth,
+                   const std::string& auth_keys_data) {
   CoInitGuard coinit;
   CoreEngine core(backend);
   ClientSession session;
   st->active_connections++;
   LOG_INFO("New client connection established.");
 
-  // Handle auto-auth for local pipes if no keys set
-  if (auth_keys_u8.empty()) {
+  // Auto-auth local pipes only when not in require-auth mode and no keys configured
+  if (!require_auth && auth_keys_data.empty()) {
     session.authenticated = true;
-    LOG_DEBUG("Local auto-auth enabled (no keys).");
+    LOG_DEBUG("Local auto-auth enabled (no keys, not require-auth).");
   }
 
   // Ensure decrement on exit
@@ -303,7 +306,8 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 }
 
 void run_server(std::atomic<bool> *running, ServerState *st,
-                IBackend *backend, bool read_only, std::string auth_keys_u8) {
+                IBackend *backend, bool read_only, bool require_auth,
+                std::string auth_keys_data) {
   std::string pipe_name_narrow(g_pipe_name.begin(), g_pipe_name.end());
   LOG_INFO("Named Pipe server starting on: " + pipe_name_narrow);
   while (running->load()) {
@@ -336,7 +340,7 @@ void run_server(std::atomic<bool> *running, ServerState *st,
 
     {
     std::lock_guard<std::mutex> lk(st->thread_mu);
-    st->client_threads.emplace_back(handle_client, hPipe, st, backend, read_only, auth_keys_u8);
+    st->client_threads.emplace_back(handle_client, hPipe, st, backend, read_only, require_auth, auth_keys_data);
   }
   }
 }
@@ -398,6 +402,7 @@ int main(int argc, char **argv) {
   bool bind_public = false;
   bool read_only = false;
   std::string auth_keys;
+  bool require_auth = false;
   int tcp_port = 1985;
   int max_snaps = 1000;
   int max_conns = 32;
@@ -418,6 +423,8 @@ int main(int argc, char **argv) {
       bind_public = true;
     if (std::string(argv[i]) == "--read-only")
       read_only = true;
+    if (std::string(argv[i]) == "--require-auth")
+      require_auth = true;
     if (std::string(argv[i]) == "--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
     }
@@ -501,43 +508,40 @@ int main(int argc, char **argv) {
   LOG_INFO("Environment: " + env.at("os").as_str() + " (" + env.at("arch").as_str() + ")");
   if (env.count("wine_version")) LOG_INFO("Wine Version: " + env.at("wine_version").as_str());
 
-  std::string auth_keys_u8 = auth_keys;
+  // Read auth keys file once at startup (cache content, not path)
+  std::string auth_keys_data;
+  if (!auth_keys.empty()) {
+    std::ifstream kf(auth_keys);
+    std::stringstream ks;
+    ks << kf.rdbuf();
+    auth_keys_data = ks.str();
+    LOG_INFO("Loaded " + std::to_string(auth_keys_data.size()) + " bytes of authorized keys from " + auth_keys);
+  }
 
   // 1. Start discovery responder
   LOG_INFO("Starting Discovery responder...");
-  struct DiscoveryArgs { std::atomic<bool>* running; ServerState* st; int port; IBackend* backend; };
-  auto d_args = new DiscoveryArgs{&running, st.get(), tcp_port, backend.get()};
-  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
-    auto a = (DiscoveryArgs*)p;
-    run_discovery_responder(a->running, a->st, a->port, a->backend);
-    delete a;
-    return 0;
-  }, d_args, 0, NULL);
+  std::thread disc_thread([&running, st = st.get(), tcp_port, backend = backend.get()]() {
+    run_discovery_responder(&running, st, tcp_port, backend);
+  });
+  disc_thread.detach();
 
   // 2. Start cleanup thread
   LOG_INFO("Starting Cleanup thread...");
-  struct CleanupArgs { ServerState* st; std::atomic<bool>* running; };
-  auto c_args = new CleanupArgs{st.get(), &running};
-  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
-    auto a = (CleanupArgs*)p;
-    while (a->running->load()) {
+  std::thread cleanup_thread([&running, st = st.get()]() {
+    while (running.load()) {
       Sleep(60000);
-      cleanup_sessions(a->st);
+      cleanup_sessions(st);
     }
-    delete a;
-    return 0;
-  }, c_args, 0, NULL);
+  });
+  cleanup_thread.detach();
 
   // 3. Start Named Pipe server (background)
   LOG_INFO("Starting Named Pipe server (background)...");
-  struct ServerArgs { std::atomic<bool>* running; ServerState* st; IBackend* backend; bool ro; std::string keys; };
-  auto s_args = new ServerArgs{&running, st.get(), backend.get(), read_only, auth_keys_u8};
-  CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
-    auto a = (ServerArgs*)p;
-    run_server(a->running, a->st, a->backend, a->ro, a->keys);
-    delete a;
-    return 0;
-  }, s_args, 0, NULL);
+  std::thread pipe_thread([&running, st = st.get(), backend = backend.get(),
+                            read_only, require_auth, &auth_keys_data]() {
+    run_server(&running, st, backend, read_only, require_auth, auth_keys_data);
+  });
+  pipe_thread.detach();
 
   // 4. Run TCP server (BLOCKING MAIN THREAD)
   LOG_INFO("Starting TCP Server (blocking main thread)...");
@@ -552,9 +556,9 @@ int main(int argc, char **argv) {
     });
     if (tray.init(GetModuleHandle(nullptr))) {
       // Create a background thread for TCP if tray is running
-      std::thread([&, tcp, bind_public, auth_keys_u8, read_only]() {
+      std::thread([&, tcp, bind_public, &auth_keys_data, read_only]() {
         try {
-          tcp->start(&running, bind_public, auth_keys_u8, read_only);
+          tcp->start(&running, bind_public, auth_keys_data, read_only);
         } catch (...) {}
       }).detach();
       tray.run();
@@ -562,7 +566,7 @@ int main(int argc, char **argv) {
   }
 
   try {
-    tcp->start(&running, bind_public, auth_keys_u8, read_only);
+    tcp->start(&running, bind_public, auth_keys_data, read_only);
   } catch (...) {
     LOG_ERROR("TCP Server fatal error.");
   }

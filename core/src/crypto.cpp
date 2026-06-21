@@ -222,7 +222,9 @@ bool verify_ssh_sig(const std::vector<uint8_t> &message,
   // For BCrypt, we need to wrap the raw 32-byte pubkey in a BCRYPT_ECCKEY_BLOB
   std::vector<uint8_t> blob(sizeof(BCRYPT_ECCKEY_BLOB) + 32);
   PBCRYPT_ECCKEY_BLOB pBlob = (PBCRYPT_ECCKEY_BLOB)blob.data();
-  pBlob->dwMagic = BCRYPT_ECDH_PUBLIC_GENERIC_MAGIC;
+  pBlob->dwMagic = BCRYPT_ECDSA_PUBLIC_GENERIC_MAGIC;
+  // Ed25519 uses the ECDSA variant generic blob format for key import.
+  // Algorithm is ECC_ED25519 per the BCryptOpenAlgorithmProvider call above.
   pBlob->cbKey = 32;
   memcpy(blob.data() + sizeof(BCRYPT_ECCKEY_BLOB), raw_pubkey.data(), 32);
 

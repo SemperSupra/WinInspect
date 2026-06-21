@@ -4,13 +4,14 @@
 
 #ifdef _WIN32
 #include <iostream>
+#include <sstream>
 #include <thread>
 #include <vector>
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <fstream>
-#include <wincrypt.h>
+#include <bcrypt.h>
 #include <future>
 
 #include "tcp_server.hpp"
@@ -58,16 +59,37 @@ static bool socket_write_all(SOCKET s, const void *buf, uint32_t len) {
   return true;
 }
 
+// Encrypted send: encrypt JSON, prepend 4-byte length of ciphertext blob
+static bool encrypted_send(SOCKET s, const std::string &plaintext,
+                           crypto::CryptoSession &cs) {
+  auto ct = cs.encrypt(plaintext);
+  if (ct.empty()) return false;
+  uint32_t flen = (uint32_t)ct.size();
+  return socket_write_all(s, &flen, 4) &&
+         socket_write_all(s, ct.data(), flen);
+}
+
+// Encrypted recv: read 4-byte length, read ciphertext blob, decrypt
+static bool encrypted_recv(SOCKET s, std::string &plaintext,
+                           crypto::CryptoSession &cs) {
+  uint32_t flen = 0;
+  if (!socket_read_all(s, &flen, 4)) return false;
+  if (flen == 0 || flen > 10 * 1024 * 1024) return false;
+  std::vector<uint8_t> ct(flen);
+  if (!socket_read_all(s, ct.data(), flen)) return false;
+  plaintext = cs.decrypt(ct);
+  return !plaintext.empty();
+}
 
 struct AuthContext {
-  std::string keys_path;
+  const std::string &keys_data;
   std::string identity;
   std::string sig_b64;
   std::vector<uint8_t> nonce;
 };
 
 static bool verify_identity(const AuthContext &ctx) {
-  std::ifstream f(ctx.keys_path);
+  std::istringstream f(ctx.keys_data);
   std::string line;
   while (std::getline(f, line)) {
     if (line.empty() || line[0] == '#')
@@ -89,21 +111,24 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
   setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout,
              sizeof(timeout));
 
-  // 1. Always send Hello/Challenge
+  // Create ECDH session for post-handshake encryption
+  wininspect::crypto::CryptoSession crypto;
+  auto server_pubkey = crypto.generate_local_key();
   std::vector<uint8_t> nonce;
+
+  // 1. Always send Hello/Challenge (with ECDH pubkey if keys configured)
   wininspect::json::Object challenge;
   challenge["type"] = "hello";
   challenge["version"] = std::string(wininspect::PROTOCOL_VERSION);
 
   if (!auth_keys.empty()) {
     nonce.resize(32);
-    HCRYPTPROV hProv;
-    if (CryptAcquireContext(&hProv, nullptr, nullptr, PROV_RSA_FULL,
-                            CRYPT_VERIFYCONTEXT)) {
-      CryptGenRandom(hProv, (DWORD)nonce.size(), nonce.data());
-      CryptReleaseContext(hProv, 0);
-    }
+    BCryptGenRandom(nullptr, nonce.data(), (ULONG)nonce.size(),
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG);
     challenge["nonce"] = base64::encode(nonce);
+    if (!server_pubkey.empty()) {
+      challenge["pubkey"] = base64::encode(server_pubkey);
+    }
   }
 
   std::string cj = wininspect::json::dumps(challenge);
@@ -114,7 +139,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
     return;
   }
 
-  // 2. Perform Auth if keys are configured
+  // 2. Perform Auth + Key Exchange if keys are configured
   if (!auth_keys.empty()) {
     uint32_t rlen = 0;
     if (!socket_read_all(s, &rlen, 4)) {
@@ -139,6 +164,13 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         closesocket(s);
         return;
       }
+
+      // Compute shared secret from client's ECDH public key
+      auto it_pk = v.find("pubkey");
+      if (it_pk != v.end() && it_pk->second.is_str()) {
+        auto client_pk = base64::decode(it_pk->second.as_str());
+        crypto.compute_shared_secret(client_pk);
+      }
     } catch (...) {
       closesocket(s);
       return;
@@ -161,25 +193,26 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
   setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&idle_timeout,
              sizeof(idle_timeout));
 
+  // Post-handshake: use encrypted transport if key exchange completed
+  bool encrypted = crypto.is_initialized();
+
   while (true) {
-    uint32_t len = 0;
-    if (!socket_read_all(s, &len, 4))
-      break;
-
-    // Security: Prevent OOM/DoS by enforcing a reasonable maximum message size
-    // (10MB)
-    if (len == 0 || len > 10 * 1024 * 1024)
-      break;
-
     std::string json_req;
-    json_req.resize(len);
-    if (!socket_read_all(s, json_req.data(), len))
-      break;
+    if (encrypted) {
+      if (!encrypted_recv(s, json_req, crypto))
+        break;
+    } else {
+      uint32_t len = 0;
+      if (!socket_read_all(s, &len, 4)) break;
+      if (len == 0 || len > 10 * 1024 * 1024) break;
+      json_req.resize(len);
+      if (!socket_read_all(s, json_req.data(), len)) break;
+    }
 
     wininspect::CoreResponse resp;
     bool canonical = false;
     std::string pinned_sid;
-    wininspect::ClientSession session; // Temporary session for this connection
+    wininspect::ClientSession session;
 
     try {
       auto req = wininspect::parse_request_json(json_req);
@@ -190,6 +223,12 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
       if (itsid != req.params.end() && itsid->second.is_str()) {
         std::string sid_str = itsid->second.as_str();
         std::lock_guard<std::mutex> lk(st->mu);
+        if (st->sessions.size() >= st->max_sessions && !st->sessions.count(sid_str)) {
+          resp.ok = false;
+          resp.error_code = "E_TOO_MANY_SESSIONS";
+          resp.error_message = "session limit reached";
+          goto send_resp;
+        }
         if (st->sessions.count(sid_str)) {
           auto &ps = st->sessions[sid_str];
           session.id = SessionID(sid_str);
@@ -202,15 +241,14 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         }
       }
 
-
-      // Intercept subscribe before core dispatch -- captures baseline snapshot
+      // Intercept subscribe/unsubscribe before core dispatch
       if (req.method == "events.subscribe") {
-        Snapshot s = backend->capture_snapshot();
+        wininspect::Snapshot snap_base = backend->capture_snapshot();
         std::string sid;
         {
           std::lock_guard<std::mutex> lk(st->mu);
           sid = "s-" + std::to_string(st->snap_counter++);
-          st->snaps.emplace(sid, std::move(s));
+          st->snaps.emplace(sid, std::move(snap_base));
           st->lru_order.push_back(sid);
           session.subscribed = true;
           session.last_snap_id = sid;
@@ -219,7 +257,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
             st->sessions[session.id.val].last_snap_id = sid;
           }
         }
-        json::Object o;
+        wininspect::json::Object o;
         o["subscribed"] = true;
         o["snapshot_id"] = sid;
         resp.ok = true;
@@ -237,12 +275,13 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
             st->sessions[session.id.val].last_snap_id.clear();
           }
         }
-        json::Object o;
+        wininspect::json::Object o;
         o["unsubscribed"] = true;
         resp.ok = true;
         resp.result = o;
         goto send_resp;
       }
+
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);
@@ -251,7 +290,6 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         }
       }
 
-      // Security: Check Read-Only mode
       if (read_only &&
           (req.method == "window.postMessage" || req.method == "input.send" || req.method.find("reg.write") != std::string::npos)) {
         resp.ok = false;
@@ -329,8 +367,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
           }
         }
 
-        // Watchdog: run core in async task
-        auto future = std::async(std::launch::async, [&]() {
+        auto future = std::async(std::launch::async, [&core, req, snap, old_ptr]() {
           return core.handle(req, snap, old_ptr);
         });
 
@@ -363,9 +400,13 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
 
   send_resp:
     std::string out = wininspect::serialize_response_json(resp, canonical);
-    uint32_t out_len = (uint32_t)out.size();
-    socket_write_all(s, &out_len, 4);
-    socket_write_all(s, out.data(), out_len);
+    if (encrypted) {
+      encrypted_send(s, out, crypto);
+    } else {
+      uint32_t out_len = (uint32_t)out.size();
+      socket_write_all(s, &out_len, 4);
+      socket_write_all(s, out.data(), out_len);
+    }
 
     if (!pinned_sid.empty()) {
       std::lock_guard<std::mutex> lk(st->mu);
@@ -422,7 +463,6 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     return;
   }
 
-  // Set non-blocking to check 'running' flag
   u_long mode = 1;
   ioctlsocket(listen_sock, FIONBIO, &mode);
 
@@ -436,7 +476,6 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
       break;
     }
 
-    // Set back to blocking for the handler thread
     u_long m2 = 0;
     ioctlsocket(client, FIONBIO, &m2);
 
