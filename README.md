@@ -31,21 +31,63 @@ Checksums (SHA256) are provided for all artifacts.
 
 ## Quick start (developer)
 
-### Prereqs
-- Windows: Visual Studio Build Tools (MSVC), CMake >= 3.22
-- Linux: optional (for running TLA+ / formatting); for Wine, run Windows binaries under Wine.
+### Prerequisites
+
+Install the toolchain via winget (Windows 10/11 built-in):
+
+```powershell
+# One-time setup
+winget install Kitware.CMake
+winget install Microsoft.VisualStudio.2022.BuildTools `
+  --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install GoLang.Go              # for portable CLI
+winget install NSIS.NSIS              # for installer packaging
+```
+
+Verify the toolchain:
+
+```powershell
+cmake --version          # >= 3.22
+where cl                 # MSVC compiler
+go version               # >= 1.21 (optional)
+makensis /VERSION        # NSIS (optional)
+```
 
 ### Build + test
-```bash
+
+```powershell
 cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 ### Run daemon + CLI (Windows)
+
+```powershell
+build\Release\wininspectd.exe
+build\Release\wininspect.exe top
+build\Release\wininspect.exe capabilities
+build\Release\wininspect.exe check-update
+```
+
+### Package installer (optional)
+
+```powershell
+cmake --build build --config Release
+makensis -DVERSION=dev -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+```
+
+### Linux / WSL (cross-compile for Wine)
+
 ```bash
-build\Debug\wininspectd.exe
-build\Debug\wininspect.exe top
+sudo apt install cmake mingw-w64 wine
+cmake -S . -B build \
+  -DCMAKE_SYSTEM_NAME=Windows \
+  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+  -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine \
+  -DWININSPECT_BUILD_TESTS=ON
+cmake --build build
 ```
 
 ## Submodule Policy
@@ -70,4 +112,4 @@ See:
 - `formal/tla/`
 
 ## License
-MIT (see `LICENSE`).
+Apache 2.0 (see `LICENSE`).
