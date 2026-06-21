@@ -36,9 +36,8 @@ jobs:
       - name: Stage Binaries
         run: |
           mkdir -Force dist\staging
-          Get-ChildItem -Path build -Recurse -Filter *.exe |
-            Where-Object { $_.Name -match '^(wininspectd|wininspect|wininspect-gui)\.exe$' } |
-            Copy-Item -Destination dist\staging\
+          Get-ChildItem -Path build -Recurse -Include wininspectd.exe,wininspect.exe,wininspect-gui.exe -File |
+            Copy-Item -Destination dist\staging\ -Verbose
 
       - name: Package Installer
         run: |
