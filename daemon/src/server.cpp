@@ -374,6 +374,11 @@ void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tc
         resp["os"] = env.at("os").as_str();
         resp["is_wine"] = env.at("is_wine").as_bool();
         
+        // Extract short pipe name from full path for discovery
+        std::string full_pipe(g_pipe_name.begin(), g_pipe_name.end());
+        size_t last_bs = full_pipe.rfind('\\');
+        resp["pipe_name"] = (last_bs != std::string::npos) ? full_pipe.substr(last_bs + 1) : full_pipe;
+
         char hostname_buf[256];
         gethostname(hostname_buf, sizeof(hostname_buf));
         resp["hostname"] = std::string(hostname_buf);
