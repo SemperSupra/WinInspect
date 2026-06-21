@@ -29,7 +29,7 @@ jobs:
       - name: Package Installer
         run: |
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          makensis -DVERSION=ci -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+          makensis -DVERSION=ci -DBUILD_SRC=build\out -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4
