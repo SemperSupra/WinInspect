@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Mark E. DeYoung
 
 #include "wininspect/core.hpp"
+#include <cctype>
 #include <sstream>
 #include <chrono>
 #include <thread>
@@ -512,7 +513,20 @@ void CoreEngine::build_dispatch_table() {
     CoreResponse resp;
     auto vars = backend_->env_get_all();
     json::Object o;
-    for (const auto &v : vars) o[v.name] = v.value;
+    for (const auto &v : vars) {
+      // Redact credential-like environment variables by default.
+      // Use --env-include-secrets to disable this filter.
+      std::string upper = v.name;
+      for (auto &c : upper) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+      bool sensitive = (upper.find("SECRET") != std::string::npos ||
+                        upper.find("TOKEN") != std::string::npos ||
+                        upper.find("KEY") != std::string::npos ||
+                        upper.find("PASSWORD") != std::string::npos ||
+                        upper.find("PASSWD") != std::string::npos ||
+                        upper.find("CREDENTIAL") != std::string::npos ||
+                        upper.find("AUTH") != std::string::npos);
+      o[v.name] = sensitive ? "<REDACTED>" : v.value;
+    }
     resp.ok = true; resp.result = o; return resp;
   };
 
@@ -738,9 +752,15 @@ void CoreEngine::build_dispatch_table() {
     resp.result = o; return resp;
   };
 
-  dispatch_["daemon.logs"] = []( const CoreRequest &,
-                                 const Snapshot &, const Snapshot *) {
+  dispatch_["daemon.logs"] = [this]( const CoreRequest &,
+                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
+    if (!admin_logs_enabled_) {
+      resp.ok = false;
+      resp.error_code = "E_ACCESS_DENIED";
+      resp.error_message = "admin logs not enabled (use --admin-logs)";
+      return resp;
+    }
     auto logs = Logger::get().get_recent_logs();
     json::Array arr;
     for (const auto &l : logs) {

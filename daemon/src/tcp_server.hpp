@@ -20,7 +20,8 @@ public:
   ~TcpServer();
 
   void start(std::atomic<bool> *running, bool bind_public = false,
-             const std::string &auth_keys = "", bool read_only = false);
+             const std::string &auth_keys = "", bool read_only = false,
+             bool admin_logs = false);
   void stop();
 
 private:

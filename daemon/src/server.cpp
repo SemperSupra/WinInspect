@@ -49,10 +49,11 @@ void cleanup_sessions(ServerState *st) {
 }
 
 void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
-                   bool read_only, bool require_auth,
+                   bool read_only, bool require_auth, bool admin_logs,
                    const std::string& auth_keys_data) {
   CoInitGuard coinit;
   CoreEngine core(backend);
+  core.set_admin_logs_enabled(admin_logs);
   ClientSession session;
   st->active_connections++;
   LOG_INFO("New client connection established.");
@@ -307,7 +308,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
 
 void run_server(std::atomic<bool> *running, ServerState *st,
                 IBackend *backend, bool read_only, bool require_auth,
-                std::string auth_keys_data) {
+                bool admin_logs, std::string auth_keys_data) {
   std::string pipe_name_narrow(g_pipe_name.begin(), g_pipe_name.end());
   LOG_INFO("Named Pipe server starting on: " + pipe_name_narrow);
   while (running->load()) {
@@ -340,12 +341,12 @@ void run_server(std::atomic<bool> *running, ServerState *st,
 
     {
     std::lock_guard<std::mutex> lk(st->thread_mu);
-    st->client_threads.emplace_back(handle_client, hPipe, st, backend, read_only, require_auth, auth_keys_data);
+    st->client_threads.emplace_back(handle_client, hPipe, st, backend, read_only, require_auth, admin_logs, auth_keys_data);
   }
   }
 }
 
-void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend) {
+void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend, bool include_hostname) {
   SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (s == INVALID_SOCKET) return;
 
@@ -383,9 +384,11 @@ void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tc
         size_t last_bs = full_pipe.rfind('\\');
         resp["pipe_name"] = (last_bs != std::string::npos) ? full_pipe.substr(last_bs + 1) : full_pipe;
 
-        char hostname_buf[256];
-        gethostname(hostname_buf, sizeof(hostname_buf));
-        resp["hostname"] = std::string(hostname_buf);
+        if (include_hostname) {
+          char hostname_buf[256];
+          gethostname(hostname_buf, sizeof(hostname_buf));
+          resp["hostname"] = std::string(hostname_buf);
+        }
 
         std::string out = json::dumps(resp);
         sendto(s, out.data(), (int)out.size(), 0, (struct sockaddr *)&client_addr, client_addr_len);
@@ -401,6 +404,8 @@ int main(int argc, char **argv) {
   bool headless = false;
   bool bind_public = false;
   bool read_only = false;
+  bool include_hostname = false;
+  bool admin_logs = false;
   std::string auth_keys;
   bool require_auth = false;
   int tcp_port = 1985;
@@ -425,6 +430,10 @@ int main(int argc, char **argv) {
       read_only = true;
     if (std::string(argv[i]) == "--require-auth")
       require_auth = true;
+    if (std::string(argv[i]) == "--include-hostname")
+      include_hostname = true;
+    if (std::string(argv[i]) == "--admin-logs")
+      admin_logs = true;
     if (std::string(argv[i]) == "--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
     }
@@ -520,8 +529,8 @@ int main(int argc, char **argv) {
 
   // 1. Start discovery responder
   LOG_INFO("Starting Discovery responder...");
-  std::thread disc_thread([&running, st = st.get(), tcp_port, backend = backend.get()]() {
-    run_discovery_responder(&running, st, tcp_port, backend);
+  std::thread disc_thread([&running, st = st.get(), tcp_port, backend = backend.get(), include_hostname]() {
+    run_discovery_responder(&running, st, tcp_port, backend, include_hostname);
   });
   disc_thread.detach();
 
@@ -538,8 +547,8 @@ int main(int argc, char **argv) {
   // 3. Start Named Pipe server (background)
   LOG_INFO("Starting Named Pipe server (background)...");
   std::thread pipe_thread([&running, st = st.get(), backend = backend.get(),
-                            read_only, require_auth, &auth_keys_data]() {
-    run_server(&running, st, backend, read_only, require_auth, auth_keys_data);
+                            read_only, require_auth, admin_logs, &auth_keys_data]() {
+    run_server(&running, st, backend, read_only, require_auth, admin_logs, auth_keys_data);
   });
   pipe_thread.detach();
 
@@ -558,7 +567,7 @@ int main(int argc, char **argv) {
       // Create a background thread for TCP if tray is running
       std::thread([&, tcp, bind_public, read_only]() {
         try {
-          tcp->start(&running, bind_public, auth_keys_data, read_only);
+          tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs);
         } catch (...) {}
       }).detach();
       tray.run();
@@ -566,7 +575,7 @@ int main(int argc, char **argv) {
   }
 
   try {
-    tcp->start(&running, bind_public, auth_keys_data, read_only);
+    tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs);
   } catch (...) {
     LOG_ERROR("TCP Server fatal error.");
   }

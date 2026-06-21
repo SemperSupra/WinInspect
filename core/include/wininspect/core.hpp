@@ -36,11 +36,15 @@ public:
   [[nodiscard]] CoreResponse handle(const CoreRequest &req, const Snapshot &snapshot,
                                      const Snapshot *old_snapshot = nullptr);
 
+  // Enable or disable admin-only methods (daemon.logs)
+  void set_admin_logs_enabled(bool v) { admin_logs_enabled_ = v; }
+
 private:
   using Handler = std::function<CoreResponse(const CoreRequest&,
                                              const Snapshot&, const Snapshot*)>;
   IBackend *backend_;
   std::unordered_map<std::string, Handler> dispatch_;
+  bool admin_logs_enabled_ = false;
   void build_dispatch_table();
 };
 

@@ -103,8 +103,10 @@ static bool verify_identity(const AuthContext &ctx) {
 
 static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
                                  wininspect::IBackend *backend,
-                                 std::string auth_keys, bool read_only) {
+                                 std::string auth_keys, bool read_only,
+                                 bool admin_logs) {
   wininspect::CoreEngine core(backend);
+  core.set_admin_logs_enabled(admin_logs);
 
   // Set 5 second timeout for handshake
   DWORD timeout = 5000;
@@ -432,7 +434,8 @@ void TcpServer::stop() {
 }
 
 void TcpServer::start(std::atomic<bool> *running, bool bind_public,
-                      const std::string &auth_keys, bool read_only) {
+                      const std::string &auth_keys, bool read_only,
+                      bool admin_logs) {
   if (!wsa_init.ok) {
     LOG_ERROR("TCP Server: Winsock not initialized.");
     return;
@@ -484,7 +487,8 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     {
       std::lock_guard<std::mutex> lk(state_->thread_mu);
       state_->client_threads.emplace_back(handle_socket_client, client,
-                                          state_, backend_, auth_keys, read_only);
+                                          state_, backend_, auth_keys, read_only,
+                                          admin_logs);
     }
   }
 
