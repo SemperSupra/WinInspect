@@ -46,7 +46,29 @@ jobs:
           ls -la dist/staging/
           makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
 
+      - name: Generate Checksums
+        shell: bash
+        run: |
+          cd dist
+          for f in WinInspect-Installer-*.exe wi-portable-*.exe wi-portable-*-linux-x64; do
+            if [ -f "$f" ]; then
+              sha256sum "$f" > "$f.sha256"
+              echo "--- $f ---"
+              cat "$f.sha256"
+            fi
+          done
+
       - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/WinInspect-Installer-*.exe
+            dist/WinInspect-Installer-*.exe.sha256
+            dist/wi-portable-*-win-x64.exe
+            dist/wi-portable-*-win-x64.exe.sha256
+            dist/wi-portable-*-linux-x64
+            dist/wi-portable-*-linux-x64.sha256
+          generate_release_notes: true
         uses: softprops/action-gh-release@v1
         with:
           files: |

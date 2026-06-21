@@ -39,8 +39,17 @@ jobs:
           ls -la dist/staging/
           makensis -DVERSION=ci -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
 
+      - name: Generate Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum WinInspect-Installer-ci.exe > WinInspect-Installer-ci.exe.sha256
+          cat WinInspect-Installer-ci.exe.sha256
+
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
           name: WinInspect-Installer
-          path: dist/WinInspect-Installer-ci.exe
+          path: |
+            dist/WinInspect-Installer-ci.exe
+            dist/WinInspect-Installer-ci.exe.sha256
