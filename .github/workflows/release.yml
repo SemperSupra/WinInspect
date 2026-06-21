@@ -30,10 +30,13 @@ jobs:
         run: |
           GOOS=linux GOARCH=amd64 go build -C clients/portable -o ../../dist/wi-portable-${{ github.ref_name }}-linux-x64
 
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
       - name: Package Installer
         run: |
-          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
-          & $makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1

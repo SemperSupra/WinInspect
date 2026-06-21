@@ -23,10 +23,13 @@ jobs:
           mkdir -Force dist
           go build -C clients/portable -o ../../dist/wi-portable.exe
 
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
       - name: Package Installer
         run: |
-          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
-          & $makensis -DVERSION=ci -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          makensis -DVERSION=ci -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4
