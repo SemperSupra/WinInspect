@@ -271,7 +271,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["window.ensureVisible"] = [ & ](  const CoreRequest &req,
                                            const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), vis = get_bool(req.params, "visible");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto vis = get_bool(req.params, "visible");
     if (!hwnd_s || !vis) throw std::runtime_error("missing hwnd/visible");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
@@ -293,7 +293,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["window.setProperty"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), name = get_str(req.params, "name"), val = get_str(req.params, "value");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto name = get_str(req.params, "name"); auto val = get_str(req.params, "value");
     if (!hwnd_s || !name || !val) throw std::runtime_error("missing hwnd/name/value");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
@@ -304,7 +304,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["window.postMessage"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), msg = get_num(req.params, "msg");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto msg = get_num(req.params, "msg");
     if (!hwnd_s || !msg) throw std::runtime_error("missing hwnd/msg");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
@@ -357,7 +357,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["window.controlClick"] = [ & ](  const CoreRequest &req,
                                           const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), x = get_num(req.params, "x"), y = get_num(req.params, "y");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto x = get_num(req.params, "x"); auto y = get_num(req.params, "y");
     if (!hwnd_s || !x || !y) throw std::runtime_error("missing hwnd/x/y");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
@@ -369,7 +369,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["window.controlSend"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), text = get_str(req.params, "text");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto text = get_str(req.params, "text");
     if (!hwnd_s || !text) throw std::runtime_error("missing hwnd/text");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
@@ -586,7 +586,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["mem.write"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto pid = get_num(req.params, "pid"), addr = get_num(req.params, "address"), data_b64 = get_str(req.params, "data_b64");
+    auto pid = get_num(req.params, "pid"); auto addr = get_num(req.params, "address"); auto data_b64 = get_str(req.params, "data_b64");
     if (!pid || !addr || !data_b64) throw std::runtime_error("missing parameters");
     auto data = base64::decode(*data_b64);
     resp.ok = true; resp.result = ok_json(b->mem_write((uint32_t)*pid, (uint64_t)*addr, data));
@@ -688,7 +688,7 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["ui.invoke"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto hwnd_s = get_str(req.params, "hwnd"), aid = get_str(req.params, "automation_id");
+    auto hwnd_s = get_str(req.params, "hwnd"); auto aid = get_str(req.params, "automation_id");
     if (!hwnd_s || !aid) throw std::runtime_error("missing hwnd/automation_id");
     auto hwnd = parse_hwnd(*hwnd_s);
     if (!hwnd) throw std::runtime_error("bad hwnd");
