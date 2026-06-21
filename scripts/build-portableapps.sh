@@ -55,7 +55,16 @@ sed -i "s/^PackageVersion=.*/PackageVersion=${VERSION}.0/" "$STAGE_DIR/App/AppIn
 # 4. Always produce a portable ZIP
 echo "[3/6] Creating portable ZIP..."
 ZIP_OUT="$DIST_DIR/WinInspectPortable-${VERSION}.zip"
-(cd "$STAGE_DIR" && zip -9qr "$ZIP_OUT" .)
+
+# Prefer 7-Zip when available (Windows CI), fall back to system zip
+if command -v 7z &>/dev/null; then
+  (cd "$STAGE_DIR" && 7z a -tzip -mx9 "$ZIP_OUT" . >/dev/null)
+elif [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
+  (cd "$STAGE_DIR" && "/c/Program Files/7-Zip/7z.exe" a -tzip -mx9 "$ZIP_OUT" . >/dev/null)
+else
+  (cd "$STAGE_DIR" && zip -9qr "$ZIP_OUT" .)
+fi
+
 echo "  $ZIP_OUT"
 sha256sum "$ZIP_OUT" > "$ZIP_OUT.sha256"
 echo "  SHA256: $(cat $ZIP_OUT.sha256)"

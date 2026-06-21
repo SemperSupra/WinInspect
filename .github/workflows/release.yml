@@ -50,7 +50,6 @@ jobs:
         shell: bash
         run: |
           export PATH="/c/Program Files/7-Zip:$PATH"
-          chmod +x scripts/build-portableapps.sh
           scripts/build-portableapps.sh ${{ github.ref_name }} build/Release
 
       - name: Generate Checksums
