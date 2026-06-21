@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
-
 #include "backend.hpp"
 #include "tinyjson.hpp"
 #include "logger.hpp"
+#include <functional>
 #include <string>
+#include <unordered_map>
 
 namespace wininspect {
 
@@ -31,13 +32,15 @@ class CoreEngine {
 public:
   explicit CoreEngine(IBackend *backend);
 
-  // Handle one request. Core itself is stateless; snapshot state lives in
-  // daemon layer.
+  // Handle one request. O(1) dispatch via lookup table built at construction.
   [[nodiscard]] CoreResponse handle(const CoreRequest &req, const Snapshot &snapshot,
                                      const Snapshot *old_snapshot = nullptr);
 
 private:
-  IBackend *backend_;
+  using Handler = std::function<CoreResponse(const CoreRequest&,
+                                             const Snapshot&, const Snapshot*)>;
+  std::unordered_map<std::string, Handler> dispatch_;
+  void build_dispatch_table();
 };
 
 [[nodiscard]] CoreRequest parse_request_json(std::string_view json_utf8);

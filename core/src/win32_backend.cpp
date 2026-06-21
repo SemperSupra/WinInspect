@@ -1093,17 +1093,16 @@ static UIElementInfo get_element_info(IUIAutomationElement *pNode) {
   return info;
 }
 
+// Hoisted true-condition — allocated once at the top level and passed
+// through the recursion to avoid per-node COM allocation overhead.
 static void walk_uia_tree(IUIAutomation *pAutomation, IUIAutomationElement *pRoot,
+                          IUIAutomationCondition *pTrueCondition,
                           std::vector<UIElementInfo> &results, int depth, int max_depth) {
   if (depth > max_depth)
     return;
 
-  ComPtr<IUIAutomationCondition> pTrueCondition;
-  pAutomation->CreateTrueCondition(&pTrueCondition);
   ComPtr<IUIAutomationElementArray> pChildren;
-  if (pTrueCondition) {
-    pRoot->FindAll(TreeScope_Children, pTrueCondition, &pChildren);
-  }
+  pRoot->FindAll(TreeScope_Children, pTrueCondition, &pChildren);
 
   if (pChildren) {
     int length = 0;
@@ -1112,7 +1111,7 @@ static void walk_uia_tree(IUIAutomation *pAutomation, IUIAutomationElement *pRoo
       ComPtr<IUIAutomationElement> pNode;
       if (SUCCEEDED(pChildren->GetElement(i, &pNode)) && pNode) {
         UIElementInfo info = get_element_info(pNode);
-        walk_uia_tree(pAutomation, pNode, info.children, depth + 1, max_depth);
+        walk_uia_tree(pAutomation, pNode, pTrueCondition, info.children, depth + 1, max_depth);
         results.push_back(info);
       }
     }
@@ -1135,7 +1134,11 @@ std::vector<UIElementInfo> Win32Backend::inspect_ui_elements(hwnd_u64 parent) {
   }
 
   if (SUCCEEDED(hr) && pRoot) {
-    walk_uia_tree(pAutomation, pRoot, results, 0, uia_depth_);
+    ComPtr<IUIAutomationCondition> pTrueCondition;
+    pAutomation->CreateTrueCondition(&pTrueCondition);
+    if (pTrueCondition) {
+      walk_uia_tree(pAutomation, pRoot, pTrueCondition, results, 0, uia_depth_);
+    }
   }
 
   return results;
