@@ -135,17 +135,17 @@ DOCTEST_TEST_CASE("trace replay: event_subscription") {
   auto s1 = fb.capture_snapshot();
   CoreRequest r1{"e1", "window.listTop", {}};
   auto resp1 = core.handle(r1, s1);
-  CHECK(resp1.ok);
+  DOCTEST_CHECK(resp1.ok);
 
   auto s2 = fb.capture_snapshot();
   CoreRequest r2{"e2", "events.poll", {}};
   auto resp2 = core.handle(r2, s2, &s1);
-  CHECK(resp2.ok);
+  DOCTEST_CHECK(resp2.ok);
 
   CoreRequest r2b{"e2b", "events.poll", {}};
-  CHECK_THROWS(core.handle(r2b, s2));
+  DOCTEST_CHECK_THROWS(core.handle(r2b, s2));
 
   CoreRequest r3{"e3", "session.terminate", {}};
   auto resp3 = core.handle(r3, s2);
-  CHECK(resp3.ok);
+  DOCTEST_CHECK(resp3.ok);
 }
