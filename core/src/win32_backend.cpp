@@ -370,7 +370,7 @@ bool Win32Backend::set_property(hwnd_u64 hwnd_u, const std::string &name,
     int alpha = std::stoi(value);
     if (alpha < 0) alpha = 0;
     if (alpha > 255) alpha = 255;
-    
+
     LONG_PTR exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED);
     return SetLayeredWindowAttributes(hwnd, 0, (BYTE)alpha, LWA_ALPHA) != FALSE;
@@ -459,7 +459,7 @@ std::optional<std::pair<int, int>> Win32Backend::pixel_search(Rect region, Color
     for (int x = region.left; x < region.right; ++x) {
       COLORREF c = GetPixel(hdc, x, y);
       if (c == CLR_INVALID) continue;
-      
+
       int r = GetRValue(c), g = GetGValue(c), b = GetBValue(c);
       if (std::abs(r - target.r) <= variation &&
           std::abs(g - target.g) <= variation &&
@@ -599,13 +599,13 @@ std::vector<hwnd_u64> Win32Backend::find_windows_regex(const std::string &title_
     auto* p = reinterpret_cast<RegexParam*>(lp);
     std::string title = w2u8(get_window_text_w(h));
     std::string cls = w2u8(get_class_name_w(h));
-    
+
     if (std::regex_search(title, *(p->re_t)) && std::regex_search(cls, *(p->re_c))) {
       p->out->push_back(to_u64(h));
     }
     return TRUE;
   }, reinterpret_cast<LPARAM>(&p));
-  
+
   return out;
 }
 
@@ -699,7 +699,7 @@ bool Win32Backend::reg_delete(const std::string &path, const std::string &value_
 }
 
 bool Win32Backend::reg_subscribe(const std::string &) {
-  return true; 
+  return true;
 }
 
 // Clipboard
@@ -727,7 +727,7 @@ bool Win32Backend::clipboard_write(const std::string &text) {
     wtext.resize(len - 1);
     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wtext.data(), len);
   }
-  
+
   HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (wtext.size() + 1) * sizeof(wchar_t));
   bool success = false;
   if (hMem) {
@@ -758,7 +758,7 @@ std::vector<ServiceInfo> Win32Backend::service_list() {
   DWORD bytesNeeded = 0, count = 0, resume = 0;
   EnumServicesStatusExW(hSCM, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
                        NULL, 0, &bytesNeeded, &count, &resume, NULL);
-  
+
   if (GetLastError() == ERROR_MORE_DATA) {
     std::vector<BYTE> buf(bytesNeeded);
     LPENUM_SERVICE_STATUS_PROCESSW pInfo = (LPENUM_SERVICE_STATUS_PROCESSW)buf.data();
@@ -782,7 +782,7 @@ std::string Win32Backend::service_status(const std::string &name) {
   std::wstring wname(name.begin(), name.end());
   ScHandle hSvc = OpenServiceW(hSCM, wname.c_str(), SERVICE_QUERY_STATUS);
   if (!hSvc.is_valid()) { return "NOT_FOUND"; }
-  
+
   SERVICE_STATUS_PROCESS ssp;
   DWORD bytes = 0;
   std::string status = "UNKNOWN";
@@ -838,7 +838,7 @@ std::vector<EnvVar> Win32Backend::env_get_all() {
   std::vector<EnvVar> out;
   wchar_t *env = GetEnvironmentStringsW();
   if (!env) return out;
-  
+
   wchar_t *curr = env;
   while (*curr) {
     std::wstring s(curr);
@@ -866,11 +866,11 @@ std::vector<DriveInfo> Win32Backend::wine_get_drives() {
       char letter = 'A' + i;
       std::string root = std::string(1, letter) + ":\\";
       std::wstring wroot(root.begin(), root.end());
-      
+
       DriveInfo di;
       di.letter = std::string(1, letter);
       di.mapping = ""; // default
-      
+
       UINT type = GetDriveTypeW(wroot.c_str());
       switch(type) {
         case DRIVE_FIXED: di.type = "Fixed"; break;
@@ -879,7 +879,7 @@ std::vector<DriveInfo> Win32Backend::wine_get_drives() {
         case DRIVE_RAMDISK: di.type = "RamDisk"; break;
         default: di.type = "Unknown"; break;
       }
-      
+
       wchar_t buf[MAX_PATH];
       if (QueryDosDeviceW((std::wstring(1, (wchar_t)('A' + i)) + L":").c_str(), buf, MAX_PATH)) {
         di.mapping = w2u8(buf);
@@ -947,11 +947,11 @@ bool Win32Backend::mem_write(uint32_t pid, uint64_t address, const std::vector<u
 
 std::optional<ImageMatchResult> Win32Backend::image_match(Rect region, const std::vector<uint8_t> &sub_image_bmp) {
   // ... existing image_match stub ...
-  return std::nullopt; 
+  return std::nullopt;
 }
 
 bool Win32Backend::input_hook_enable(bool) {
-  // Global hooks require a message loop. 
+  // Global hooks require a message loop.
   // This will be wired to the daemon's poll cycle.
   return true;
 }
@@ -1205,62 +1205,97 @@ static std::vector<hwnd_u64> sorted(std::vector<hwnd_u64> v) {
   return v;
 }
 
-json::Object Win32Backend::get_env_metadata() {
-  json::Object o;
-  
+Capabilities Win32Backend::get_capabilities() {
+  Capabilities caps;
+  caps.is_wine = is_wine_;
+  caps.win_major = win_major_;
+  caps.win_minor = win_minor_;
+  caps.win_build = win_build_;
+
   if (is_wine_) {
-    o["os"] = "windows (wine)";
-    o["is_wine"] = true;
-    // We can't easily get the Wine string version here without re-querying, 
-    // but the constructor already set up the boolean. 
-    // Let's re-query the string just for the report if needed, or omit it.
-    // For completeness, we'll re-query the string:
+    caps.os = "windows (wine)";
     HMODULE hntdll = GetModuleHandleW(L"ntdll.dll");
     typedef const char *(*p_wine_get_version)(void);
     auto p_version = (p_wine_get_version)GetProcAddress(hntdll, "wine_get_version");
-    if (p_version) o["wine_version"] = std::string(p_version());
+    if (p_version) caps.wine_version = std::string(p_version());
   } else {
-    if (win_build_ >= 22000) {
-      o["os"] = "windows 11";
-    } else if (win_major_ == 10) {
-      o["os"] = "windows 10";
-    } else {
-      o["os"] = "windows";
-    }
-    o["is_wine"] = false;
+    if (win_build_ >= 22000)
+      caps.os = "windows 11";
+    else if (win_major_ == 10)
+      caps.os = "windows 10";
+    else
+      caps.os = "windows";
   }
-
-  o["win_major"] = (double)win_major_;
-  o["win_minor"] = (double)win_minor_;
-  o["win_build"] = (double)win_build_;
 
 #ifdef _WIN64
-  o["arch"] = "x64";
+  caps.arch = "x64";
 #else
-  o["arch"] = "x86";
+  caps.arch = "x86";
 #endif
 
-  // Self-Diagnostics (Circuit Checks)
-  json::Object diag;
-  
-  // 1. Clipboard Check
-  diag["clipboard"] = OpenClipboard(NULL) != FALSE;
-  if (diag["clipboard"].as_bool()) CloseClipboard();
+  // Live capability probes (non-destructive, test-and-cleanup)
 
-  // 2. Registry Write Check (HKCU)
+  // 1. Clipboard
+  caps.clipboard_available = (OpenClipboard(NULL) != FALSE);
+  if (caps.clipboard_available) CloseClipboard();
+
+  // 2. Registry write (HKCU probe)
   HKEY hKey;
-  if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\WinInspectHealthCheck", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-    diag["registry_write"] = true;
+  caps.registry_writable = (RegCreateKeyExW(HKEY_CURRENT_USER,
+      L"Software\\WinInspectHealthCheck", 0, NULL, 0,
+      KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS);
+  if (caps.registry_writable) {
     RegCloseKey(hKey);
     RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\WinInspectHealthCheck");
-  } else {
-    diag["registry_write"] = false;
   }
 
-  // 3. UIA Check
+  // 3. UI Automation
   ComPtr<IUIAutomation> pAutomation;
-  diag["uia_available"] = SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, IID_IUIAutomation, (void **)&pAutomation));
+  caps.uia_available = SUCCEEDED(CoCreateInstance(
+      CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER,
+      IID_IUIAutomation, (void **)&pAutomation));
 
+  // 4. Service Control Manager
+  SC_HANDLE hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+  caps.service_manager = (hSCM != NULL);
+  if (hSCM) CloseServiceHandle(hSCM);
+
+  // 5. Process memory (probe on self)
+  SafeHandle hSelf = OpenProcess(PROCESS_VM_READ, FALSE,
+                                 GetCurrentProcessId());
+  caps.process_memory = hSelf.is_valid();
+
+  // 6. Input injection
+  caps.input_injection = (SendInput(0, NULL, 0) == 0);
+
+  // 7. Window highlight (GDI)
+  HDC hdc = GetDC(NULL);
+  caps.window_highlight = (hdc != NULL);
+  if (hdc) ReleaseDC(NULL, hdc);
+
+  return caps;
+}
+
+json::Object Win32Backend::get_env_metadata() {
+  auto caps = get_capabilities();
+  json::Object o;
+  o["os"] = caps.os;
+  o["is_wine"] = caps.is_wine;
+  o["win_major"] = (double)caps.win_major;
+  o["win_minor"] = (double)caps.win_minor;
+  o["win_build"] = (double)caps.win_build;
+  o["arch"] = caps.arch;
+  if (!caps.wine_version.empty())
+    o["wine_version"] = caps.wine_version;
+
+  json::Object diag;
+  diag["clipboard"] = caps.clipboard_available;
+  diag["registry_write"] = caps.registry_writable;
+  diag["uia_available"] = caps.uia_available;
+  diag["service_manager"] = caps.service_manager;
+  diag["process_memory"] = caps.process_memory;
+  diag["input_injection"] = caps.input_injection;
+  diag["window_highlight"] = caps.window_highlight;
   o["diagnostics"] = diag;
   return o;
 }
@@ -1309,6 +1344,24 @@ bool Win32Backend::post_message(hwnd_u64, uint32_t, uint64_t, uint64_t) {
   return false;
 }
 bool Win32Backend::send_input(const std::vector<uint8_t> &) { return false; }
+
+Capabilities Win32Backend::get_capabilities() {
+  Capabilities caps;
+  caps.os = "unknown";
+  caps.arch =
+#ifdef _WIN64
+      "x64";
+#else
+      "x86";
+#endif
+  return caps;
+}
+
+json::Object Win32Backend::get_env_metadata() {
+  json::Object o;
+  o["os"] = "unknown";
+  return o;
+}
 
 bool Win32Backend::send_mouse_click(int, int, int) { return false; }
 bool Win32Backend::send_key_press(int) { return false; }

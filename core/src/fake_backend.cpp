@@ -312,18 +312,37 @@ bool FakeBackend::invoke_ui_element(hwnd_u64 hwnd,
   return find_and_invoke(it->second, automation_id);
 }
 
+Capabilities FakeBackend::get_capabilities() {
+  Capabilities caps;
+  caps.os = "windows 10 (fake)";
+  caps.is_wine = false;
+  caps.arch = "x64";
+  caps.win_major = 10;
+  caps.win_minor = 0;
+  caps.win_build = 19041;
+  caps.uia_available = true;
+  caps.clipboard_available = true;
+  caps.registry_writable = true;
+  caps.service_manager = true;
+  caps.process_memory = true;
+  caps.input_injection = true;
+  caps.window_highlight = true;
+  return caps;
+}
+
 json::Object FakeBackend::get_env_metadata() {
+  auto caps = get_capabilities();
   json::Object o;
-  o["os"] = "fake_windows";
-  o["is_wine"] = false;
-  o["arch"] = "x64";
-  
+  o["os"] = caps.os;
+  o["is_wine"] = caps.is_wine;
+  o["arch"] = caps.arch;
+
   json::Object diag;
-  diag["clipboard"] = true;
-  diag["registry_write"] = true;
-  diag["uia_available"] = true;
+  diag["clipboard"] = caps.clipboard_available;
+  diag["registry_write"] = caps.registry_writable;
+  diag["uia_available"] = caps.uia_available;
   o["diagnostics"] = diag;
-  
+
   return o;
 }
 

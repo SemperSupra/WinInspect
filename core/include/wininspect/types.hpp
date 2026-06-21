@@ -148,4 +148,25 @@ struct UIElementInfo {
   std::vector<UIElementInfo> children;
 };
 
+struct Capabilities {
+  std::string os;               // "windows 11", "windows 10", "windows (wine)"
+  bool is_wine = false;
+  std::string arch;             // "x64", "x86"
+  int win_major = 0;
+  int win_minor = 0;
+  int win_build = 0;
+
+  // Feature flags (all runtime-detected)
+  bool uia_available = false;        // IUIAutomation COM interface
+  bool clipboard_available = false;
+  bool registry_writable = false;
+  bool service_manager = false;      // SCManager access
+  bool process_memory = false;       // ReadProcessMemory/WriteProcessMemory
+  bool input_injection = false;      // SendInput
+  bool window_highlight = false;     // GDI drawing
+
+  // Wine-specific
+  std::string wine_version;          // empty if not Wine
+};
+
 } // namespace wininspect

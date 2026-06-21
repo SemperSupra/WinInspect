@@ -913,6 +913,31 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       return resp;
     }
 
+    if (req.method == "daemon.capabilities") {
+      auto caps = backend_->get_capabilities();
+      json::Object o;
+      o["os"] = caps.os;
+      o["is_wine"] = caps.is_wine;
+      o["arch"] = caps.arch;
+      o["win_major"] = (double)caps.win_major;
+      o["win_minor"] = (double)caps.win_minor;
+      o["win_build"] = (double)caps.win_build;
+      if (!caps.wine_version.empty())
+        o["wine_version"] = caps.wine_version;
+
+      json::Object features;
+      features["uia"] = caps.uia_available;
+      features["clipboard"] = caps.clipboard_available;
+      features["registry_write"] = caps.registry_writable;
+      features["service_manager"] = caps.service_manager;
+      features["process_memory"] = caps.process_memory;
+      features["input_injection"] = caps.input_injection;
+      features["window_highlight"] = caps.window_highlight;
+      o["features"] = features;
+      resp.result = o;
+      return resp;
+    }
+
     if (req.method == "daemon.logs") {
       auto logs = Logger::get().get_recent_logs();
       json::Array arr;

@@ -274,7 +274,7 @@ static int usage() {
             << "  send-input <base64_data>\n"
             << "  ui-inspect <hwnd>\n"
             << "  ui-invoke <hwnd> <automation_id>\n"
-            << "  health\n"
+            << "  health\n"`n            << "  capabilities\n"
             << "  config --key <path>\n";
   return 2;
 }
@@ -755,6 +755,10 @@ int main(int argc, char **argv) {
 
   if (cmd == "health") {
     return send_and_print("daemon.health");
+  }
+
+  if (cmd == "capabilities") {
+    return send_and_print("daemon.capabilities");
   }
 
   if (cmd == "config") {

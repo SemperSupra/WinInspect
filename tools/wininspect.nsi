@@ -8,8 +8,12 @@
   !define BUILD_SRC "..\build\Release"
 !endif
 
+!ifndef DIST_DIR
+  !define DIST_DIR "..\dist"
+!endif
+
 Name "WinInspect ${VERSION}"
-OutFile "..\\dist\\WinInspect-Installer.exe"
+OutFile "${DIST_DIR}\\WinInspect-Installer.exe"
 InstallDir "$PROGRAMFILES64\\WinInspect"
 RequestExecutionLevel admin
 

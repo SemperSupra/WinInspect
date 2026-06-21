@@ -6,58 +6,38 @@ on:
       - 'v*'
 
 jobs:
-  build-win32:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: WBAB Preflight
-        shell: bash
-        run: ./tools/wbab preflight
-        
-      - name: WBAB Lint
-        shell: bash
-        run: ./tools/wbab lint
-
-      - name: WBAB Build
-        shell: bash
-        run: ./tools/wbab build ${GITHUB_REF_NAME}
-
-      - name: WBAB Test
-        shell: bash
-        run: ./tools/wbab test
-        
-      - name: WBAB Package
-        shell: bash
-        run: ./tools/wbab package ${GITHUB_REF_NAME}
-          
-      - name: Upload Win32 Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: win32-binaries
-          path: dist/*
-
-  publish:
-    needs: [build-win32]
-    runs-on: ubuntu-latest
+  release:
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-          
+      - uses: actions/checkout@v4
+
+      - name: Build and Test
+        run: |
+          cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
+          cmake --build build --config Release
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Build Portable CLI (Windows)
+        shell: bash
+        run: |
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 go build -C clients/portable -o ../../dist/wi-portable-${{ github.ref_name }}-win-x64.exe
+
+      - name: Build Portable CLI (Linux)
+        shell: bash
+        run: |
+          GOOS=linux GOARCH=amd64 go build -C clients/portable -o ../../dist/wi-portable-${{ github.ref_name }}-linux-x64
+
+      - name: Package Installer
+        run: makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/*
+          files: |
+            dist/WinInspect-Installer.exe
+            dist/wi-portable-*-win-x64.exe
+            dist/wi-portable-*-linux-x64
           generate_release_notes: true

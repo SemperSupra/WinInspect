@@ -91,6 +91,7 @@ public:
   std::vector<UIElementInfo> inspect_ui_elements(hwnd_u64 parent) override;
   bool invoke_ui_element(hwnd_u64 hwnd, const std::string &automation_id) override;
 
+  Capabilities get_capabilities() override;
   json::Object get_env_metadata() override;
 
   // Test helpers

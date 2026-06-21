@@ -100,6 +100,7 @@ public:
   virtual std::vector<UIElementInfo> inspect_ui_elements(hwnd_u64 parent) = 0;
   virtual bool invoke_ui_element(hwnd_u64 hwnd, const std::string &automation_id) = 0;
 
+  virtual Capabilities get_capabilities() = 0;
   virtual json::Object get_env_metadata() = 0;
 
   // Event polling
