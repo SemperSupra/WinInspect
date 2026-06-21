@@ -93,10 +93,11 @@ static json::Object window_info_to_json(const WindowInfo &wi) {
   o["title"] = wi.title;
 
   auto r2j = [](const Rect &r) -> json::Object {
-    json::Object o;
-    o["left"] = (double)r.left;  o["top"] = (double)r.top;
-    o["right"] = (double)r.right; o["bottom"] = (double)r.bottom;
-    return o;
+    json::Object obj;
+    obj["left"] = (double)r.left;  obj["top"] = (double)r.top;
+    obj["right"] = (double)r.right; obj["bottom"] = (double)r.bottom;
+    return obj;
+  };
   o["window_rect"] = r2j(wi.window_rect);
   o["client_rect"] = r2j(wi.client_rect);
   o["screen_rect"] = r2j(wi.screen_rect);
