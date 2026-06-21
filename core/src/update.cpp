@@ -127,8 +127,8 @@ UpdateInfo check_for_update(const std::string &current_version) {
 
     // Scan assets array for installer and portable ZIP download URLs
     auto it_assets = obj.find("assets");
-    if (it_assets != obj.end() && it_assets->second.is_array()) {
-      for (const auto &asset : it_assets->second.as_array()) {
+    if (it_assets != obj.end() && it_assets->second.is_arr()) {
+      for (const auto &asset : it_assets->second.as_arr()) {
         if (!asset.is_obj()) continue;
         const auto &a = asset.as_obj();
         auto it_name = a.find("name");
