@@ -75,7 +75,7 @@ AllMethods == QueryMethods \cup DesiredStateMethods \cup MutationMethods \cup Sp
 VARIABLES
   \* Window state: which windows are visible and which is foreground
   worldVisible,      \* [Windows -> BOOLEAN]
-  worldForeground,   \* Windows \cup {NULL}
+  worldForeground,   \* [Windows -> BOOLEAN] — TRUE iff this window is foreground
 
   \* Connection state
   conns,             \* SUBSET Clients  — active connections
@@ -106,22 +106,24 @@ VARIABLES
   Type definitions
  ***************************************************************************)
 
+CONSTANT NULL
 SnapId == Nat
-NULL == 0
 
-Snapshot == [windows : SUBSET Windows]
+Snapshot == [windows : SUBSET Windows \cup {NULL}]
 
 Msg ==
   [ id      : Nat,
     method  : AllMethods,
     hwnd    : Windows \cup {NULL},
-    vis     : BOOLEAN \cup {NULL},   \* for EnsureVisible
-    snapId  : SnapId \cup {NULL},    \* snapshot reference
+    snapId  : SnapId \cup {NULL},    \* snapshot reference, NULL = none
     oldSnapId : SnapId \cup {NULL},  \* for events.poll diff
     changed : BOOLEAN,               \* for desired-state responses
     ok      : BOOLEAN,               \* success/failure
     session  : Clients \cup {NULL}    \* which client session this belongs to
   ]
+
+\* Encode EnsureVisible's "visible" parameter in hwnd+changed: hwnd=w,changed=TRUE means show; hwnd=w,changed=FALSE means hide.
+\* The method name "EnsureVisible" already carries the intent.
 
 EmptySnap == [windows |-> {}]
 
@@ -131,8 +133,8 @@ EmptySnap == [windows |-> {}]
 
 Init ==
   /\ worldVisible   \in [Windows -> BOOLEAN]
-  /\ worldForeground \in [Windows -> BOOLEAN \cup {FALSE}]  \* at most one
-  /\ \A w \in Windows : (worldForeground[w] = TRUE) => (Cardinality({x \in Windows : worldForeground[x] = TRUE}) = 1)
+  /\ worldForeground \in [Windows -> BOOLEAN]
+  /\ Cardinality({w \in Windows : worldForeground[w]}) <= 1  \* at most one foreground
   /\ conns = {}
   /\ connCount = [c \in Clients |-> 0]
   /\ inbox  = [c \in Clients |-> << >>]
@@ -166,15 +168,13 @@ Connect(c) ==
 ClientDisconnect(c) ==
   /\ c \in conns
   /\ conns' = conns \ {c}
+  \* Pinned snapshots released by per-handler scope guards on disconnect.
+  \* Session state persists (sessions unchanged) across disconnects.
   /\ subscribed' = [subscribed EXCEPT ![c] = FALSE]
-  /\ \* Release any pinned snapshots
-  /\ LET pinned == snapPinCount IN
-       UNCHANGED snapPinCount  \* simplified: real code decrements on response
-  /\ \* Session state persists (sessions unchanged)
   /\ lastSnapId' = [lastSnapId EXCEPT ![c] = NULL]
   /\ UNCHANGED <<worldVisible, worldForeground, inbox, outbox,
-                 snaps, snapOrder, snapCounter, sessions,
-                 sessionCount, connCount, readOnly>>
+                 snaps, snapPinCount, snapOrder, snapCounter,
+                 sessions, sessionCount, connCount, readOnly>>
 
 (***************************************************************************
   Client sends a message — queued in inbox
@@ -184,6 +184,7 @@ Send(c, m) ==
   /\ c \in conns
   /\ m.id > 0
   /\ m.method \in AllMethods
+  /\ Len(inbox[c]) < 3   \* bound queue depth to keep state space finite
   /\ inbox' = [inbox EXCEPT ![c] = Append(@, m)]
   /\ UNCHANGED <<worldVisible, worldForeground, conns, outbox,
                  subscribed, lastSnapId, snaps, snapPinCount,
@@ -210,7 +211,7 @@ AllocateSnapshot ==
                                                   ![oldest] = EmptySnap]
                         /\ snapOrder' = Append(Tail(snapOrder), newId)
                         /\ snapPinCount' = [snapPinCount EXCEPT ![newId] = 0]
-                   ELSE /\ \* Pinned — rotate it
+                   ELSE \* Pinned — rotate it instead of evicting
                         /\ snaps' = snaps
                         /\ snapOrder' = Append(Tail(snapOrder), oldest)
                         /\ snapPinCount' = snapPinCount
@@ -257,13 +258,13 @@ CaptureAndReturn(c) ==
   /\ LET sid == snapCounter   \* post-increment — this is the ID we just created
          resp == [id |-> connCount[c],
                   method |-> "SnapshotCapture",
-                  hwnd |-> NULL, vis |-> NULL,
+                  hwnd |-> NULL,
                   snapId |-> sid - 1,
                   oldSnapId |-> NULL,
                   changed |-> FALSE, ok |-> TRUE,
                   session |-> c]
      IN  outbox' = [outbox EXCEPT ![c] = Append(@, resp)]
-  /\ UNCHANGED <<worldVisible, worldForeground, conns, connCount,
+  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground, conns, connCount,
                  subscribed, lastSnapId, sessions, sessionCount, readOnly>>
 
 (***************************************************************************
@@ -281,28 +282,40 @@ HandleOne(c) ==
             THEN CaptureAndReturn(c)
             \* ---- QUERY METHODS (side-effect-free) ----
             ELSE IF m.method \in QueryMethods
-            THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
-                    [id |-> m.id, method |-> m.method,
-                     hwnd |-> m.hwnd, vis |-> NULL,
-                     snapId |-> m.snapId, oldSnapId |-> NULL,
-                     changed |-> FALSE, ok |-> TRUE,
-                     session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+            THEN IF m.snapId # NULL /\ \A i \in 1..Len(snapOrder) : snapOrder[i] # m.snapId
+                 THEN \* Bad snapshot reference — reject, do not echo invalid snapId
+                      /\ outbox' = [outbox EXCEPT ![c] = Append(@,
+                             [id |-> m.id, method |-> m.method,
+                              hwnd |-> m.hwnd,
+                              snapId |-> NULL, oldSnapId |-> NULL,
+                              changed |-> FALSE, ok |-> FALSE,
+                              session |-> c])]
+                      /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
+                                     lastSnapId, snaps, snapPinCount,
+                                     snapOrder, snapCounter, sessions,
+                                     sessionCount, subscribed, readOnly>>
+                 ELSE /\ outbox' = [outbox EXCEPT ![c] = Append(@,
+                        [id |-> m.id, method |-> m.method,
+                         hwnd |-> m.hwnd,
+                         snapId |-> m.snapId, oldSnapId |-> NULL,
+                         changed |-> FALSE, ok |-> TRUE,
+                         session |-> c])]
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 lastSnapId, snaps, snapPinCount,
                                 snapOrder, snapCounter, sessions,
-                                sessionCount, subcribed, readOnly>>
+                                sessionCount, subscribed, readOnly>>
             \* ---- DESIRED-STATE METHODS (idempotent) ----
             ELSE IF m.method = "EnsureVisible"
             THEN /\ LET prev == worldVisible[m.hwnd]
-                       changed == (prev # m.vis)
-                   IN  /\ worldVisible' = [worldVisible EXCEPT ![m.hwnd] = m.vis]
+                       changed == (prev # m.changed)
+                   IN  /\ worldVisible' = [worldVisible EXCEPT ![m.hwnd] = m.changed]
                        /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                               [id |-> m.id, method |-> m.method,
-                               hwnd |-> m.hwnd, vis |-> m.vis,
+                               hwnd |-> m.hwnd,
                                snapId |-> NULL, oldSnapId |-> NULL,
                                changed |-> changed, ok |-> TRUE,
                                session |-> c])]
-                       /\ UNCHANGED <<worldForeground, lastSnapId,
+                       /\ UNCHANGED <<conns, connCount, worldForeground, lastSnapId,
                                       snaps, snapPinCount, snapOrder,
                                       snapCounter, sessions, sessionCount,
                                       subscribed, readOnly>>
@@ -314,11 +327,11 @@ HandleOne(c) ==
                             worldForeground'[w] = FALSE
                        /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                               [id |-> m.id, method |-> m.method,
-                               hwnd |-> m.hwnd, vis |-> NULL,
+                               hwnd |-> m.hwnd,
                                snapId |-> NULL, oldSnapId |-> NULL,
                                changed |-> changed, ok |-> TRUE,
                                session |-> c])]
-                       /\ UNCHANGED <<worldVisible, lastSnapId,
+                       /\ UNCHANGED <<conns, connCount, worldVisible, lastSnapId,
                                       snaps, snapPinCount, snapOrder,
                                       snapCounter, sessions, sessionCount,
                                       subscribed, readOnly>>
@@ -328,21 +341,21 @@ HandleOne(c) ==
                     IF readOnly
                     THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                             [id |-> m.id, method |-> m.method,
-                             hwnd |-> NULL, vis |-> NULL,
+                             hwnd |-> NULL,
                              snapId |-> NULL, oldSnapId |-> NULL,
                              changed |-> FALSE, ok |-> FALSE,
                              session |-> c])]
-                         /\ UNCHANGED <<worldVisible, worldForeground,
+                         /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                         lastSnapId, snaps, snapPinCount,
                                         snapOrder, snapCounter, sessions,
                                         sessionCount, subscribed>>
                     ELSE /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                             [id |-> m.id, method |-> m.method,
-                             hwnd |-> NULL, vis |-> NULL,
+                             hwnd |-> NULL,
                              snapId |-> NULL, oldSnapId |-> NULL,
                              changed |-> FALSE, ok |-> TRUE,
                              session |-> c])]
-                         /\ UNCHANGED <<worldVisible, worldForeground,
+                         /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                         lastSnapId, snaps, snapPinCount,
                                         snapOrder, snapCounter, sessions,
                                         sessionCount, subscribed>>
@@ -353,22 +366,22 @@ HandleOne(c) ==
                  /\ lastSnapId' = [lastSnapId EXCEPT ![c] = snapCounter - 1]
                  /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
-                         hwnd |-> NULL, vis |-> NULL,
+                         hwnd |-> NULL,
                          snapId |-> snapCounter - 1, oldSnapId |-> NULL,
                          changed |-> FALSE, ok |-> TRUE,
                          session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 sessions, sessionCount, readOnly>>
             ELSE IF m.method = "Unsubscribe"
             THEN /\ subscribed' = [subscribed EXCEPT ![c] = FALSE]
                  /\ lastSnapId' = [lastSnapId EXCEPT ![c] = NULL]
                  /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
-                         hwnd |-> NULL, vis |-> NULL,
+                         hwnd |-> NULL,
                          snapId |-> NULL, oldSnapId |-> NULL,
                          changed |-> FALSE, ok |-> TRUE,
                          session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 snaps, snapPinCount, snapOrder,
                                 snapCounter, sessions, sessionCount,
                                 readOnly>>
@@ -389,13 +402,13 @@ HandleOne(c) ==
                         /\ lastSnapId' = [lastSnapId EXCEPT ![c] = snapCounter - 1]
                         /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                                [id |-> m.id, method |-> m.method,
-                                hwnd |-> NULL, vis |-> NULL,
+                                hwnd |-> NULL,
                                 snapId |-> snapCounter - 1,
                                 oldSnapId |-> oldSnapId,
                                 changed |-> (created # {} \/ destroyed # {}),
                                 ok |-> TRUE,
                                 session |-> c])]
-                        /\ UNCHANGED <<worldVisible, worldForeground,
+                        /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                        sessions, sessionCount, readOnly>>
             \* ---- SESSION LIFECYCLE ----
             ELSE IF m.method = "SessionTerminate"
@@ -404,33 +417,33 @@ HandleOne(c) ==
                                            ELSE UNCHANGED sessionCount
                  /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
-                         hwnd |-> NULL, vis |-> NULL,
+                         hwnd |-> NULL,
                          snapId |-> NULL, oldSnapId |-> NULL,
                          changed |-> FALSE, ok |-> TRUE,
                          session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps, snapPinCount,
                                 snapOrder, snapCounter, readOnly>>
             \* ---- CHECK UPDATE (network, no local state change) ----
             ELSE IF m.method = "CheckUpdate"
             THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
-                         hwnd |-> NULL, vis |-> NULL,
+                         hwnd |-> NULL,
                          snapId |-> NULL, oldSnapId |-> NULL,
                          changed |-> FALSE, ok |-> TRUE,
                          session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps,
                                 snapPinCount, snapOrder, snapCounter,
                                 sessions, sessionCount, readOnly>>
             \* ---- UNKNOWN METHOD ----
             ELSE /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
-                         hwnd |-> NULL, vis |-> NULL,
+                         hwnd |-> NULL,
                          snapId |-> NULL, oldSnapId |-> NULL,
                          changed |-> FALSE, ok |-> FALSE,
                          session |-> c])]
-                 /\ UNCHANGED <<worldVisible, worldForeground,
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps,
                                 snapPinCount, snapOrder, snapCounter,
                                 sessions, sessionCount, readOnly>>
@@ -444,7 +457,7 @@ Next ==
     \/ Connect(c)
     \/ ClientDisconnect(c)
     \/ \E m \in [id : 1..10, method : AllMethods, hwnd : Windows \cup {NULL},
-                 vis : BOOLEAN \cup {NULL}, snapId : 1..MaxSnaps \cup {NULL},
+                 snapId : 1..MaxSnaps \cup {NULL},
                  oldSnapId : 1..MaxSnaps \cup {NULL},
                  changed : BOOLEAN, ok : BOOLEAN,
                  session : Clients \cup {NULL}] :
@@ -484,7 +497,7 @@ NonInterference ==
 (***************************************************************************
   P2: Desired-state idempotence.
   If EnsureVisible sets changed:false, a subsequent EnsureVisible with the
-  same hwnd+vis also returns changed:false (already converged).
+  same hwnd+desired state also returns changed:false (already converged).
   Same for EnsureForeground.
  ***************************************************************************)
 
@@ -495,7 +508,7 @@ DesiredStateIdempotent ==
         => \A j \in (i+1)..Len(outbox[c]) :
              (outbox[c][j].method = "EnsureVisible" /\
               outbox[c][j].hwnd = outbox[c][i].hwnd /\
-              outbox[c][j].vis = outbox[c][i].vis)
+              outbox[c][j].changed = outbox[c][i].changed)
              => outbox[c][j].changed = FALSE
 
 (***************************************************************************

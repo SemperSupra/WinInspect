@@ -9,3 +9,15 @@ wi_nonce*
 bin/
 obj/
 out/
+
+# TLA+ model checker artifacts
+formal/tla/*_TTrace_*.tla
+formal/tla/*_TTrace_*.bin
+formal/tla/states/
+formal/tla/*.states
+
+# TLA+ model checker artifacts
+formal/tla/*_TTrace_*.tla
+formal/tla/*_TTrace_*.bin
+formal/tla/states/
+formal/tla/*.states
