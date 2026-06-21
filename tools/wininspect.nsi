@@ -5,7 +5,7 @@
 !endif
 
 !ifndef BUILD_SRC
-  !define BUILD_SRC "..\build\out"
+  !define BUILD_SRC "..\build\Release"
 !endif
 
 !ifndef DIST_DIR

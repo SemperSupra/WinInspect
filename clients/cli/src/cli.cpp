@@ -274,7 +274,8 @@ static int usage() {
             << "  send-input <base64_data>\n"
             << "  ui-inspect <hwnd>\n"
             << "  ui-invoke <hwnd> <automation_id>\n"
-            << "  health\n"`n            << "  capabilities\n"
+            << "  health\n"
+            << "  capabilities\n"
             << "  config --key <path>\n";
   return 2;
 }
