@@ -591,9 +591,9 @@ void CoreEngine::build_dispatch_table() {
   dispatch_["image.match"] = [this]( const CoreRequest &req,
                                   const Snapshot &, const Snapshot *) {
     CoreResponse resp;
-    auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
-         r = get_num(req.params, "right"), bm = get_num(req.params, "bottom"),
-         sub_b64 = get_str(req.params, "sub_image_b64");
+    auto l = get_num(req.params, "left"), t = get_num(req.params, "top");
+    auto r = get_num(req.params, "right"), bm = get_num(req.params, "bottom");
+    auto sub_b64 = get_str(req.params, "sub_image_b64");
     if (!l || !t || !r || !bm || !sub_b64) throw std::runtime_error("missing parameters");
     Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
     auto sub = base64::decode(*sub_b64);
