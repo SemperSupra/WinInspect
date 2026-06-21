@@ -202,6 +202,47 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         }
       }
 
+
+      // Intercept subscribe before core dispatch -- captures baseline snapshot
+      if (req.method == "events.subscribe") {
+        Snapshot s = backend->capture_snapshot();
+        std::string sid;
+        {
+          std::lock_guard<std::mutex> lk(st->mu);
+          sid = make_snap_id(st->snap_counter++);
+          st->snaps.emplace(sid, std::move(s));
+          st->lru_order.push_back(sid);
+          session.subscribed = true;
+          session.last_snap_id = sid;
+          if (!session.id.empty()) {
+            st->sessions[session.id.val].subscribed = true;
+            st->sessions[session.id.val].last_snap_id = sid;
+          }
+        }
+        json::Object o;
+        o["subscribed"] = true;
+        o["snapshot_id"] = sid;
+        resp.ok = true;
+        resp.result = o;
+        goto send_resp;
+      }
+
+      if (req.method == "events.unsubscribe") {
+        session.subscribed = false;
+        session.last_snap_id.clear();
+        if (!session.id.empty()) {
+          std::lock_guard<std::mutex> lk(st->mu);
+          if (st->sessions.count(session.id.val)) {
+            st->sessions[session.id.val].subscribed = false;
+            st->sessions[session.id.val].last_snap_id.clear();
+          }
+        }
+        json::Object o;
+        o["unsubscribed"] = true;
+        resp.ok = true;
+        resp.result = o;
+        goto send_resp;
+      }
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);

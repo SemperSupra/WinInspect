@@ -392,6 +392,7 @@ int main(int argc, char **argv) {
       tv = {0, 500000}; // quick check for more
     }
     closesocket(s);
+    WSACleanup();
     return 0;
   }
 
