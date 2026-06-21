@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
-
 #include <atomic>
 #include <functional>
 #include <string>
@@ -25,10 +24,20 @@ public:
   void stop();
 
 private:
+  // RAII wrapper for Winsock — constructed once, ref-counted by the OS if
+  // start() is called multiple times (tray fallback path).
+  struct WsaGuard {
+    WsaGuard();
+    ~WsaGuard();
+    bool ok() const { return ok_; }
+  private:
+    bool ok_ = false;
+  };
+
   int port_;
   wininspect::ServerState *state_;
   wininspect::IBackend *backend_;
-  uintptr_t listen_sock_ = 0; // Use uintptr_t to avoid including winsock2.h here
+  uintptr_t listen_sock_ = 0;
 };
 
 } // namespace wininspectd

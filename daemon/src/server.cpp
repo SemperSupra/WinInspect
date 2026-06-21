@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Mark E. DeYoung
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -287,7 +286,10 @@ void run_server(std::atomic<bool> *running, ServerState *st,
       continue;
     }
 
-    std::thread(handle_client, hPipe, st, backend, read_only, auth_keys_u8).detach();
+    {
+    std::lock_guard<std::mutex> lk(st->thread_mu);
+    st->client_threads.emplace_back(handle_client, hPipe, st, backend, read_only, auth_keys_u8);
+  }
   }
 }
 

@@ -1,8 +1,8 @@
+#include "wininspect/base64.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <bcrypt.h>
 #include <fstream>
@@ -20,7 +20,6 @@
 
 namespace wininspect::crypto {
 
-static std::vector<uint8_t> base64_decode(const std::string &in);
 
 struct BCryptState {
   BCRYPT_ALG_HANDLE hAlgECDH = nullptr;
@@ -186,26 +185,6 @@ std::string CryptoSession::decrypt(const std::vector<uint8_t> &ciphertext) {
   return out;
 }
 
-static std::vector<uint8_t> base64_decode(const std::string &in) {
-  static const std::string b64 =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::vector<uint8_t> out;
-  std::vector<int> T(256, -1);
-  for (int i = 0; i < 64; i++)
-    T[b64[i]] = i;
-  int val = 0, valb = -8;
-  for (char c : in) {
-    if (T[c] == -1)
-      break;
-    val = (val << 6) + T[c];
-    valb += 6;
-    if (valb >= 0) {
-      out.push_back(uint8_t((val >> valb) & 0xFF));
-      valb -= 8;
-    }
-  }
-  return out;
-}
 
 static std::vector<uint8_t> parse_ssh_pubkey(const std::string &line) {
   std::stringstream ss(line);
@@ -213,7 +192,7 @@ static std::vector<uint8_t> parse_ssh_pubkey(const std::string &line) {
   ss >> type >> b64;
   if (type != "ssh-ed25519")
     return {};
-  auto decoded = base64_decode(b64);
+  auto decoded = base64::decode(b64);
   // SSH Ed25519 pubkey format: [len][type][len][pubkey]
   // For Ed25519, the last 32 bytes are the raw key.
   if (decoded.size() < 32)
@@ -231,7 +210,7 @@ bool verify_ssh_sig(const std::vector<uint8_t> &message,
   // Decode signature blob.
   // In a full implementation, we'd parse the SSHSIG wrapper.
   // For brevity, we assume the signature is the raw 64-byte Ed25519 signature.
-  auto raw_sig = base64_decode(sig_b64);
+  auto raw_sig = base64::decode(sig_b64);
   if (raw_sig.size() < 64)
     return false;
 

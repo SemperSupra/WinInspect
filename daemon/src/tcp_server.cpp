@@ -1,8 +1,8 @@
+#include "wininspect/base64.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -22,6 +22,17 @@
 using namespace wininspect;
 
 namespace wininspectd {
+
+// Ensure Winsock is initialized exactly once for the lifetime of the process,
+// regardless of how many times TcpServer::start() is called (tray fallback).
+static struct WsaInit {
+  WsaInit() {
+    WSADATA wsd;
+    ok = (WSAStartup(MAKEWORD(2, 2), &wsd) == 0);
+  }
+  ~WsaInit() { if (ok) WSACleanup(); }
+  bool ok = false;
+} wsa_init;
 
 static bool socket_read_all(SOCKET s, void *buf, uint32_t len) {
   char *p = (char *)buf;
@@ -47,25 +58,6 @@ static bool socket_write_all(SOCKET s, const void *buf, uint32_t len) {
   return true;
 }
 
-static std::string base64_encode(const std::vector<uint8_t> &in) {
-  static const char *b64 =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string out;
-  int val = 0, valb = -6;
-  for (uint8_t c : in) {
-    val = (val << 8) + c;
-    valb += 8;
-    while (valb >= 0) {
-      out.push_back(b64[(val >> valb) & 0x3F]);
-      valb -= 6;
-    }
-  }
-  if (valb > -6)
-    out.push_back(b64[((val << 8) >> (valb + 8)) & 0x3F]);
-  while (out.size() % 4)
-    out.push_back('=');
-  return out;
-}
 
 struct AuthContext {
   std::string keys_path;
@@ -111,7 +103,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
       CryptGenRandom(hProv, (DWORD)nonce.size(), nonce.data());
       CryptReleaseContext(hProv, 0);
     }
-    challenge["nonce"] = base64_encode(nonce);
+    challenge["nonce"] = base64::encode(nonce);
   }
 
   std::string cj = wininspect::json::dumps(challenge);
@@ -357,10 +349,8 @@ void TcpServer::stop() {
 
 void TcpServer::start(std::atomic<bool> *running, bool bind_public,
                       const std::string &auth_keys, bool read_only) {
-  LOG_DEBUG("TCP Server: Initializing Winsock...");
-  WSADATA wsaData;
-  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-    LOG_ERROR("TCP Server: WSAStartup failed.");
+  if (!wsa_init.ok) {
+    LOG_ERROR("TCP Server: Winsock not initialized.");
     return;
   }
 
@@ -368,7 +358,6 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
   SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (listen_sock == INVALID_SOCKET) {
     LOG_ERROR("TCP Server: socket() failed: " + std::to_string(WSAGetLastError()));
-    WSACleanup();
     return;
   }
   listen_sock_ = (uintptr_t)listen_sock;
@@ -382,7 +371,6 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
   if (bind(listen_sock, (sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
     LOG_ERROR("TCP Server: Bind failed: " + std::to_string(WSAGetLastError()));
     closesocket(listen_sock);
-    WSACleanup();
     return;
   }
 
@@ -411,13 +399,14 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     u_long m2 = 0;
     ioctlsocket(client, FIONBIO, &m2);
 
-    std::thread(handle_socket_client, client, state_, backend_, auth_keys,
-                read_only)
-        .detach();
+    {
+      std::lock_guard<std::mutex> lk(state_->thread_mu);
+      state_->client_threads.emplace_back(handle_socket_client, client,
+                                          state_, backend_, auth_keys, read_only);
+    }
   }
 
   closesocket(listen_sock);
-  WSACleanup();
 }
 
 } // namespace wininspectd

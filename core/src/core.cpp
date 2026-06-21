@@ -1,3 +1,4 @@
+#include "wininspect/base64.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
@@ -155,47 +156,7 @@ static json::Object window_info_to_json(const WindowInfo &wi) {
   return o;
 }
 
-static std::vector<uint8_t> base64_decode(std::string_view in) {
-  static const std::string_view b64 =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::vector<uint8_t> out;
-  std::vector<int> T(256, -1);
-  for (int i = 0; i < 64; i++)
-    T[b64[i]] = i;
 
-  int val = 0, valb = -8;
-  for (char c : in) {
-    if (T[c] == -1)
-      break;
-    val = (val << 6) + T[c];
-    valb += 6;
-    if (valb >= 0) {
-      out.push_back(uint8_t((val >> valb) & 0xFF));
-      valb -= 8;
-    }
-  }
-  return out;
-}
-
-static std::string base64_encode(const std::vector<uint8_t> &in) {
-  static const char b64[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string out;
-  int val = 0, valb = -6;
-  for (uint8_t c : in) {
-    val = (val << 8) + c;
-    valb += 8;
-    while (valb >= 0) {
-      out.push_back(b64[(val >> valb) & 0x3F]);
-      valb -= 6;
-    }
-  }
-  if (valb > -6)
-    out.push_back(b64[((val << 8) >> (valb + 8)) & 0x3F]);
-  while (out.size() % 4)
-    out.push_back('=');
-  return out;
-}
 
 static json::Object ui_element_to_json(const UIElementInfo &el) {
   json::Object o;
@@ -523,7 +484,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
         return resp;
       }
       json::Object o;
-      o["content_b64"] = base64_encode(std::vector<uint8_t>(content->begin(), content->end()));
+      o["content_b64"] = base64::encode(std::vector<uint8_t>(content->begin(), content->end()));
       resp.result = o;
       return resp;
     }
@@ -656,7 +617,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       auto addr = get_num(req.params, "address");
       auto data_b64 = get_str(req.params, "data_b64");
       if (!pid || !addr || !data_b64) throw std::runtime_error("missing parameters");
-      auto data = base64_decode(*data_b64);
+      auto data = base64::decode(*data_b64);
       bool ok = backend_->mem_write((uint32_t)*pid, (uint64_t)*addr, data);
       json::Object o; o["ok"] = ok;
       resp.result = o;
@@ -672,7 +633,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       if (!left || !top || !right || !bottom || !sub_b64) throw std::runtime_error("missing parameters");
       
       Rect r{(long)*left, (long)*top, (long)*right, (long)*bottom};
-      auto sub = base64_decode(*sub_b64);
+      auto sub = base64::decode(*sub_b64);
       auto res = backend_->image_match(r, sub);
       if (!res) { resp.ok = false; return resp; }
       json::Object o;
@@ -834,7 +795,7 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       auto data_b64 = get_str(req.params, "data_b64");
       if (!data_b64)
         throw std::runtime_error("missing data_b64");
-      auto data = base64_decode(*data_b64);
+      auto data = base64::decode(*data_b64);
       bool ok = backend_->send_input(data);
       json::Object o;
       o["sent"] = ok;

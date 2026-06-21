@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Mark E. DeYoung
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include "pipe.hpp"
 #include <windows.h>
 

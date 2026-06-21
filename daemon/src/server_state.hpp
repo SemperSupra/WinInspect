@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
-
 #include <mutex>
 #include <map>
 #include <list>
 #include <string>
 #include <chrono>
 #include <atomic>
+#include <thread>
+#include <vector>
 #include "wininspect/types.hpp"
 
 namespace wininspect {
@@ -19,7 +20,11 @@ struct ServerState {
   std::map<std::string, Snapshot> snaps;
   std::map<std::string, int> pinned_counts;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
-  
+
+  // Client thread tracking (joined on shutdown via jthread auto-join)
+  std::vector<std::jthread> client_threads;
+  std::mutex thread_mu; // protects client_threads
+
   // Event Sequencing
   std::atomic<std::uint64_t> event_counter{1};
   std::vector<Event> event_log;
@@ -27,6 +32,7 @@ struct ServerState {
 
   // Configurable limits
   size_t max_snapshots = 1000;
+  size_t max_sessions = 256;
   size_t max_mem_read_size = 1024 * 1024; // 1MB default
   int uia_depth = 5;
   int service_timeout_sec = 30;

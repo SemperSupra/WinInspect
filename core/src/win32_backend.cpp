@@ -1,3 +1,4 @@
+#include "wininspect/base64.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
@@ -11,7 +12,6 @@
 #include <winsvc.h>
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <uiautomation.h>
 #include <comdef.h>
 #include <psapi.h>
@@ -334,25 +334,6 @@ std::vector<WindowNode> Win32Backend::get_window_tree(const Snapshot &,
   return results;
 }
 
-static std::string base64_encode(const std::vector<uint8_t> &in) {
-  static const char b64[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string out;
-  int val = 0, valb = -6;
-  for (uint8_t c : in) {
-    val = (val << 8) + c;
-    valb += 8;
-    while (valb >= 0) {
-      out.push_back(b64[(val >> valb) & 0x3F]);
-      valb -= 6;
-    }
-  }
-  if (valb > -6)
-    out.push_back(b64[((val << 8) >> (valb + 8)) & 0x3F]);
-  while (out.size() % 4)
-    out.push_back('=');
-  return out;
-}
 
 std::string Color::to_hex() const {
   char buf[8];
@@ -540,7 +521,7 @@ std::optional<ScreenCapture> Win32Backend::capture_screen(Rect region) {
   ScreenCapture sc;
   sc.width = w;
   sc.height = h;
-  sc.data_b64 = base64_encode(buffer);
+  sc.data_b64 = base64::encode(buffer);
 
   DeleteObject(hbm);
   DeleteDC(hdcMem);
@@ -935,7 +916,7 @@ std::optional<MemoryRegion> Win32Backend::mem_read(uint32_t pid, uint64_t addres
     MemoryRegion mr;
     mr.address = address;
     buffer.resize(read);
-    mr.data_b64 = base64_encode(buffer);
+    mr.data_b64 = base64::encode(buffer);
     return mr;
   }
   return std::nullopt;

@@ -1,8 +1,8 @@
+#include "wininspect/base64.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -107,26 +107,6 @@ static std::string load_key_path() {
   return s;
 }
 
-static std::vector<uint8_t> base64_decode(const std::string &in) {
-  static const std::string b64 =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::vector<uint8_t> out;
-  std::vector<int> T(256, -1);
-  for (int i = 0; i < 64; i++)
-    T[b64[i]] = i;
-  int val = 0, valb = -8;
-  for (char c : in) {
-    if (T[c] == -1)
-      break;
-    val = (val << 6) + T[c];
-    valb += 6;
-    if (valb >= 0) {
-      out.push_back(uint8_t((val >> valb) & 0xFF));
-      valb -= 8;
-    }
-  }
-  return out;
-}
 
 static bool perform_auth(Conn &conn) {
   std::string challenge_json;
@@ -145,7 +125,7 @@ static bool perform_auth(Conn &conn) {
   }
 
   std::string sig =
-      wininspect::crypto::sign_ssh_msg(base64_decode(nonce_b64), key_path);
+      wininspect::crypto::sign_ssh_msg(base64::decode(nonce_b64), key_path);
   if (sig.empty()) {
     std::cerr << "Failed to sign challenge with key: " << key_path << "\n";
     return false;

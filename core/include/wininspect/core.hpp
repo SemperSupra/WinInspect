@@ -33,14 +33,14 @@ public:
 
   // Handle one request. Core itself is stateless; snapshot state lives in
   // daemon layer.
-  CoreResponse handle(const CoreRequest &req, const Snapshot &snapshot,
-                      const Snapshot *old_snapshot = nullptr);
+  [[nodiscard]] CoreResponse handle(const CoreRequest &req, const Snapshot &snapshot,
+                                     const Snapshot *old_snapshot = nullptr);
 
 private:
   IBackend *backend_;
 };
 
-CoreRequest parse_request_json(std::string_view json_utf8);
-std::string serialize_response_json(const CoreResponse &resp, bool canonical);
+[[nodiscard]] CoreRequest parse_request_json(std::string_view json_utf8);
+[[nodiscard]] std::string serialize_response_json(const CoreResponse &resp, bool canonical);
 
 } // namespace wininspect

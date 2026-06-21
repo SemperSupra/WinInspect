@@ -29,12 +29,12 @@ int compare_versions(const std::vector<int> &a, const std::vector<int> &b);
 // Query GitHub Releases API for the latest release of SemperSupra/WinInspect.
 // Compares against the provided current_version string (e.g. "v0.0.1").
 // Populates both installer_url and portable_zip_url from release assets.
-UpdateInfo check_for_update(const std::string &current_version);
+[[nodiscard]] UpdateInfo check_for_update(const std::string &current_version);
 
 // Download a release asset from the given URL to a temp file.
 // The type_hint ("installer" or "portable") determines the output extension.
 // Returns the local path on success, empty string on failure.
-std::string download_update(const std::string &url, const std::string &version_tag,
+[[nodiscard]] std::string download_update(const std::string &url, const std::string &version_tag,
                             const std::string &type_hint = "installer");
 
 } // namespace wininspect::update
