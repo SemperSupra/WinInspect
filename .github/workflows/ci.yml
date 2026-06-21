@@ -24,7 +24,7 @@ jobs:
           go build -C clients/portable -o ../../dist/wi-portable.exe
 
       - name: Package Installer
-        run: makensis -DVERSION=ci -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+        run: & "C:\Program Files (x86)\NSIS\makensis.exe" -DVERSION=ci -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4
