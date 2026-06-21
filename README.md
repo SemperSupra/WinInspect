@@ -111,5 +111,10 @@ See:
 - `docs/CONTRACTS.md`
 - `formal/tla/`
 
+## Privacy
+
+WinInspect does not collect, transmit, or store personal data. See
+[PRIVACY.md](PRIVACY.md) for the full privacy policy.
+
 ## License
 Apache 2.0 (see `LICENSE`).
