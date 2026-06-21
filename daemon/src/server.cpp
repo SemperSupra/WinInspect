@@ -556,7 +556,7 @@ int main(int argc, char **argv) {
     });
     if (tray.init(GetModuleHandle(nullptr))) {
       // Create a background thread for TCP if tray is running
-      std::thread([&, tcp, bind_public, &auth_keys_data, read_only]() {
+      std::thread([&, tcp, bind_public, read_only]() {
         try {
           tcp->start(&running, bind_public, auth_keys_data, read_only);
         } catch (...) {}
