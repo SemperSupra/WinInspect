@@ -39,6 +39,7 @@ public:
 private:
   using Handler = std::function<CoreResponse(const CoreRequest&,
                                              const Snapshot&, const Snapshot*)>;
+  IBackend *backend_;
   std::unordered_map<std::string, Handler> dispatch_;
   void build_dispatch_table();
 };

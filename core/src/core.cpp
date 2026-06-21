@@ -162,7 +162,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- snapshot + events (handled in daemon layer) ---
-  dispatch_["events.poll"] = [b]( const CoreRequest &req,
+  dispatch_["events.poll"] = [ & ](  const CoreRequest &req,
                                   const Snapshot &snap, const Snapshot *old) -> CoreResponse {
     CoreResponse resp;
     resp.id = req.id;
@@ -196,7 +196,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- window methods ---
-  dispatch_["window.listTop"] = [b]( const CoreRequest &,
+  dispatch_["window.listTop"] = [ & ](  const CoreRequest &,
                                       const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto top = b->list_top(snap);
@@ -205,7 +205,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["window.listChildren"] = [b]( const CoreRequest &req,
+  dispatch_["window.listChildren"] = [ & ](  const CoreRequest &req,
                                           const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -218,7 +218,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["window.getTree"] = [b]( const CoreRequest &req,
+  dispatch_["window.getTree"] = [ & ](  const CoreRequest &req,
                                      const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -230,7 +230,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["window.highlight"] = [b]( const CoreRequest &req,
+  dispatch_["window.highlight"] = [ & ](  const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -241,7 +241,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["window.getInfo"] = [b]( const CoreRequest &req,
+  dispatch_["window.getInfo"] = [ & ](  const CoreRequest &req,
                                      const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -253,7 +253,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = window_info_to_json(*info); return resp;
   };
 
-  dispatch_["window.pickAtPoint"] = [b]( const CoreRequest &req,
+  dispatch_["window.pickAtPoint"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -268,7 +268,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- desired-state actions (idempotent) ---
-  dispatch_["window.ensureVisible"] = [b]( const CoreRequest &req,
+  dispatch_["window.ensureVisible"] = [ & ](  const CoreRequest &req,
                                            const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), vis = get_bool(req.params, "visible");
@@ -279,7 +279,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["window.ensureForeground"] = [b]( const CoreRequest &req,
+  dispatch_["window.ensureForeground"] = [ & ](  const CoreRequest &req,
                                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -290,7 +290,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["window.setProperty"] = [b]( const CoreRequest &req,
+  dispatch_["window.setProperty"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), name = get_str(req.params, "name"), val = get_str(req.params, "value");
@@ -301,7 +301,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["window.postMessage"] = [b]( const CoreRequest &req,
+  dispatch_["window.postMessage"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), msg = get_num(req.params, "msg");
@@ -316,7 +316,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- input methods ---
-  dispatch_["input.send"] = [b]( const CoreRequest &req,
+  dispatch_["input.send"] = [ & ](  const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto data_b64 = get_str(req.params, "data_b64");
@@ -325,7 +325,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["input.mouseClick"] = [b]( const CoreRequest &req,
+  dispatch_["input.mouseClick"] = [ & ](  const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -335,7 +335,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["input.keyPress"] = [b]( const CoreRequest &req,
+  dispatch_["input.keyPress"] = [ & ](  const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto vk = get_num(req.params, "vk");
@@ -344,7 +344,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["input.text"] = [b]( const CoreRequest &req,
+  dispatch_["input.text"] = [ & ](  const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = get_str(req.params, "text");
@@ -354,7 +354,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- stealth input ---
-  dispatch_["window.controlClick"] = [b]( const CoreRequest &req,
+  dispatch_["window.controlClick"] = [ & ](  const CoreRequest &req,
                                           const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -366,7 +366,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["window.controlSend"] = [b]( const CoreRequest &req,
+  dispatch_["window.controlSend"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), text = get_str(req.params, "text");
@@ -378,7 +378,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- screen methods ---
-  dispatch_["screen.getPixel"] = [b]( const CoreRequest &req,
+  dispatch_["screen.getPixel"] = [ & ](  const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
@@ -390,7 +390,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["screen.capture"] = [b]( const CoreRequest &req,
+  dispatch_["screen.capture"] = [ & ](  const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
@@ -404,7 +404,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["screen.pixelSearch"] = [b]( const CoreRequest &req,
+  dispatch_["screen.pixelSearch"] = [ & ](  const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
@@ -421,7 +421,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- process ---
-  dispatch_["process.list"] = [b]( const CoreRequest &,
+  dispatch_["process.list"] = [ & ](  const CoreRequest &,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto procs = b->list_processes();
@@ -432,7 +432,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["process.kill"] = [b]( const CoreRequest &req,
+  dispatch_["process.kill"] = [ & ](  const CoreRequest &req,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid");
@@ -442,7 +442,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- file ---
-  dispatch_["file.getInfo"] = [b]( const CoreRequest &req,
+  dispatch_["file.getInfo"] = [ & ](  const CoreRequest &req,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -453,7 +453,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["file.read"] = [b]( const CoreRequest &req,
+  dispatch_["file.read"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -465,7 +465,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- clipboard ---
-  dispatch_["clipboard.read"] = [b]( const CoreRequest &,
+  dispatch_["clipboard.read"] = [ & ](  const CoreRequest &,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = b->clipboard_read();
@@ -473,7 +473,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["clipboard.write"] = [b]( const CoreRequest &req,
+  dispatch_["clipboard.write"] = [ & ](  const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto text = get_str(req.params, "text");
@@ -483,7 +483,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- services ---
-  dispatch_["service.list"] = [b]( const CoreRequest &,
+  dispatch_["service.list"] = [ & ](  const CoreRequest &,
                                    const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto svcs = b->service_list();
@@ -494,7 +494,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["service.status"] = [b]( const CoreRequest &req,
+  dispatch_["service.status"] = [ & ](  const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
@@ -503,7 +503,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["service.control"] = [b]( const CoreRequest &req,
+  dispatch_["service.control"] = [ & ](  const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name"), action = get_str(req.params, "action");
@@ -513,7 +513,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- env ---
-  dispatch_["env.get"] = [b]( const CoreRequest &,
+  dispatch_["env.get"] = [ & ](  const CoreRequest &,
                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto vars = b->env_get_all();
@@ -522,7 +522,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["env.set"] = [b]( const CoreRequest &req,
+  dispatch_["env.set"] = [ & ](  const CoreRequest &req,
                               const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name"), val = get_str(req.params, "value");
@@ -532,7 +532,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- wine ---
-  dispatch_["wine.drives"] = [b]( const CoreRequest &,
+  dispatch_["wine.drives"] = [ & ](  const CoreRequest &,
                                   const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto drives = b->wine_get_drives();
@@ -543,7 +543,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["wine.overrides"] = [b]( const CoreRequest &,
+  dispatch_["wine.overrides"] = [ & ](  const CoreRequest &,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto ovr = b->wine_get_overrides();
@@ -552,7 +552,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- sync ---
-  dispatch_["sync.checkMutex"] = [b]( const CoreRequest &req,
+  dispatch_["sync.checkMutex"] = [ & ](  const CoreRequest &req,
                                       const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
@@ -561,7 +561,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["sync.createMutex"] = [b]( const CoreRequest &req,
+  dispatch_["sync.createMutex"] = [ & ](  const CoreRequest &req,
                                        const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto name = get_str(req.params, "name");
@@ -572,7 +572,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- memory ---
-  dispatch_["mem.read"] = [b]( const CoreRequest &req,
+  dispatch_["mem.read"] = [ & ](  const CoreRequest &req,
                                const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid"), addr = get_num(req.params, "address"), sz = get_num(req.params, "size");
@@ -583,7 +583,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["mem.write"] = [b]( const CoreRequest &req,
+  dispatch_["mem.write"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto pid = get_num(req.params, "pid"), addr = get_num(req.params, "address"), data_b64 = get_str(req.params, "data_b64");
@@ -594,7 +594,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- image ---
-  dispatch_["image.match"] = [b]( const CoreRequest &req,
+  dispatch_["image.match"] = [ & ](  const CoreRequest &req,
                                   const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
@@ -610,7 +610,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- input hook ---
-  dispatch_["input.hook"] = [b]( const CoreRequest &req,
+  dispatch_["input.hook"] = [ & ](  const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto enabled = get_bool(req.params, "enabled");
@@ -620,7 +620,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- regex ---
-  dispatch_["window.findRegex"] = [b]( const CoreRequest &req,
+  dispatch_["window.findRegex"] = [ & ](  const CoreRequest &req,
                                        const Snapshot &snap, const Snapshot *) {
     CoreResponse resp;
     auto t_re = get_str(req.params, "title_regex").value_or(".*");
@@ -632,7 +632,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- registry ---
-  dispatch_["reg.read"] = [b]( const CoreRequest &req,
+  dispatch_["reg.read"] = [ & ](  const CoreRequest &req,
                                const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -650,7 +650,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["reg.write"] = [b]( const CoreRequest &req,
+  dispatch_["reg.write"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path"), name = get_str(req.params, "name"),
@@ -661,7 +661,7 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
-  dispatch_["reg.delete"] = [b]( const CoreRequest &req,
+  dispatch_["reg.delete"] = [ & ](  const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto path = get_str(req.params, "path");
@@ -672,7 +672,7 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- ui automation ---
-  dispatch_["ui.inspect"] = [b]( const CoreRequest &req,
+  dispatch_["ui.inspect"] = [ & ](  const CoreRequest &req,
                                  const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd");
@@ -685,7 +685,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = arr; return resp;
   };
 
-  dispatch_["ui.invoke"] = [b]( const CoreRequest &req,
+  dispatch_["ui.invoke"] = [ & ](  const CoreRequest &req,
                                 const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto hwnd_s = get_str(req.params, "hwnd"), aid = get_str(req.params, "automation_id");
@@ -697,13 +697,13 @@ void CoreEngine::build_dispatch_table() {
   };
 
   // --- daemon meta ---
-  dispatch_["daemon.health"] = [b]( const CoreRequest &,
+  dispatch_["daemon.health"] = [ & ](  const CoreRequest &,
                                     const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     resp.ok = true; resp.result = b->get_env_metadata(); return resp;
   };
 
-  dispatch_["daemon.capabilities"] = [b]( const CoreRequest &,
+  dispatch_["daemon.capabilities"] = [ & ](  const CoreRequest &,
                                           const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto caps = b->get_capabilities();
@@ -720,7 +720,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["daemon.checkUpdate"] = [b]( const CoreRequest &,
+  dispatch_["daemon.checkUpdate"] = [ & ](  const CoreRequest &,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto info = b->check_for_update();
@@ -732,7 +732,7 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
-  dispatch_["daemon.downloadUpdate"] = [b]( const CoreRequest &req,
+  dispatch_["daemon.downloadUpdate"] = [ & ](  const CoreRequest &req,
                                             const Snapshot &, const Snapshot *) {
     CoreResponse resp;
     auto url = get_str(req.params, "url").value_or("");
