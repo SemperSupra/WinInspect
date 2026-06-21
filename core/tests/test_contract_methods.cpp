@@ -162,7 +162,7 @@ DOCTEST_TEST_CASE("contract: input.mouseClick") {
 DOCTEST_TEST_CASE("contract: input.keyPress") {
   auto fb = make_fake();
   CoreEngine core(&fb);
-  json::Object p; p["vk"] = 0x41;
+  json::Object p; p["vk"] = 65.0;
   CoreRequest req{"t16","input.keyPress",p};
   auto r = core.handle(req, fb.capture_snapshot());
   DOCTEST_REQUIRE(r.ok);
@@ -357,7 +357,7 @@ DOCTEST_TEST_CASE("contract: sync.createMutex") {
 DOCTEST_TEST_CASE("contract: mem.read") {
   auto fb = make_fake();
   CoreEngine core(&fb);
-  json::Object p; p["pid"] = 1234.0; p["address"] = 0x1000.0; p["size"] = 32.0;
+  json::Object p; p["pid"] = 1234.0; p["address"] = 4096.0; p["size"] = 32.0;
   CoreRequest req{"t36","mem.read",p};
   auto r = core.handle(req, fb.capture_snapshot());
   DOCTEST_REQUIRE(r.ok);
@@ -366,7 +366,7 @@ DOCTEST_TEST_CASE("contract: mem.read") {
 DOCTEST_TEST_CASE("contract: mem.write") {
   auto fb = make_fake();
   CoreEngine core(&fb);
-  json::Object p; p["pid"] = 1234.0; p["address"] = 0x1000.0;
+  json::Object p; p["pid"] = 1234.0; p["address"] = 4096.0;
   p["data_b64"] = std::string("AAAA");
   CoreRequest req{"t37","mem.write",p};
   auto r = core.handle(req, fb.capture_snapshot());

@@ -143,7 +143,7 @@ DOCTEST_TEST_CASE("trace replay: event_subscription") {
   DOCTEST_REQUIRE(resp2.ok);
 
   CoreRequest r2b{"e2b", "events.poll", {}};
-  DOCTEST_REQUIRE_THROWS(core.handle(r2b, s2));
+  bool threw = false; try { core.handle(r2b, s2); } catch(...) { threw = true; } DOCTEST_REQUIRE(threw);
 
   CoreRequest r3{"e3", "session.terminate", {}};
   auto resp3 = core.handle(r3, s2);
