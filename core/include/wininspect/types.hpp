@@ -26,8 +26,8 @@ struct SessionID {
   bool empty() const { return val.empty(); }
 };
 
-inline constexpr std::string_view PROTOCOL_VERSION = "0.1.0";
-inline constexpr std::string_view WININSPECT_VERSION = "v0.1.0";
+inline constexpr std::string_view PROTOCOL_VERSION = "0.1.1";
+inline constexpr std::string_view WININSPECT_VERSION = "v0.1.1";
 
 struct Rect {
   long left{}, top{}, right{}, bottom{};

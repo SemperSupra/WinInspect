@@ -27,7 +27,7 @@ std::vector<int> parse_version(const std::string &tag);
 int compare_versions(const std::vector<int> &a, const std::vector<int> &b);
 
 // Query GitHub Releases API for the latest release of SemperSupra/WinInspect.
-// Compares against the provided current_version string (e.g. "v0.0.1").
+// Compares against the provided current_version string (e.g. "v0.1.1").
 // Populates both installer_url and portable_zip_url from release assets.
 [[nodiscard]] UpdateInfo check_for_update(const std::string &current_version);
 

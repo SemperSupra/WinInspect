@@ -12,6 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify Versions
+        shell: bash
+        run: bash scripts/verify-versions.sh
+
       - name: Build and Test (Debug)
         run: |
           cmake -S . -B build-debug -DWININSPECT_BUILD_TESTS=ON

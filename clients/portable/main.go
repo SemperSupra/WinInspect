@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-const ProtocolVersion = "0.1.0"
+const ProtocolVersion = "0.1.1"
 
 type Request struct {
 	ID     string      `json:"id"`
