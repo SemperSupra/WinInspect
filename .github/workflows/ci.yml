@@ -33,9 +33,11 @@ jobs:
             Copy-Item -Destination dist\staging\ -Verbose
 
       - name: Package Installer
+        shell: bash
         run: |
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          makensis -DVERSION=ci -DBUILD_SRC=dist\staging -DDIST_DIR=dist tools\wininspect.nsi
+          export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          ls -la dist/staging/
+          makensis -DVERSION=ci -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4

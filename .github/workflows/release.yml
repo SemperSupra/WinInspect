@@ -40,9 +40,11 @@ jobs:
             Copy-Item -Destination dist\staging\ -Verbose
 
       - name: Package Installer
+        shell: bash
         run: |
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=dist\staging -DDIST_DIR=dist tools\wininspect.nsi
+          export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          ls -la dist/staging/
+          makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
