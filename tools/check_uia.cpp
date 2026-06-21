@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Mark E. DeYoung
+
 #include <windows.h>
 #include <uiautomation.h>
 #include <iostream>

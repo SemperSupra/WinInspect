@@ -1,4 +1,8 @@
-import socket
+
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Mark E. DeYoung
+#
 import struct
 import time
 import json

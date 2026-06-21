@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Mark E. DeYoung
+
 #ifdef _WIN32
 int wmain(int argc, wchar_t **argv);
 int wmain(int argc, wchar_t **argv);

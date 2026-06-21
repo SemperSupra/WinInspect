@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Mark E. DeYoung
+#
 cmd="${1:-}"
 shift || true
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Mark E. DeYoung
+
 #include "doctest/doctest.h"
 #include "wininspect/core.hpp"
 #include "wininspect/fake_backend.hpp"

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Mark E. DeYoung
+#
 import os
 import sys
 import subprocess
