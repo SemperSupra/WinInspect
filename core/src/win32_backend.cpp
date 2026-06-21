@@ -1326,8 +1326,8 @@ update::UpdateInfo Win32Backend::check_for_update() {
   return update::check_for_update(std::string(WININSPECT_VERSION));
 }
 
-std::string Win32Backend::download_update(const std::string &url) {
-  return update::download_update(url, std::string(WININSPECT_VERSION));
+std::string Win32Backend::download_update(const std::string &url, const std::string &type_hint) {
+  return update::download_update(url, std::string(WININSPECT_VERSION), type_hint);
 }
 
 } // namespace wininspect
@@ -1378,7 +1378,7 @@ update::UpdateInfo Win32Backend::check_for_update() {
   return info;
 }
 
-std::string Win32Backend::download_update(const std::string &) {
+std::string Win32Backend::download_update(const std::string &, const std::string &) {
   return {};
 }
 

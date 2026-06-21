@@ -95,7 +95,7 @@ public:
   json::Object get_env_metadata() override;
 
   update::UpdateInfo check_for_update() override;
-  std::string download_update(const std::string &url) override;
+  std::string download_update(const std::string &url, const std::string &type_hint) override;
 
   // Test helpers
   void add_fake_ui_element(hwnd_u64 parent, const UIElementInfo &info);

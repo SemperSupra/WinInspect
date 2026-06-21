@@ -353,7 +353,7 @@ update::UpdateInfo FakeBackend::check_for_update() {
   return info;
 }
 
-std::string FakeBackend::download_update(const std::string &) {
+std::string FakeBackend::download_update(const std::string &, const std::string &) {
   return {};
 }
 

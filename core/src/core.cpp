@@ -944,7 +944,8 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
       o["update_available"] = info.update_available;
       o["current_version"] = info.current_version;
       o["latest_version"] = info.latest_version;
-      o["download_url"] = info.download_url;
+      o["installer_url"] = info.installer_url;
+      o["portable_zip_url"] = info.portable_zip_url;
       o["release_notes"] = info.release_notes;
       if (!info.error.empty()) o["error"] = info.error;
       resp.result = o;
@@ -953,7 +954,8 @@ CoreResponse CoreEngine::handle(const CoreRequest &req,
 
     if (req.method == "daemon.downloadUpdate") {
       auto url = get_str(req.params, "url").value_or("");
-      auto path = backend_->download_update(url);
+      auto type_hint = get_str(req.params, "type").value_or("installer");
+      auto path = backend_->download_update(url, type_hint);
       json::Object o;
       if (path.empty()) {
         o["ok"] = false;

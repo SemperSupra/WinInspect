@@ -106,7 +106,7 @@ public:
 
   // Auto-update
   virtual update::UpdateInfo check_for_update() = 0;
-  virtual std::string download_update(const std::string &url) = 0;
+  virtual std::string download_update(const std::string &url, const std::string &type_hint) = 0;
 
   // Event polling
   virtual std::vector<Event> poll_events(const Snapshot &old_snap,

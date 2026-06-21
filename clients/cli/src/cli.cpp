@@ -277,7 +277,7 @@ static int usage() {
             << "  health\n"
             << "  capabilities\n"
             << "  check-update\n"
-            << "  update\n"
+            << "  update [--type portable|installer]\n"
             << "  config --key <path>\n";
   return 2;
 }
@@ -772,6 +772,8 @@ int main(int argc, char **argv) {
     for (size_t i = 1; i < args.size(); ++i) {
       if (args[i] == "--url" && i + 1 < args.size()) {
         params["url"] = args[++i];
+      } else if (args[i] == "--type" && i + 1 < args.size()) {
+        params["type"] = args[++i];
       }
     }
     return send_and_print("daemon.downloadUpdate");
