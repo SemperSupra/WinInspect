@@ -32,8 +32,8 @@ jobs:
 
       - name: Package Installer
         run: |
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          & $makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=build\Release -DDIST_DIR=dist tools\wininspect.nsi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
