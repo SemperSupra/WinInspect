@@ -142,10 +142,12 @@ DOCTEST_TEST_CASE("trace replay: event_subscription") {
   auto resp2 = core.handle(r2, s2, &s1);
   DOCTEST_REQUIRE(resp2.ok);
 
-  CoreRequest r2b{"e2b", "events.poll", {}};
   // events.poll without old snapshot returns error response
   CoreRequest r2b{"e2b", "events.poll", {}};
   auto r2b_resp = core.handle(r2b, s2);
   DOCTEST_REQUIRE(!r2b_resp.ok);
+
+  CoreRequest r3{"e3", "session.terminate", {}};
+  auto resp3 = core.handle(r3, s2);
   DOCTEST_REQUIRE(resp3.ok);
 }
