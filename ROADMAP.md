@@ -15,33 +15,58 @@ Published 2026-06-21. Installer, portable ZIP, and Go CLI available on
 - **SHA256 checksums** for all release artifacts
 - **55 contract tests** covering all 51 protocol methods
 - **Privacy**: environment variable credential redaction, hostname opt-in, admin-logs gate
-- **Security**: `--require-auth`, BCryptGenRandom, auth key caching, Ed25519 correct magic
+- **Security**: `--require-auth`, BCryptGenRandom, auth key caching, Ed25519 correct magic, `--no-clipboard`
 - **Formal TLA+ v2 model** — 8 invariants validated (197M states)
 - **Debug + Release CI** — 100% tests pass in both configs
+- **Version alignment** — 11 versioned artifacts synced, CI enforcement script
 
 ---
 
-## 📋 Backlog (Prioritized)
+## 📋 Open Issues
 
-### Immediate (v0.1.x)
+### Near-Term (v0.1.x — Code Changes)
 
-| # | Item | Status |
+| # | Item | Priority | Why Now |
+|---|---|---|---|
+| [#15](https://github.com/SemperSupra/WinInspect/issues/15) | Connection rate limiting | Medium | DoS protection for TCP |
+| [#18](https://github.com/SemperSupra/WinInspect/issues/18) | shared_ptr<Snapshot> | Medium | Reduces memory pressure under load |
+| [#19](https://github.com/SemperSupra/WinInspect/issues/19) | GetDIBits pixel search | Low | 100-1000x faster for large regions |
+| [#20](https://github.com/SemperSupra/WinInspect/issues/20) | Protocol versioning policy | Low | Schema normalization + compat policy |
+| [#21](https://github.com/SemperSupra/WinInspect/issues/21) | JSON config file (`--config`) | Low | Operational convenience |
+| [#22](https://github.com/SemperSupra/WinInspect/issues/22) | Granular mutex locks | Low | Concurrency under 32 clients |
+
+### Architectural (Next Major)
+
+| # | Item | Why Deferred |
 |---|---|---|
-| [#15](https://github.com/SemperSupra/WinInspect/issues/15) | Connection rate limiting | Open |
-| [#16](https://github.com/SemperSupra/WinInspect/issues/16) | Watchdog timeout cancellation | Open |
-| [#17](https://github.com/SemperSupra/WinInspect/issues/17) | Deduplicate pipe/TCP dispatch | Open |
-| [#18](https://github.com/SemperSupra/WinInspect/issues/18) | shared_ptr<Snapshot> | Open |
-| [#19](https://github.com/SemperSupra/WinInspect/issues/19) | GetDIBits pixel search | Open |
-| [#20](https://github.com/SemperSupra/WinInspect/issues/20) | Protocol versioning policy | Open |
-| [#21](https://github.com/SemperSupra/WinInspect/issues/21) | JSON config file (`--config`) | Open |
-| [#22](https://github.com/SemperSupra/WinInspect/issues/22) | Granular mutex locks | Open |
-| [#23](https://github.com/SemperSupra/WinInspect/issues/23) | Method-level authorization | Open |
-| [#24](https://github.com/SemperSupra/WinInspect/issues/24) | `--no-clipboard` flag | Open |
-| [#25](https://github.com/SemperSupra/WinInspect/issues/25) | Audit logging | Open |
-| [#26](https://github.com/SemperSupra/WinInspect/issues/26) | Native smoke test in CI | Open |
-| [#27](https://github.com/SemperSupra/WinInspect/issues/27) | TCP fuzz tests in CI | Open |
+| [#16](https://github.com/SemperSupra/WinInspect/issues/16) | Watchdog timeout cancellation | Needs cooperative cancellation pattern |
+| [#17](https://github.com/SemperSupra/WinInspect/issues/17) | Deduplicate pipe/TCP dispatch | ~150 lines shared between handlers |
+| [#23](https://github.com/SemperSupra/WinInspect/issues/23) | Method-level authorization | Design decision for multi-agent |
+| [#25](https://github.com/SemperSupra/WinInspect/issues/25) | Audit logging | Needs file I/O + rotation design |
 
-### External Dependencies
+### CI-Dependent
+
+| # | Item | Blocked By |
+|---|---|---|
+| [#26](https://github.com/SemperSupra/WinInspect/issues/26) | Native smoke test | GitHub Actions minutes |
+| [#27](https://github.com/SemperSupra/WinInspect/issues/27) | TCP fuzz tests | GitHub Actions minutes |
+
+### v0.2.0 — WineBot Integration
+
+| # | Item | Description |
+|---|---|---|
+| [#40](https://github.com/SemperSupra/WinInspect/issues/40) | Roadmap Epic | DXGI capture, window management, process execution, z-order |
+
+### Already Closed (Implemented or Triaged)
+
+- **#10** ImageMatch — already exists as `image.match` method
+- **#24** `--no-clipboard` flag — implemented in v0.1.2-dev
+- **#33** Control tree — already exists as `window.getTree`
+- **#35** JSON output — all methods return JSON by default
+- **#37** Process info — `getInfo` returns PID + process_image
+- **#39** IPC server mode — daemon already IS an IPC server
+
+## External Dependencies
 
 | Repo | Issue | Status |
 |---|---|---|
@@ -49,21 +74,3 @@ Published 2026-06-21. Installer, portable ZIP, and Go CLI available on
 | SemperSupra/WineBotAppBuilder | [#15](https://github.com/SemperSupra/WineBotAppBuilder/issues/15) Add LICENSE | Open |
 | SemperSupra/supragoflow | [#58](https://github.com/SemperSupra/supragoflow/issues/58) Add LICENSE | Open |
 | SignPath Foundation | Code signing application | Awaiting submission |
-
-### Feature Requests (Unplanned)
-
-- [#7](https://github.com/SemperSupra/WinInspect/issues/7) OCR Support
-- [#8](https://github.com/SemperSupra/WinInspect/issues/8) Real-time Registry Monitoring
-- [#9](https://github.com/SemperSupra/WinInspect/issues/9) Network Discovery
-- [#10](https://github.com/SemperSupra/WinInspect/issues/10) Functional ImageMatch
-- [#12](https://github.com/SemperSupra/WinInspect/issues/12) mDNS / Bonjour
-- [#13](https://github.com/SemperSupra/WinInspect/issues/13) Request Deduplication GUIDs
-- [#14](https://github.com/SemperSupra/WinInspect/issues/14) Atomic Registry Transactions
-
-### Roadmap Items (from original ROADMAP.md)
-
-1. **Visual Telemetry Overlay:** Real-time GDI HUD for human supervision.
-2. **Semantic Action Chains:** Server-side atomic macro execution to bypass latency.
-3. **Optical Character Recognition (OCR):** `screen.findText` / `screen.ocr`.
-4. **Virtual Input Driver (Control):** HID-level injection, bypasses anti-automation.
-5. **Advanced Hooking / Event Streaming:** `SetWindowsHookEx` for record-and-replay.

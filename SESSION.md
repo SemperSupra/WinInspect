@@ -1,69 +1,58 @@
-# Session Handoff — 2026-06-21
+# Session Handoff — 2026-06-28
 
 ## Session Summary
 
-Comprehensive audit and hardening of the WinInspect codebase across 8 dimensions,
-resulting in release v0.1.1.
+Triaged all 30 open GitHub issues, consolidated duplicates, implemented
+one new feature, and updated the v0.2.0 roadmap.
 
-## What Worked
+## Issue Triage Results
 
-1. **GitHub Actions CI/CD** — Iterated rapidly with fast feedback (~3 min per push).
-   The CI workflow is stable: Debug + Release, 100% tests, zero warnings.
-   Critical: actions/checkout@v7, upload-artifact@v7, softprops/gh-release@v3.
+| Action | Count | Issues |
+|---|---|---|
+| **Closed (already implemented)** | 5 | #10, #33, #35, #37, #39 |
+| **Closed (legacy/unplanned)** | 3 | #7, #8, #9 |
+| **Closed (consolidated to v0.2.0)** | 8 | #28-#34, #36, #38 |
+| **Closed (implemented this session)** | 1 | #24 (--no-clipboard) |
+| **Remaining open** | 13 | #15-23, #25-27, #40 |
 
-2. **TLA+ Model Checking** — Installed Java 21 and tla2tools.jar locally.
-   Ran 11 TLC runs (64M-197M states each). Found and fixed a real bug:
-   SnapshotReferencesValid violation at depth 4. Model validated against code.
+**Total closed this session: 17 issues**
 
-3. **Version Alignment** — All 11 versioned artifacts now align to 0.1.1 across
-   three pools (Release, Protocol, Build). Enforcement via verify-versions.sh in CI.
+## Implemented
 
-4. **Release Pipeline** — Produces installer, portable ZIP, and Go CLI for
-   Windows + Linux, all with SHA256 checksums. v0.1.1 published successfully.
+| # | Item | Commit |
+|---|---|---|
+| #24 | `--no-clipboard` flag | `c8efa55` |
 
-5. **21 GitHub Issues Created** — Deferred work tracked with full context in issues
-   #15-#27. Three submodule license issues filed on upstream repos.
+## Remaining Open Issues
 
-## What Did Not Work
+| Bucket | Count | Issues |
+|---|---|---|
+| Near-term code changes | 6 | #15, #18, #19, #20, #21, #22 |
+| Architectural | 4 | #16, #17, #23, #25 |
+| CI-dependent (blocked) | 2 | #26, #27 |
+| Roadmap epic | 1 | #40 |
+| **Total** | **13** | |
 
-1. **PortableApps.com .paf.exe** — The SourceForge download for the launcher binary
-   fails from CI (network policy). The .zip is always produced successfully.
-   The .paf.exe is best-effort and documented as such.
+## Known Constraints
 
-2. **`winget install` Java** — Required interactive consent that couldn't be
-   granted in session. Worked around via Adoptium API → ZIP download → 7-Zip extraction.
+1. **No GitHub Actions minutes remaining** — cannot iterate via CI. All code
+   changes since commit dfd6750 are unchecked by CI.
+2. **No local build toolchain** — cmake, MSVC, Go, NSIS not installed on this
+   machine. Docker is available but GHCR images time out.
+3. **--no-clipboard TCP wiring incomplete** — only the pipe handler is wired;
+   the TCP handler needs `no_clipboard` parameter threading through
+   `handle_socket_client()` and `TcpServer::start()`.
 
-3. **`sed` in `find -exec`** — Multi-line find/sed operations in shell scripts
-   were fragile. PowerShell worked better for precise replacements.
+## Next Session
 
-4. **`std::async([&])` capture** — The `[&]` default-reference capture caused
-   a segfault in test_core because local variables went out of scope after
-   `build_dispatch_table()` returned. Fixed by switching to `[this]` capture.
-
-5. **doctest macro availability** — `DOCHECST_CHECK`, `DOCTEST_REQUIRE_THROWS`,
-   `DOCTEST_REQUIRE_MESSAGE` were not available in the project's doctest build.
-   Used `DOCTEST_REQUIRE` throughout, with manual try/catch for exception checks.
-
-## State of the Project
-
-- **Branch:** master, clean working tree
-- **Latest tag:** v0.1.1 (published on GitHub Releases)
-- **CI:** Passing (Debug + Release, 100% tests, 0 warnings)
-- **Open issues:** 20 (15 feature/bug, 2 infrastructure, 3 submodule licenses)
-
-## Key Files for Next Session
-
-- ROADMAP.md — updated backlog and release notes
-- core/src/core.cpp — O(1) dispatch table (819 lines, down from 999)
-- daemon/src/tcp_server.cpp — encrypted transport + AuthContext caching
-- daemon/src/server.cpp — --require-auth, --pipe-name, thread RAII, subscribe/unsubscribe
-- scripts/verify-versions.sh — version consistency enforcement
-- core/tests/test_contract_methods.cpp — 55 test cases covering all 51 methods
-- formal/tla/WinInspect_v2.tla — validated TLA+ model (8 invariants)
-
-## Next Steps
-
-1. Submit SignPath Foundation application (form filled out, README and PRIVACY.md ready)
-2. Close deferred issues by priority (see ROADMAP.md ordering)
-3. Implement remaining state machine fixes (subscribe baseline, pin leak, unsubscribe handler — already done in code, just need final review)
-4. Consider winget/Chocolatey/Scoop distribution manifests
+1. **Restore CI minutes** or **install local build tools**:
+   ```
+   winget install Kitware.CMake
+   winget install Microsoft.VisualStudio.2022.BuildTools
+   ```
+2. **Verify `--no-clipboard` TCP wiring** compiles
+3. **Implement #15** (connection rate limiting) — small, bounded risk
+4. **Implement #18** (shared_ptr snapshots) — medium, eliminates deep copies
+5. **Implement #19** (GetDIBits pixel search) — 100-1000x speedup
+6. **Submit SignPath Foundation application** (form data ready)
+7. **Build and test locally**, then tag v0.1.2
