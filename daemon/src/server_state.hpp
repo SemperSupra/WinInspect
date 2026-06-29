@@ -16,7 +16,8 @@
 namespace wininspect {
 
 struct ServerState {
-  std::mutex mu;
+  std::mutex snapshots_mu;   // protects snaps, pinned_counts, lru_order, snap_counter
+  std::mutex sessions_mu;    // protects sessions, sessionCount, event_counter, event_log
   std::uint64_t snap_counter = 1;
   std::map<std::string, std::shared_ptr<Snapshot>> snaps;
   std::map<std::string, int> pinned_counts;
