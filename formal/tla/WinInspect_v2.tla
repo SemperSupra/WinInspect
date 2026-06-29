@@ -107,7 +107,9 @@ VARIABLES
 
   \* Daemon mode flags
   readOnly,           \* BOOLEAN
-  noClipboard        \* BOOLEAN
+  noClipboard,        \* BOOLEAN
+  adminLogs,          \* BOOLEAN
+  requireAuth        \* BOOLEAN
 
 (***************************************************************************
   Type definitions
@@ -156,6 +158,8 @@ Init ==
   /\ sessionCount = 0
   /\ readOnly \in {TRUE, FALSE}
   /\ noClipboard \in {TRUE, FALSE}
+  /\ adminLogs \in {TRUE, FALSE}
+  /\ requireAuth \in {TRUE, FALSE}
 
 (***************************************************************************
   Client connects. Rejected if at capacity.
@@ -171,7 +175,7 @@ Connect(c) ==
   /\ connCount' = [connCount EXCEPT ![c] = connCount[c] + 1]
   /\ UNCHANGED <<worldVisible, worldForeground, inbox, outbox,
                  subscribed, lastSnapId, snaps, snapPinCount,
-                 snapOrder, snapCounter, sessions, sessionCount, readOnly, noClipboard>>
+                 snapOrder, snapCounter, sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 ClientDisconnect(c) ==
   /\ c \in conns
@@ -182,7 +186,7 @@ ClientDisconnect(c) ==
   /\ lastSnapId' = [lastSnapId EXCEPT ![c] = NULL]
   /\ UNCHANGED <<worldVisible, worldForeground, inbox, outbox,
                  snaps, snapPinCount, snapOrder, snapCounter,
-                 sessions, sessionCount, connCount, readOnly, noClipboard>>
+                 sessions, sessionCount, connCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Client sends a message — queued in inbox
@@ -197,7 +201,7 @@ Send(c, m) ==
   /\ UNCHANGED <<worldVisible, worldForeground, conns, outbox,
                  subscribed, lastSnapId, snaps, snapPinCount,
                  snapOrder, snapCounter, sessions, sessionCount,
-                 connCount, readOnly, noClipboard>>
+                 connCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Allocate a new snapshot. Pin count starts at 0.
@@ -226,7 +230,7 @@ AllocateSnapshot ==
   /\ snapCounter' = snapCounter + 1
   /\ UNCHANGED <<worldVisible, worldForeground, conns, connCount,
                  inbox, outbox, subscribed, lastSnapId,
-                 sessions, sessionCount, readOnly, noClipboard>>
+                 sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Pin a snapshot (client references it in a request).
@@ -245,7 +249,7 @@ PinSnapshot(snapId) ==
   /\ snapPinCount' = [snapPinCount EXCEPT ![snapId] = snapPinCount[snapId] + 1]
   /\ UNCHANGED <<worldVisible, worldForeground, conns, connCount,
                  inbox, outbox, subscribed, lastSnapId,
-                 snaps, snapCounter, sessions, sessionCount, readOnly, noClipboard>>
+                 snaps, snapCounter, sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 UnpinSnapshot(snapId) ==
   /\ snapId \in 1..MaxSnaps
@@ -254,7 +258,7 @@ UnpinSnapshot(snapId) ==
   /\ UNCHANGED <<worldVisible, worldForeground, conns, connCount,
                  inbox, outbox, subscribed, lastSnapId,
                  snaps, snapOrder, snapCounter, sessions,
-                 sessionCount, readOnly, noClipboard>>
+                 sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Helper: capture snapshot and return its ID
@@ -273,7 +277,7 @@ CaptureAndReturn(c) ==
                   session |-> c]
      IN  outbox' = [outbox EXCEPT ![c] = Append(@, resp)]
   /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground, conns, connCount,
-                 subscribed, lastSnapId, sessions, sessionCount, readOnly, noClipboard>>
+                 subscribed, lastSnapId, sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Handle one message from inbox. This is the main dispatch.
@@ -288,7 +292,19 @@ HandleOne(c) ==
          \* ---- SNAPSHOT OPERATIONS (handled in daemon layer) ----
          /\ IF m.method = "SnapshotCapture"
             THEN CaptureAndReturn(c)
-            \* ---- METHOD AUTHORIZATION (--allow/--deny) ----
+            \* ---- AUTHENTICATION ENFORCEMENT (--require-auth) ----
+            ELSE IF requireAuth /\ m.method # "hello"
+            THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
+                    [id |-> m.id, method |-> m.method,
+                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,
+                     changed |-> FALSE, ok |-> FALSE,
+                     session |-> c])]
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
+                                lastSnapId, snaps, snapPinCount,
+                                snapOrder, snapCounter, sessions,
+                                sessionCount, subscribed, readOnly, noClipboard,
+                                adminLogs, requireAuth>>
+\* ---- METHOD AUTHORIZATION (--allow/--deny) ----
             ELSE IF (AllowMethods # {} /\ m.method \notin AllowMethods)
                  \/ m.method \in DenyMethods
             THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
@@ -299,7 +315,7 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 lastSnapId, snaps, snapPinCount,
                                 snapOrder, snapCounter, sessions,
-                                sessionCount, subscribed, readOnly, noClipboard>>
+                                sessionCount, subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- CLIPBOARD BLOCKING (--no-clipboard) ----
             ELSE IF m.method \in ClipboardMethods /\ noClipboard
             THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
@@ -310,8 +326,20 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 lastSnapId, snaps, snapPinCount,
                                 snapOrder, snapCounter, sessions,
-                                sessionCount, subscribed, readOnly, noClipboard>>
-            \* ---- QUERY METHODS (side-effect-free) ----
+                                sessionCount, subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
+            \* ---- ADMIN LOGS GATE (--admin-logs) ----
+            ELSE IF m.method = "Logs" /\ ~adminLogs
+            THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
+                    [id |-> m.id, method |-> m.method,
+                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,
+                     changed |-> FALSE, ok |-> FALSE,
+                     session |-> c])]
+                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
+                                lastSnapId, snaps, snapPinCount,
+                                snapOrder, snapCounter, sessions,
+                                sessionCount, subscribed, readOnly, noClipboard,
+                                adminLogs, requireAuth>>
+\* ---- QUERY METHODS (side-effect-free) ----
             ELSE IF m.method \in QueryMethods
             THEN IF m.snapId # NULL /\ \A i \in 1..Len(snapOrder) : snapOrder[i] # m.snapId
                  THEN \* Bad snapshot reference — reject, do not echo invalid snapId
@@ -324,7 +352,7 @@ HandleOne(c) ==
                       /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                      lastSnapId, snaps, snapPinCount,
                                      snapOrder, snapCounter, sessions,
-                                     sessionCount, subscribed, readOnly, noClipboard>>
+                                     sessionCount, subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
                  ELSE /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
                          hwnd |-> m.hwnd,
@@ -334,7 +362,7 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 lastSnapId, snaps, snapPinCount,
                                 snapOrder, snapCounter, sessions,
-                                sessionCount, subscribed, readOnly, noClipboard>>
+                                sessionCount, subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- DESIRED-STATE METHODS (idempotent) ----
             ELSE IF m.method = "EnsureVisible"
             THEN /\ LET prev == worldVisible[m.hwnd]
@@ -349,7 +377,7 @@ HandleOne(c) ==
                        /\ UNCHANGED <<conns, connCount, worldForeground, lastSnapId,
                                       snaps, snapPinCount, snapOrder,
                                       snapCounter, sessions, sessionCount,
-                                      subscribed, readOnly, noClipboard>>
+                                      subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
             ELSE IF m.method = "EnsureForeground"
             THEN /\ LET prev == worldForeground[m.hwnd]
                        changed == (prev # TRUE)
@@ -365,7 +393,7 @@ HandleOne(c) ==
                        /\ UNCHANGED <<conns, connCount, worldVisible, lastSnapId,
                                       snaps, snapPinCount, snapOrder,
                                       snapCounter, sessions, sessionCount,
-                                      subscribed, readOnly, noClipboard>>
+                                      subscribed, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- MUTATION METHODS ----
             ELSE IF m.method \in MutationMethods
             THEN /\ \* Read-only mode blocks mutations
@@ -402,7 +430,7 @@ HandleOne(c) ==
                          changed |-> FALSE, ok |-> TRUE,
                          session |-> c])]
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
-                                sessions, sessionCount, readOnly, noClipboard>>
+                                sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
             ELSE IF m.method = "Unsubscribe"
             THEN /\ subscribed' = [subscribed EXCEPT ![c] = FALSE]
                  /\ lastSnapId' = [lastSnapId EXCEPT ![c] = NULL]
@@ -415,7 +443,7 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 snaps, snapPinCount, snapOrder,
                                 snapCounter, sessions, sessionCount,
-                                readOnly, noClipboard>>
+                                readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- EVENT POLL ----
             ELSE IF m.method = "Poll"
             THEN /\ subscribed[c]
@@ -440,7 +468,7 @@ HandleOne(c) ==
                                 ok |-> TRUE,
                                 session |-> c])]
                         /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
-                                       sessions, sessionCount, readOnly, noClipboard>>
+                                       sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- SESSION LIFECYCLE ----
             ELSE IF m.method = "SessionTerminate"
             THEN /\ sessions' = [sessions EXCEPT ![c] = NULL]
@@ -454,7 +482,7 @@ HandleOne(c) ==
                          session |-> c])]
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps, snapPinCount,
-                                snapOrder, snapCounter, readOnly, noClipboard>>
+                                snapOrder, snapCounter, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- CHECK UPDATE (network, no local state change) ----
             ELSE IF m.method = "CheckUpdate"
             THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@,
@@ -466,7 +494,7 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps,
                                 snapPinCount, snapOrder, snapCounter,
-                                sessions, sessionCount, readOnly, noClipboard>>
+                                sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
             \* ---- UNKNOWN METHOD ----
             ELSE /\ outbox' = [outbox EXCEPT ![c] = Append(@,
                         [id |-> m.id, method |-> m.method,
@@ -477,7 +505,7 @@ HandleOne(c) ==
                  /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,
                                 subscribed, lastSnapId, snaps,
                                 snapPinCount, snapOrder, snapCounter,
-                                sessions, sessionCount, readOnly, noClipboard>>
+                                sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 (***************************************************************************
   Next-state relation
@@ -501,7 +529,7 @@ Next ==
 
 vars == <<worldVisible, worldForeground, conns, connCount, inbox, outbox,
           subscribed, lastSnapId, snaps, snapPinCount, snapOrder,
-          snapCounter, sessions, sessionCount, readOnly, noClipboard>>
+          snapCounter, sessions, sessionCount, readOnly, noClipboard, adminLogs, requireAuth>>
 
 Spec == Init /\ [][Next]_vars
 
