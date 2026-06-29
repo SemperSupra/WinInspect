@@ -296,6 +296,45 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
+  dispatch_["window.getZOrder"] = [this]( const CoreRequest &req,
+                                       const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto hwnd_s = get_str(req.params, "hwnd");
+    if (!hwnd_s) throw std::runtime_error("missing hwnd");
+    auto hwnd = parse_hwnd(*hwnd_s);
+    if (!hwnd) throw std::runtime_error("bad hwnd");
+    auto zo = backend_->get_z_order(*hwnd);
+    if (!zo) { resp.ok = false; resp.error_code = "E_BAD_HWND"; resp.error_message = "invalid window"; return resp; }
+    json::Object o;
+    o["z_index"] = (double)zo->first; o["total_siblings"] = (double)zo->second;
+    o["hwnd"] = *hwnd_s;
+    resp.ok = true; resp.result = o; return resp;
+  };
+
+  dispatch_["window.move"] = [this]( const CoreRequest &req,
+                                  const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto hwnd_s = get_str(req.params, "hwnd");
+    auto x = get_num(req.params, "x"); auto y = get_num(req.params, "y");
+    if (!hwnd_s || !x || !y) throw std::runtime_error("missing hwnd/x/y");
+    auto hwnd = parse_hwnd(*hwnd_s);
+    if (!hwnd) throw std::runtime_error("bad hwnd");
+    resp.ok = true; resp.result = ok_json(backend_->move_window(*hwnd, (int)*x, (int)*y));
+    return resp;
+  };
+
+  dispatch_["window.resize"] = [this]( const CoreRequest &req,
+                                    const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto hwnd_s = get_str(req.params, "hwnd");
+    auto w = get_num(req.params, "width"); auto h = get_num(req.params, "height");
+    if (!hwnd_s || !w || !h) throw std::runtime_error("missing hwnd/width/height");
+    auto hwnd = parse_hwnd(*hwnd_s);
+    if (!hwnd) throw std::runtime_error("bad hwnd");
+    resp.ok = true; resp.result = ok_json(backend_->resize_window(*hwnd, (int)*w, (int)*h));
+    return resp;
+  };
+
   dispatch_["window.postMessage"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
@@ -330,6 +369,18 @@ void CoreEngine::build_dispatch_table() {
     return resp;
   };
 
+  dispatch_["input.mouseDrag"] = [this]( const CoreRequest &req,
+                                      const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto sx = get_num(req.params, "start_x"), sy = get_num(req.params, "start_y");
+    auto ex = get_num(req.params, "end_x"), ey = get_num(req.params, "end_y");
+    if (!sx || !sy || !ex || !ey) throw std::runtime_error("missing start/end coords");
+    int btn = (int)get_num(req.params, "button").value_or(0);
+    int dur = (int)get_num(req.params, "duration_ms").value_or(200);
+    resp.ok = true; resp.result = sent_json(backend_->mouse_drag((int)*sx, (int)*sy, (int)*ex, (int)*ey, btn, dur));
+    return resp;
+  };
+
   dispatch_["input.keyPress"] = [this]( const CoreRequest &req,
                                      const Snapshot &, const Snapshot *) {
     CoreResponse resp;
@@ -345,6 +396,15 @@ void CoreEngine::build_dispatch_table() {
     auto text = get_str(req.params, "text");
     if (!text) throw std::runtime_error("missing text");
     resp.ok = true; resp.result = sent_json(backend_->send_text(*text));
+    return resp;
+  };
+
+  dispatch_["input.hotkey"] = [this]( const CoreRequest &req,
+                                   const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto keys = get_str(req.params, "keys");
+    if (!keys) throw std::runtime_error("missing keys");
+    resp.ok = true; resp.result = sent_json(backend_->send_hotkey(*keys));
     return resp;
   };
 
@@ -399,6 +459,17 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
+  dispatch_["screen.desktopInfo"] = [this]( const CoreRequest &,
+                                         const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto info = backend_->get_desktop_info();
+    json::Object o;
+    o["width"] = (double)info.width; o["height"] = (double)info.height;
+    o["dpi_x"] = (double)info.dpi_x; o["dpi_y"] = (double)info.dpi_y;
+    o["scale_factor"] = info.scale_factor;
+    resp.ok = true; resp.result = o; return resp;
+  };
+
   dispatch_["screen.pixelSearch"] = [this]( const CoreRequest &req,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;
@@ -425,6 +496,18 @@ void CoreEngine::build_dispatch_table() {
       json::Object o; o["pid"] = (double)p.pid; o["name"] = p.name; o["path"] = p.path; arr.push_back(o);
     }
     resp.ok = true; resp.result = arr; return resp;
+  };
+
+  dispatch_["process.execute"] = [this]( const CoreRequest &req,
+                                      const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto cmd = get_str(req.params, "command");
+    if (!cmd) throw std::runtime_error("missing command");
+    auto args = get_str(req.params, "args").value_or("");
+    auto r = backend_->execute_process(*cmd, args);
+    json::Object o;
+    o["pid"] = (double)r.pid; o["stdout"] = r.stdout_str; o["stderr"] = r.stderr_str; o["exit_code"] = (double)r.exit_code;
+    resp.ok = true; resp.result = o; return resp;
   };
 
   dispatch_["process.kill"] = [this]( const CoreRequest &req,
@@ -724,6 +807,7 @@ void CoreEngine::build_dispatch_table() {
     features["registry_write"] = caps.registry_writable; features["service_manager"] = caps.service_manager;
     features["process_memory"] = caps.process_memory; features["input_injection"] = caps.input_injection;
     features["window_highlight"] = caps.window_highlight;
+    features["dxgi_capture"] = caps.dxgi_capture;
     o["features"] = features;
     resp.ok = true; resp.result = o; return resp;
   };

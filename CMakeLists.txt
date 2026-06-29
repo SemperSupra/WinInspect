@@ -32,7 +32,7 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
-  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp)
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp dxgi d3d11)
   if(NOT MSVC)
     target_link_options(wininspect_core PUBLIC -static-libgcc -static-libstdc++)
   endif()

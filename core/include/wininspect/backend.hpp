@@ -32,8 +32,11 @@ public:
                                                 PickFlags flags) = 0;
 
   virtual std::vector<WindowNode> get_window_tree(const Snapshot &s, hwnd_u64 root) = 0;
+  virtual std::optional<std::pair<int,int>> get_z_order(hwnd_u64 hwnd) = 0;
 
   // Desired-state actions (may be no-op in some environments)
+  virtual bool move_window(hwnd_u64 hwnd, int x, int y) = 0;
+  virtual bool resize_window(hwnd_u64 hwnd, int width, int height) = 0;
   virtual EnsureResult ensure_visible(hwnd_u64 hwnd, bool visible) = 0;
   virtual EnsureResult ensure_foreground(hwnd_u64 hwnd) = 0;
   virtual bool highlight_window(hwnd_u64 hwnd) = 0;
@@ -47,8 +50,10 @@ public:
   // Higher-level injection helpers
   virtual bool send_mouse_click(int x, int y,
                                 int button) = 0; // 0=left, 1=right, 2=middle
+  virtual bool mouse_drag(int sx, int sy, int ex, int ey, int button, int duration_ms) = 0;
   virtual bool send_key_press(int vk) = 0;
   virtual bool send_text(const std::string &text) = 0;
+  virtual bool send_hotkey(const std::string &keys) = 0;
 
   // Stealth input (background)
   virtual bool control_click(hwnd_u64 hwnd, int x, int y, int button) = 0;
@@ -58,10 +63,12 @@ public:
   virtual std::optional<Color> get_pixel(int x, int y) = 0;
   virtual std::optional<ScreenCapture> capture_screen(Rect region) = 0;
   virtual std::optional<std::pair<int, int>> pixel_search(Rect region, Color target, int variation) = 0;
+  virtual DesktopInfo get_desktop_info() = 0;
 
   // Process Management
   virtual std::vector<ProcessInfo> list_processes() = 0;
   virtual bool kill_process(uint32_t pid) = 0;
+  virtual ProcessExecResult execute_process(const std::string &cmd, const std::string &args) = 0;
 
   // File System
   virtual std::optional<FileInfo> get_file_info(const std::string &path) = 0;

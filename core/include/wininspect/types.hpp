@@ -43,10 +43,23 @@ struct ScreenCapture {
   std::string data_b64; // Base64 encoded BMP data
 };
 
+struct DesktopInfo {
+  int width{}, height{};
+  int dpi_x{}, dpi_y{};
+  double scale_factor{};
+};
+
 struct ProcessInfo {
   uint32_t pid{};
   std::string name;
   std::string path;
+};
+
+struct ProcessExecResult {
+  uint32_t pid{};
+  std::string stdout_str;
+  std::string stderr_str;
+  int exit_code{};
 };
 
 struct FileInfo {
@@ -169,6 +182,7 @@ struct Capabilities {
   bool process_memory = false;       // ReadProcessMemory/WriteProcessMemory
   bool input_injection = false;      // SendInput
   bool window_highlight = false;     // GDI drawing
+  bool dxgi_capture = false;         // DXGI Desktop Duplication
 
   // Wine-specific
   std::string wine_version;          // empty if not Wine

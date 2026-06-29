@@ -1,40 +1,59 @@
 # WinInspect Roadmap & Backlog
 
-## 🏷️ Current Release: v0.1.1
+## 🏷️ Current Release: v0.1.2
 
-Published 2026-06-21. Installer, portable ZIP, and Go CLI available on
-[GitHub Releases](https://github.com/SemperSupra/WinInspect/releases).
+Published 2026-06-29. 7 WineBot integration features added.
 
-### What's New (since v0.0.1)
-- **O(1) method dispatch** — 52-method lookup map replaces linear if-chain
-- **AES-256-GCM encryption** — wired into TCP transport post-handshake
-- **Runtime capability detection** — `daemon.capabilities` with 7 live probes
-- **Auto-update** — `daemon.checkUpdate` + `daemon.downloadUpdate` via GitHub Releases API
-- **Multi-instance** — `--pipe-name` / `--pipe` for running multiple daemons
-- **Portable distribution** — `.zip` extract-anywhere + `.paf.exe` (best-effort)
-- **SHA256 checksums** for all release artifacts
-- **55 contract tests** covering all 51 protocol methods
-- **Privacy**: env credential redaction, hostname opt-in, admin-logs gate
-- **Security**: `--require-auth`, BCryptGenRandom, key caching, Ed25519 fix, `--no-clipboard`
-- **Formal TLA+ v2 model** — 8 invariants validated (197M states)
-- **Debug + Release CI** — 100% tests pass in both configs
-- **Version alignment** — 11 versioned artifacts synced, CI enforcement
-- **Connection rate limiting** — `--rate-limit-ms` flag, TCP DoS protection
-- **GetDIBits pixel search** — 100-1000x faster region scanning
-- **Method-level authorization** — `--allow`/`--deny` method access control
-- **Granular mutex** — `snapshots_mu` replaces single global lock
-- **shared_ptr snapshots** — map stores shared pointers, eliminates deep copies
-- **Dispatch deduplication** — shared `request_handler.hpp` eliminates 150 LoC
-- **Protocol versioning** — schema normalized to valid JSON, VERSIONING.md policy
+### What's New (since v0.1.1)
+- **DXGI Desktop Duplication** — GPU-accelerated screen capture with GDI fallback, `dxgi_capture` capability flag
+- **Window move/resize** — `window.move` and `window.resize` via SetWindowPos
+- **Desktop info** — `screen.desktopInfo` returning resolution, DPI, scale factor
+- **Z-order output** — `window.getZOrder` for occlusion-aware automation
+- **Process execution** — `process.execute` via CreateProcess with pipe redirection
+- **Mouse drag** — `input.mouseDrag` with linear interpolation between points
+- **Key combos** — `input.hotkey` supporting Ctrl+C, Alt+Tab, F-keys, and named keys
+- **Multi-instance LAN analysis** — `docs/MULTI_INSTANCE_LAN.md` covers physical, VM, and container topology
+- **v0.3.0 bring-up strategy** — `docs/BRINGUP_STRATEGY.md` with 8 phased milestones
 
 ---
 
-## 📋 Remaining (2 issues)
+## 🎯 Next Release: v0.3.0 — Multi-Instance LAN & Remote Access
 
-| # | Item | Status |
+Milestone: 9 issues, 0 closed. Target: 2026-09.
+
+| # | Issue | Phase | Effort |
+|---|---|---|---|
+| [#43](https://github.com/SemperSupra/WinInspect/issues/43) | Instance identity (--instance-name, UUID) | 1 | 1-2d |
+| [#44](https://github.com/SemperSupra/WinInspect/issues/44) | Dynamic port acquisition (--port 0, --port-file) | 2 | 1d |
+| [#45](https://github.com/SemperSupra/WinInspect/issues/45) | Multicast discovery (mDNS/DNS-SD) | 3a | 3-5d |
+| [#46](https://github.com/SemperSupra/WinInspect/issues/46) | Rendezvous discovery (HTTP registry) | 3b | 3-5d |
+| [#47](https://github.com/SemperSupra/WinInspect/issues/47) | HTTP server + REST API | 4 | 5-10d |
+| [#48](https://github.com/SemperSupra/WinInspect/issues/48) | WebUI dashboard | 5 | 3-5d |
+| [#49](https://github.com/SemperSupra/WinInspect/issues/49) | Burst capture (screen.record) | 6 | 2-3d |
+| [#50](https://github.com/SemperSupra/WinInspect/issues/50) | Integration smoke tests | 7 | 2-3d |
+| [#51](https://github.com/SemperSupra/WinInspect/issues/51) | Mutual authentication (daemon → client cert) | 8 | 3-5d |
+
+**Key documents:**
+- [Multi-Instance LAN Deployment](docs/MULTI_INSTANCE_LAN.md) — topology analysis and research
+- [Bring-Up Strategy](docs/BRINGUP_STRATEGY.md) — phased implementation plan with branches, testing, and PR checklists
+
+---
+
+## ✅ v0.2.0 — Complete
+
+All 7 WineBot integration features implemented in this session.
+
+| Feature | Phase | Status |
 |---|---|---|
-| [#40](https://github.com/SemperSupra/WinInspect/issues/40) | v0.2.0 WineBot features | Epic tracking 8 features |
-| [#41](https://github.com/SemperSupra/WinInspect/issues/41) | Formal TLA+ model update | Update model for new features, re-check |
+| DXGI Desktop Duplication | 1 | ✅ |
+| Window move/resize | 2 | ✅ |
+| Desktop info (resolution/DPI) | 3 | ✅ |
+| Z-order output | 4 | ✅ |
+| Process execution | 5 | ✅ |
+| Mouse drag | 6 | ✅ |
+| Key combos | 7 | ✅ |
+
+---
 
 ## Deferred
 

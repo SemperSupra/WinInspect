@@ -218,13 +218,20 @@ static int usage() {
             << "  pick <x> <y> [--snapshot s-..]\n"
             << "  highlight <hwnd>\n"
             << "  set-prop <hwnd> <name> <value>\n"
+            << "  move <hwnd> <x> <y>\n"
+            << "  resize <hwnd> <width> <height>\n"
+            << "  z-order <hwnd>\n"
             << "  control-click <hwnd> <x> <y> [button]\n"
             << "  control-send <hwnd> <text>\n"
             << "  get-pixel <x> <y>\n"
+            << "  drag <sx> <sy> <ex> <ey> [button] [duration_ms]\n"
             << "  pixel-search <left> <top> <right> <bottom> <r> <g> <b> [variation]\n"
             << "  capture <left> <top> <right> <bottom>\n"
+            << "  desktop-info\n"
+            << "  hotkey <keys>\n"
             << "  ps\n"
             << "  kill <pid>\n"
+            << "  exec <command> [args]\n"
             << "  file-info <path>\n"
             << "  file-read <path>\n"
             << "  find-regex [title_regex] [class_regex]\n"
@@ -471,6 +478,28 @@ int main(int argc, char **argv) {
     return send_and_print("window.setProperty");
   }
 
+  if (cmd == "move") {
+    if (args.size() < 4) return usage();
+    params["hwnd"] = args[1];
+    params["x"] = std::stod(args[2]);
+    params["y"] = std::stod(args[3]);
+    return send_and_print("window.move");
+  }
+
+  if (cmd == "resize") {
+    if (args.size() < 4) return usage();
+    params["hwnd"] = args[1];
+    params["width"] = std::stod(args[2]);
+    params["height"] = std::stod(args[3]);
+    return send_and_print("window.resize");
+  }
+
+  if (cmd == "z-order") {
+    if (args.size() < 2) return usage();
+    params["hwnd"] = args[1];
+    return send_and_print("window.getZOrder");
+  }
+
   if (cmd == "control-click") {
     if (args.size() < 4) return usage();
     params["hwnd"] = args[1];
@@ -507,6 +536,17 @@ int main(int argc, char **argv) {
     return send_and_print("screen.pixelSearch");
   }
 
+  if (cmd == "drag") {
+    if (args.size() < 5) return usage();
+    params["start_x"] = std::stod(args[1]);
+    params["start_y"] = std::stod(args[2]);
+    params["end_x"] = std::stod(args[3]);
+    params["end_y"] = std::stod(args[4]);
+    if (args.size() > 5) params["button"] = std::stod(args[5]);
+    if (args.size() > 6) params["duration_ms"] = std::stod(args[6]);
+    return send_and_print("input.mouseDrag");
+  }
+
   if (cmd == "capture") {
     if (args.size() < 5) return usage();
     params["left"] = std::stod(args[1]);
@@ -514,6 +554,16 @@ int main(int argc, char **argv) {
     params["right"] = std::stod(args[3]);
     params["bottom"] = std::stod(args[4]);
     return send_and_print("screen.capture");
+  }
+
+  if (cmd == "desktop-info") {
+    return send_and_print("screen.desktopInfo");
+  }
+
+  if (cmd == "hotkey") {
+    if (args.size() < 2) return usage();
+    params["keys"] = args[1];
+    return send_and_print("input.hotkey");
   }
 
   if (cmd == "ps") {
@@ -524,6 +574,20 @@ int main(int argc, char **argv) {
     if (args.size() < 2) return usage();
     params["pid"] = std::stod(args[1]);
     return send_and_print("process.kill");
+  }
+
+  if (cmd == "exec") {
+    if (args.size() < 2) return usage();
+    params["command"] = args[1];
+    if (args.size() > 2) {
+      std::string all_args;
+      for (size_t i = 2; i < args.size(); i++) {
+        if (i > 2) all_args += " ";
+        all_args += args[i];
+      }
+      params["args"] = all_args;
+    }
+    return send_and_print("process.execute");
   }
 
   if (cmd == "file-info") {

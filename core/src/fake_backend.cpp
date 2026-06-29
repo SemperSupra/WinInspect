@@ -105,6 +105,12 @@ std::vector<WindowNode> FakeBackend::get_window_tree(const Snapshot &,
   return results;
 }
 
+std::optional<std::pair<int,int>> FakeBackend::get_z_order(hwnd_u64 hwnd) {
+  std::lock_guard<std::mutex> lk(mu_);
+  if (w_.find(hwnd) == w_.end()) return std::nullopt;
+  return std::make_pair(0, (int)w_.size());
+}
+
 bool FakeBackend::highlight_window(hwnd_u64 hwnd) {
   std::lock_guard<std::mutex> lk(mu_);
   injected_events_.push_back("highlight_window:" + std::to_string(hwnd));
@@ -143,6 +149,10 @@ std::optional<std::pair<int, int>> FakeBackend::pixel_search(Rect, Color, int) {
   return std::make_pair(50, 50);
 }
 
+DesktopInfo FakeBackend::get_desktop_info() {
+  return {1920, 1080, 96, 96, 1.0};
+}
+
 std::vector<ProcessInfo> FakeBackend::list_processes() {
   return {{1234, "fake.exe", "C:\\fake.exe"}};
 }
@@ -151,6 +161,10 @@ bool FakeBackend::kill_process(uint32_t pid) {
   std::lock_guard<std::mutex> lk(mu_);
   injected_events_.push_back("kill_process:" + std::to_string(pid));
   return true;
+}
+
+ProcessExecResult FakeBackend::execute_process(const std::string &, const std::string &) {
+  return {0, "fake output", "", 0};
 }
 
 std::optional<FileInfo> FakeBackend::get_file_info(const std::string &path) {
@@ -257,6 +271,14 @@ EnsureResult FakeBackend::ensure_foreground(hwnd_u64 hwnd) {
   return {changed};
 }
 
+bool FakeBackend::move_window(hwnd_u64, int, int) {
+  return true;
+}
+
+bool FakeBackend::resize_window(hwnd_u64, int, int) {
+  return true;
+}
+
 bool FakeBackend::post_message(hwnd_u64, uint32_t, uint64_t, uint64_t) {
   return true; // Mock success
 }
@@ -274,6 +296,10 @@ bool FakeBackend::send_mouse_click(int x, int y, int button) {
   return true;
 }
 
+bool FakeBackend::mouse_drag(int, int, int, int, int, int) {
+  return true;
+}
+
 bool FakeBackend::send_key_press(int vk) {
   std::lock_guard<std::mutex> lk(mu_);
   injected_events_.push_back("key_press:" + std::to_string(vk));
@@ -283,6 +309,10 @@ bool FakeBackend::send_key_press(int vk) {
 bool FakeBackend::send_text(const std::string &text) {
   std::lock_guard<std::mutex> lk(mu_);
   injected_events_.push_back("text:" + text);
+  return true;
+}
+
+bool FakeBackend::send_hotkey(const std::string &) {
   return true;
 }
 
@@ -330,6 +360,7 @@ Capabilities FakeBackend::get_capabilities() {
   caps.process_memory = true;
   caps.input_injection = true;
   caps.window_highlight = true;
+  caps.dxgi_capture = false; // DXGI not available in fake backend
   return caps;
 }
 

@@ -22,6 +22,9 @@
 #include <uiautomation.h>
 #include <comdef.h>
 #include <psapi.h>
+#include <dxgi.h>
+#include <dxgi1_2.h>
+#include <d3d11.h>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -105,6 +108,26 @@ Win32Backend::Win32Backend() {
   }
 
   uia_depth_ = is_wine_ ? 5 : 50;
+
+  // Probe DXGI Desktop Duplication support
+  dxgi_available_ = false;
+  ComPtr<ID3D11Device> probe_device;
+  ComPtr<IDXGIOutputDuplication> probe_dup;
+  if (SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+      nullptr, 0, D3D11_SDK_VERSION, &probe_device, nullptr, nullptr))) {
+    ComPtr<IDXGIDevice> probe_dxgi_dev;
+    ComPtr<IDXGIAdapter> probe_adapter;
+    ComPtr<IDXGIOutput> probe_output;
+    ComPtr<IDXGIOutput1> probe_output1;
+    if (SUCCEEDED(probe_device->QueryInterface(__uuidof(IDXGIDevice), (void**)&probe_dxgi_dev)) &&
+        SUCCEEDED(probe_dxgi_dev->GetAdapter(&probe_adapter)) &&
+        SUCCEEDED(probe_adapter->EnumOutputs(0, &probe_output)) &&
+        SUCCEEDED(probe_output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&probe_output1)) &&
+        SUCCEEDED(probe_output1->DuplicateOutput(probe_device, &probe_dup))) {
+      dxgi_available_ = true;
+      // probe_dup and probe_device released by ComPtr destructor
+    }
+  }
 }
 
 void Win32Backend::set_config(const json::Object &config) {
@@ -341,6 +364,26 @@ std::vector<WindowNode> Win32Backend::get_window_tree(const Snapshot &,
   return results;
 }
 
+std::optional<std::pair<int,int>> Win32Backend::get_z_order(hwnd_u64 hwnd) {
+  HWND h = from_u64(hwnd);
+  if (!IsWindow(h)) return std::nullopt;
+
+  // Walk to the topmost sibling
+  HWND top = h;
+  while (HWND prev = GetWindow(top, GW_HWNDPREV))
+    top = prev;
+
+  // Count from top until we find the target
+  int z = 0, count = 0;
+  HWND walk = top;
+  while (walk) {
+    if (walk == h) z = count;
+    count++;
+    walk = GetWindow(walk, GW_HWNDNEXT);
+  }
+
+  return std::make_pair(z, count);
+}
 
 std::string Color::to_hex() const {
   char buf[8];
@@ -495,6 +538,31 @@ std::optional<std::pair<int, int>> Win32Backend::pixel_search(Rect region, Color
   return std::nullopt;
 }
 
+DesktopInfo Win32Backend::get_desktop_info() {
+  DesktopInfo info;
+  info.width = GetSystemMetrics(SM_CXSCREEN);
+  info.height = GetSystemMetrics(SM_CYSCREEN);
+
+  // GetDpiForSystem available on Windows 10+ (build 10240+)
+  HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+  typedef UINT (WINAPI *GetDpiForSystemPtr)();
+  auto pGetDpiForSystem = (GetDpiForSystemPtr)
+      GetProcAddress(hUser32, "GetDpiForSystem");
+  if (pGetDpiForSystem) {
+    info.dpi_x = info.dpi_y = (int)pGetDpiForSystem();
+  } else {
+    // Fallback for older Windows
+    HDC hdc = GetDC(NULL);
+    if (hdc) {
+      info.dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+      info.dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+      ReleaseDC(NULL, hdc);
+    }
+  }
+  info.scale_factor = info.dpi_x / 96.0;
+  return info;
+}
+
 std::vector<ProcessInfo> Win32Backend::list_processes() {
   std::vector<ProcessInfo> out;
   HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -521,11 +589,205 @@ bool Win32Backend::kill_process(uint32_t pid) {
   return TerminateProcess(h, 1) != FALSE;
 }
 
+ProcessExecResult Win32Backend::execute_process(const std::string &cmd, const std::string &args) {
+  ProcessExecResult result;
+
+  // Build command line
+  std::string full_cmd = cmd;
+  if (!args.empty()) full_cmd += " " + args;
+
+  SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+  HANDLE hStdoutRd, hStdoutWr, hStderrRd, hStderrWr;
+
+  if (!CreatePipe(&hStdoutRd, &hStdoutWr, &sa, 0)) return result;
+  if (!CreatePipe(&hStderrRd, &hStderrWr, &sa, 0)) { CloseHandle(hStdoutRd); CloseHandle(hStdoutWr); return result; }
+
+  SafeHandle stdout_rd(hStdoutRd), stderr_rd(hStderrRd);
+
+  STARTUPINFOW si = {0};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  si.hStdOutput = hStdoutWr;
+  si.hStdError = hStderrWr;
+  si.wShowWindow = SW_HIDE;
+
+  std::wstring wcmd(full_cmd.begin(), full_cmd.end());
+  PROCESS_INFORMATION pi;
+
+  if (!CreateProcessW(NULL, &wcmd[0], NULL, NULL, TRUE,
+                       CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+    CloseHandle(hStdoutWr); CloseHandle(hStderrWr);
+    return result;
+  }
+
+  result.pid = pi.dwProcessId;
+  SafeHandle hProcess(pi.hProcess), hThread(pi.hThread);
+
+  // Close our write-end handles so ReadFile sees EOF
+  CloseHandle(hStdoutWr);
+  CloseHandle(hStderrWr);
+
+  // Read stdout
+  char buf[4096];
+  DWORD read;
+  while (ReadFile(stdout_rd.get(), buf, sizeof(buf), &read, NULL) && read > 0)
+    result.stdout_str.append(buf, read);
+
+  // Read stderr
+  while (ReadFile(stderr_rd.get(), buf, sizeof(buf), &read, NULL) && read > 0)
+    result.stderr_str.append(buf, read);
+
+  WaitForSingleObject(hProcess.get(), 30000);
+  DWORD ec;
+  if (GetExitCodeProcess(hProcess.get(), &ec))
+    result.exit_code = (int)ec;
+
+  return result;
+}
+
+static DWORD dxgi_row_bytes(int w) {
+  return ((w * 24 + 31) / 32) * 4;
+}
+
+std::optional<ScreenCapture> Win32Backend::try_dxgi_capture(Rect region) {
+  int w = region.right - region.left;
+  int h = region.bottom - region.top;
+  if (w <= 0 || h <= 0) return std::nullopt;
+
+  HRESULT hr;
+
+  // Create D3D11 device + immediate context
+  ComPtr<ID3D11Device> d3d_device;
+  ComPtr<ID3D11DeviceContext> d3d_context;
+  hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+      nullptr, 0, D3D11_SDK_VERSION, &d3d_device, nullptr, &d3d_context);
+  if (FAILED(hr)) return std::nullopt;
+
+  // Get DXGI device → adapter → output 0 (primary)
+  ComPtr<IDXGIDevice> dxgi_device;
+  ComPtr<IDXGIAdapter> adapter;
+  ComPtr<IDXGIOutput> output;
+  ComPtr<IDXGIOutput1> output1;
+  if (FAILED(d3d_device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device)) ||
+      FAILED(dxgi_device->GetAdapter(&adapter)) ||
+      FAILED(adapter->EnumOutputs(0, &output)) ||
+      FAILED(output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&output1)))
+    return std::nullopt;
+
+  // Create output duplication
+  ComPtr<IDXGIOutputDuplication> duplication;
+  hr = output1->DuplicateOutput(d3d_device, &duplication);
+  if (FAILED(hr)) return std::nullopt;
+
+  // Acquire next frame (500ms timeout)
+  DXGI_OUTDUPL_FRAME_INFO frame_info;
+  ComPtr<IDXGIResource> desktop_resource;
+  hr = duplication->AcquireNextFrame(500, &frame_info, &desktop_resource);
+  if (FAILED(hr)) return std::nullopt;
+
+  // Get the desktop texture from the acquired resource
+  ComPtr<ID3D11Texture2D> desktop_texture;
+  if (FAILED(desktop_resource->QueryInterface(__uuidof(ID3D11Texture2D),
+      (void**)&desktop_texture))) {
+    duplication->ReleaseFrame();
+    return std::nullopt;
+  }
+
+  // Get descriptor for full desktop size
+  D3D11_TEXTURE2D_DESC full_desc;
+  desktop_texture->GetDesc(&full_desc);
+
+  // Clamp region to desktop bounds
+  int clamp_left = (std::max)(0, (int)region.left);
+  int clamp_top = (std::max)(0, (int)region.top);
+  int clamp_right = (std::min)((int)full_desc.Width, (int)region.right);
+  int clamp_bottom = (std::min)((int)full_desc.Height, (int)region.bottom);
+  int cap_w = clamp_right - clamp_left;
+  int cap_h = clamp_bottom - clamp_top;
+  if (cap_w <= 0 || cap_h <= 0) {
+    duplication->ReleaseFrame();
+    return std::nullopt;
+  }
+
+  // Create staging texture for CPU read
+  D3D11_TEXTURE2D_DESC staging_desc = full_desc;
+  staging_desc.BindFlags = 0;
+  staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  staging_desc.Usage = D3D11_USAGE_STAGING;
+  staging_desc.MiscFlags = 0;
+
+  ComPtr<ID3D11Texture2D> staging_texture;
+  hr = d3d_device->CreateTexture2D(&staging_desc, nullptr, &staging_texture);
+  if (FAILED(hr)) {
+    duplication->ReleaseFrame();
+    return std::nullopt;
+  }
+
+  // Copy desktop texture to staging (whole texture, then sub-rect in Map)
+  d3d_context->CopyResource(staging_texture, desktop_texture);
+  duplication->ReleaseFrame();
+
+  // Map the staging texture for reading
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  hr = d3d_context->Map(staging_texture, 0, D3D11_MAP_READ, 0, &mapped);
+  if (FAILED(hr)) return std::nullopt;
+
+  // Build BMP (24bpp BGR, bottom-up)
+  DWORD bmp_row = dxgi_row_bytes(cap_w);
+  DWORD data_size = bmp_row * cap_h;
+
+  BITMAPFILEHEADER bfh = {0};
+  bfh.bfType = 0x4D42;
+  bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+  bfh.bfSize = bfh.bfOffBits + data_size;
+
+  BITMAPINFOHEADER bih = {0};
+  bih.biSize = sizeof(BITMAPINFOHEADER);
+  bih.biWidth = cap_w;
+  bih.biHeight = cap_h;
+  bih.biPlanes = 1;
+  bih.biBitCount = 24;
+  bih.biCompression = BI_RGB;
+
+  std::vector<uint8_t> buffer(bfh.bfSize);
+  memcpy(buffer.data(), &bfh, sizeof(bfh));
+  memcpy(buffer.data() + sizeof(bfh), &bih, sizeof(bih));
+
+  // Convert BGRA (DXGI) → BGR (BMP 24bpp), flip vertically (DXGI is top-down, BMP bottom-up)
+  const uint8_t* src_base = (const uint8_t*)mapped.pData;
+  uint8_t* dst_base = buffer.data() + bfh.bfOffBits;
+
+  for (int y = 0; y < cap_h; y++) {
+    const uint8_t* src_row = src_base + ((clamp_top + y) * mapped.RowPitch) + (clamp_left * 4);
+    uint8_t* dst_row = dst_base + ((cap_h - 1 - y) * bmp_row);
+    for (int x = 0; x < cap_w; x++) {
+      dst_row[x * 3 + 0] = src_row[x * 4 + 0]; // B
+      dst_row[x * 3 + 1] = src_row[x * 4 + 1]; // G
+      dst_row[x * 3 + 2] = src_row[x * 4 + 2]; // R
+    }
+  }
+
+  d3d_context->Unmap(staging_texture, 0);
+
+  ScreenCapture sc;
+  sc.width = cap_w;
+  sc.height = cap_h;
+  sc.data_b64 = base64::encode(buffer);
+  return sc;
+}
+
 std::optional<ScreenCapture> Win32Backend::capture_screen(Rect region) {
   int w = region.right - region.left;
   int h = region.bottom - region.top;
   if (w <= 0 || h <= 0) return std::nullopt;
 
+  // Try DXGI first, fall back to GDI
+  if (dxgi_available_) {
+    auto dxgi_result = try_dxgi_capture(region);
+    if (dxgi_result) return dxgi_result;
+  }
+
+  // GDI fallback
   HDC hdcScreen = GetDC(NULL);
   HDC hdcMem = CreateCompatibleDC(hdcScreen);
   HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, w, h);
@@ -1000,6 +1262,20 @@ EnsureResult Win32Backend::ensure_foreground(hwnd_u64 hwnd) {
   return {true};
 }
 
+bool Win32Backend::move_window(hwnd_u64 hwnd, int x, int y) {
+  HWND h = from_u64(hwnd);
+  if (!IsWindow(h))
+    return false;
+  return SetWindowPos(h, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) != FALSE;
+}
+
+bool Win32Backend::resize_window(hwnd_u64 hwnd, int width, int height) {
+  HWND h = from_u64(hwnd);
+  if (!IsWindow(h))
+    return false;
+  return SetWindowPos(h, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER) != FALSE;
+}
+
 bool Win32Backend::post_message(hwnd_u64 hwnd, uint32_t msg, uint64_t wparam,
                                 uint64_t lparam) {
   HWND h = from_u64(hwnd);
@@ -1059,6 +1335,61 @@ bool Win32Backend::send_mouse_click(int x, int y, int button) {
   return SendInput(2, inputs, sizeof(INPUT)) == 2;
 }
 
+bool Win32Backend::mouse_drag(int sx, int sy, int ex, int ey,
+                               int button, int duration_ms) {
+  if (duration_ms <= 0) duration_ms = 200;
+  int steps = (std::max)(5, duration_ms / 10);
+  int delay_per_step = duration_ms / steps;
+
+  int sw = GetSystemMetrics(SM_CXSCREEN);
+  int sh = GetSystemMetrics(SM_CYSCREEN);
+  if (sw == 0) sw = 1;
+  if (sh == 0) sh = 1;
+
+  // Move to start position
+  INPUT move = {};
+  move.type = INPUT_MOUSE;
+  move.mi.dx = (sx * 65535) / sw;
+  move.mi.dy = (sy * 65535) / sh;
+  move.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+  SendInput(1, &move, sizeof(INPUT));
+
+  // Mouse-down
+  INPUT down = move;
+  if (button == 0) down.mi.dwFlags |= MOUSEEVENTF_LEFTDOWN;
+  else if (button == 1) down.mi.dwFlags |= MOUSEEVENTF_RIGHTDOWN;
+  else if (button == 2) down.mi.dwFlags |= MOUSEEVENTF_MIDDLEDOWN;
+  else return false;
+  SendInput(1, &down, sizeof(INPUT));
+
+  // Interpolate steps from start to end
+  for (int i = 1; i <= steps; i++) {
+    double t = (double)i / steps;
+    int cx = (int)(sx + (ex - sx) * t);
+    int cy = (int)(sy + (ey - sy) * t);
+    INPUT step = {};
+    step.type = INPUT_MOUSE;
+    step.mi.dx = (cx * 65535) / sw;
+    step.mi.dy = (cy * 65535) / sh;
+    step.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    SendInput(1, &step, sizeof(INPUT));
+    Sleep(delay_per_step);
+  }
+
+  // Mouse-up at end
+  INPUT up = {};
+  up.type = INPUT_MOUSE;
+  up.mi.dx = (ex * 65535) / sw;
+  up.mi.dy = (ey * 65535) / sh;
+  up.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+  if (button == 0) up.mi.dwFlags |= MOUSEEVENTF_LEFTUP;
+  else if (button == 1) up.mi.dwFlags |= MOUSEEVENTF_RIGHTUP;
+  else if (button == 2) up.mi.dwFlags |= MOUSEEVENTF_MIDDLEUP;
+  SendInput(1, &up, sizeof(INPUT));
+
+  return true;
+}
+
 bool Win32Backend::send_key_press(int vk) {
   INPUT inputs[2] = {};
   inputs[0].type = INPUT_KEYBOARD;
@@ -1097,6 +1428,92 @@ bool Win32Backend::send_text(const std::string &text) {
 
   return SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT)) ==
          inputs.size();
+}
+
+struct KeyNameMap { const char *name; WORD vk; };
+static const KeyNameMap kKeyNames[] = {
+  {"Ctrl",    VK_CONTROL},
+  {"Alt",     VK_MENU},
+  {"Shift",   VK_SHIFT},
+  {"Win",     VK_LWIN},
+  {"Esc",     VK_ESCAPE},
+  {"Tab",     VK_TAB},
+  {"Enter",   VK_RETURN},
+  {"Space",   VK_SPACE},
+  {"Backspace", VK_BACK},
+  {"Delete",  VK_DELETE},
+  {"Insert",  VK_INSERT},
+  {"Home",    VK_HOME},
+  {"End",     VK_END},
+  {"PageUp",  VK_PRIOR},
+  {"PageDown", VK_NEXT},
+  {"Up",      VK_UP},
+  {"Down",    VK_DOWN},
+  {"Left",    VK_LEFT},
+  {"Right",   VK_RIGHT},
+  {"CapsLock", VK_CAPITAL},
+  {"PrintScreen", VK_SNAPSHOT},
+  {"Pause",   VK_PAUSE},
+};
+
+static WORD lookup_vk(const std::string &name) {
+  for (const auto &entry : kKeyNames) {
+    if (_stricmp(entry.name, name.c_str()) == 0)
+      return entry.vk;
+  }
+  if (name.size() == 1) {
+    char c = name[0];
+    if (c >= 'A' && c <= 'Z') return (WORD)c;
+    if (c >= 'a' && c <= 'z') return (WORD)(c - 32);
+    if (c >= '0' && c <= '9') return (WORD)c;
+  }
+  if (name.size() >= 2 && name[0] == 'F') {
+    int n = atoi(name.c_str() + 1);
+    if (n >= 1 && n <= 24) return (WORD)(VK_F1 + (n - 1));
+  }
+  return 0;
+}
+
+bool Win32Backend::send_hotkey(const std::string &keys) {
+  std::vector<WORD> vk_codes;
+  size_t start = 0, end;
+  while ((end = keys.find(',', start)) != std::string::npos) {
+    auto key = keys.substr(start, end - start);
+    key.erase(0, key.find_first_not_of(" \t"));
+    key.erase(key.find_last_not_of(" \t") + 1);
+    if (!key.empty()) {
+      WORD vk = lookup_vk(key);
+      if (vk == 0) return false;
+      vk_codes.push_back(vk);
+    }
+    start = end + 1;
+  }
+  auto key = keys.substr(start);
+  key.erase(0, key.find_first_not_of(" \t"));
+  key.erase(key.find_last_not_of(" \t") + 1);
+  if (!key.empty()) {
+    WORD vk = lookup_vk(key);
+    if (vk == 0) return false;
+    vk_codes.push_back(vk);
+  }
+  if (vk_codes.empty()) return false;
+
+  std::vector<INPUT> downs(vk_codes.size());
+  for (size_t i = 0; i < vk_codes.size(); i++) {
+    downs[i].type = INPUT_KEYBOARD;
+    downs[i].ki.wVk = vk_codes[i];
+  }
+  SendInput((UINT)downs.size(), downs.data(), sizeof(INPUT));
+  Sleep(50);
+
+  std::vector<INPUT> ups(vk_codes.size());
+  for (size_t i = 0; i < vk_codes.size(); i++) {
+    ups[i].type = INPUT_KEYBOARD;
+    ups[i].ki.wVk = vk_codes[vk_codes.size() - 1 - i];
+    ups[i].ki.dwFlags = KEYEVENTF_KEYUP;
+  }
+  SendInput((UINT)ups.size(), ups.data(), sizeof(INPUT));
+  return true;
 }
 
 static UIElementInfo get_element_info(IUIAutomationElement *pNode) {
@@ -1297,6 +1714,9 @@ Capabilities Win32Backend::get_capabilities() {
   HDC hdc = GetDC(NULL);
   caps.window_highlight = (hdc != NULL);
   if (hdc) ReleaseDC(NULL, hdc);
+
+  // 8. DXGI Desktop Duplication
+  caps.dxgi_capture = dxgi_available_;
 
   return caps;
 }

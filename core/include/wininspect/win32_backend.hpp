@@ -23,9 +23,12 @@ public:
                                         PickFlags flags) override;
 
   std::vector<WindowNode> get_window_tree(const Snapshot &s, hwnd_u64 root) override;
+  std::optional<std::pair<int,int>> get_z_order(hwnd_u64 hwnd) override;
 
   EnsureResult ensure_visible(hwnd_u64 hwnd, bool visible) override;
   EnsureResult ensure_foreground(hwnd_u64 hwnd) override;
+  bool move_window(hwnd_u64 hwnd, int x, int y) override;
+  bool resize_window(hwnd_u64 hwnd, int width, int height) override;
   bool highlight_window(hwnd_u64 hwnd) override;
   bool set_property(hwnd_u64 hwnd, const std::string &name, const std::string &value) override;
 
@@ -34,8 +37,10 @@ public:
   bool send_input(const std::vector<uint8_t> &raw_input_data) override;
 
   bool send_mouse_click(int x, int y, int button) override;
+  bool mouse_drag(int sx, int sy, int ex, int ey, int button, int duration_ms) override;
   bool send_key_press(int vk) override;
   bool send_text(const std::string &text) override;
+  bool send_hotkey(const std::string &keys) override;
 
   bool control_click(hwnd_u64 hwnd, int x, int y, int button) override;
   bool control_send(hwnd_u64 hwnd, const std::string &text) override;
@@ -43,10 +48,12 @@ public:
   std::optional<Color> get_pixel(int x, int y) override;
   std::optional<ScreenCapture> capture_screen(Rect region) override;
   std::optional<std::pair<int, int>> pixel_search(Rect region, Color target, int variation) override;
+  DesktopInfo get_desktop_info() override;
 
   // Process Management
   std::vector<ProcessInfo> list_processes() override;
   bool kill_process(uint32_t pid) override;
+  ProcessExecResult execute_process(const std::string &cmd, const std::string &args) override;
 
   // File System
   std::optional<FileInfo> get_file_info(const std::string &path) override;
@@ -103,6 +110,10 @@ private:
   int uia_depth_ = 5;
   size_t max_mem_read_size_ = 1024 * 1024;
   int service_timeout_sec_ = 30;
+  bool dxgi_available_ = false;      // DXGI Desktop Duplication support
+
+  // DXGI Desktop Duplication
+  std::optional<ScreenCapture> try_dxgi_capture(Rect region);
 };
 
 } // namespace wininspect

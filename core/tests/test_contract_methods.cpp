@@ -112,6 +112,33 @@ DOCTEST_TEST_CASE("contract: window.setProperty") {
   DOCTEST_REQUIRE(r.ok);
 }
 
+DOCTEST_TEST_CASE("contract: window.getZOrder") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["hwnd"] = std::string("0x1");
+  CoreRequest req{"t10c","window.getZOrder",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
+DOCTEST_TEST_CASE("contract: window.move") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["hwnd"] = std::string("0x1234"); p["x"] = 100.0; p["y"] = 200.0;
+  CoreRequest req{"t10a","window.move",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
+DOCTEST_TEST_CASE("contract: window.resize") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["hwnd"] = std::string("0x1234"); p["width"] = 800.0; p["height"] = 600.0;
+  CoreRequest req{"t10b","window.resize",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
 DOCTEST_TEST_CASE("contract: window.controlClick") {
   auto fb = make_fake();
   CoreEngine core(&fb);
@@ -177,6 +204,24 @@ DOCTEST_TEST_CASE("contract: input.text") {
   DOCTEST_REQUIRE(r.ok);
 }
 
+DOCTEST_TEST_CASE("contract: input.mouseDrag") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["start_x"] = 10.0; p["start_y"] = 10.0; p["end_x"] = 100.0; p["end_y"] = 100.0;
+  CoreRequest req{"t17a","input.mouseDrag",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
+DOCTEST_TEST_CASE("contract: input.hotkey") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["keys"] = std::string("Ctrl+C");
+  CoreRequest req{"t17b","input.hotkey",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
 // --- screen methods ---
 
 DOCTEST_TEST_CASE("contract: screen.getPixel") {
@@ -194,6 +239,15 @@ DOCTEST_TEST_CASE("contract: screen.capture") {
   CoreEngine core(&fb);
   json::Object p; p["left"] = 0.0; p["top"] = 0.0; p["right"] = 100.0; p["bottom"] = 100.0;
   CoreRequest req{"t19","screen.capture",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
+DOCTEST_TEST_CASE("contract: screen.desktopInfo") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p;
+  CoreRequest req{"t20a","screen.desktopInfo",p};
   auto r = core.handle(req, fb.capture_snapshot());
   DOCTEST_REQUIRE(r.ok);
 }
@@ -224,6 +278,15 @@ DOCTEST_TEST_CASE("contract: process.kill") {
   CoreEngine core(&fb);
   json::Object p; p["pid"] = 1234.0;
   CoreRequest req{"t22","process.kill",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
+DOCTEST_TEST_CASE("contract: process.execute") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["command"] = std::string("cmd.exe");
+  CoreRequest req{"t22a","process.execute",p};
   auto r = core.handle(req, fb.capture_snapshot());
   DOCTEST_REQUIRE(r.ok);
 }
