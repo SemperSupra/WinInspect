@@ -36,7 +36,7 @@ std::wstring g_pipe_name = L"\\\\.\\pipe\\wininspectd";
 std::string make_snap_id(std::uint64_t n) { return "s-" + std::to_string(n); }
 
 void cleanup_sessions(ServerState *st) {
-  std::lock_guard<std::mutex> lk(st->mu);
+  std::lock_guard<std::mutex> lk(st->snapshots_mu);
   auto now = std::chrono::steady_clock::now();
   for (auto it = st->sessions.begin(); it != st->sessions.end(); ) {
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second.last_activity).count();
@@ -99,7 +99,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
       auto itsid = req.params.find("session_id");
       if (itsid != req.params.end() && itsid->second.is_str()) {
         std::string sid_str = itsid->second.as_str();
-        std::lock_guard<std::mutex> lk(st->mu);
+        std::lock_guard<std::mutex> lk(st->snapshots_mu);
         if (st->sessions.count(sid_str)) {
           auto &ps = st->sessions[sid_str];
           session.id = SessionID(sid_str);
@@ -121,7 +121,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         Snapshot s = backend->capture_snapshot();
         std::string sid;
         {
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           sid = make_snap_id(st->snap_counter++);
           st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
           st->lru_order.push_back(sid);
@@ -144,7 +144,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         session.subscribed = false;
         session.last_snap_id.clear();
         if (!session.id.empty()) {
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           if (st->sessions.count(session.id.val)) {
             st->sessions[session.id.val].subscribed = false;
             st->sessions[session.id.val].last_snap_id.clear();
@@ -171,7 +171,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
       }
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           st->sessions.erase(session.id.val);
           LOG_INFO("Session terminated explicitly: " + session.id.val);
           session.id = SessionID(""); // Clear local ref
@@ -195,7 +195,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         Snapshot s = backend->capture_snapshot();
         std::string sid;
         {
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           sid = make_snap_id(st->snap_counter++);
           st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
           st->lru_order.push_back(sid);
@@ -226,7 +226,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         auto its = req.params.find("snapshot_id");
         if (its != req.params.end() && its->second.is_str()) {
           std::string sid = its->second.as_str();
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           auto it = st->snaps.find(sid);
           if (it == st->snaps.end()) {
             resp.ok = false;
@@ -246,14 +246,14 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         auto itos = req.params.find("old_snapshot_id");
         if (itos != req.params.end() && itos->second.is_str()) {
           std::string osid = itos->second.as_str();
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           auto it = st->snaps.find(osid);
           if (it != st->snaps.end()) {
             old_snap_storage = *it->second;
             old_snap_ptr = &old_snap_storage;
           }
         } else if (req.method == "events.poll" && !session.last_snap_id.empty()) {
-          std::lock_guard<std::mutex> lk(st->mu);
+          std::lock_guard<std::mutex> lk(st->snapshots_mu);
           auto it = st->snaps.find(session.last_snap_id);
           if (it != st->snaps.end()) {
             old_snap_storage = *it->second;
@@ -278,7 +278,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           Snapshot fresh = backend->capture_snapshot();
           std::string sid;
           {
-            std::lock_guard<std::mutex> lk(st->mu);
+            std::lock_guard<std::mutex> lk(st->snapshots_mu);
             sid = make_snap_id(st->snap_counter++);
             st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(fresh)));
             st->lru_order.push_back(sid);
@@ -303,14 +303,14 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
     
     // Unpin
     if (!pinned_sid.empty()) {
-      std::lock_guard<std::mutex> lk(st->mu);
+      std::lock_guard<std::mutex> lk(st->snapshots_mu);
       st->pinned_counts[pinned_sid]--;
     }
   }
 
   // Unpin any snapshot still pinned from an uncompleted request
   if (!pinned_sid.empty()) {
-    std::lock_guard<std::mutex> lk(st->mu);
+    std::lock_guard<std::mutex> lk(st->snapshots_mu);
     st->pinned_counts[pinned_sid]--;
   }
 
