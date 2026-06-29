@@ -123,7 +123,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         {
           std::lock_guard<std::mutex> lk(st->mu);
           sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::move(s));
+          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
           st->lru_order.push_back(sid);
           session.subscribed = true;
           session.last_snap_id = sid;
@@ -197,7 +197,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         {
           std::lock_guard<std::mutex> lk(st->mu);
           sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::move(s));
+          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
           st->lru_order.push_back(sid);
 
           while (st->lru_order.size() > st->max_snapshots) {
@@ -234,7 +234,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
             resp.error_message = "unknown or evicted snapshot_id";
             goto send;
           }
-          snap = it->second;
+          snap = *it->second; // deep copy from shared_ptr
           pinned_sid = sid;
           st->pinned_counts[sid]++;
           st->lru_order.remove(sid);
@@ -249,14 +249,14 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           std::lock_guard<std::mutex> lk(st->mu);
           auto it = st->snaps.find(osid);
           if (it != st->snaps.end()) {
-            old_snap_storage = it->second;
+            old_snap_storage = *it->second;
             old_snap_ptr = &old_snap_storage;
           }
         } else if (req.method == "events.poll" && !session.last_snap_id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);
           auto it = st->snaps.find(session.last_snap_id);
           if (it != st->snaps.end()) {
-            old_snap_storage = it->second;
+            old_snap_storage = *it->second;
             old_snap_ptr = &old_snap_storage;
           }
         }
@@ -280,7 +280,7 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
           {
             std::lock_guard<std::mutex> lk(st->mu);
             sid = make_snap_id(st->snap_counter++);
-            st->snaps.emplace(sid, fresh);
+            st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(fresh)));
             st->lru_order.push_back(sid);
             session.last_snap_id = sid;
             if (!session.id.empty()) {
