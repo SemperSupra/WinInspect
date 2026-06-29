@@ -60,7 +60,7 @@ wininspectd.exe --auth-keys authorized_keys
 All release artifacts are signed with SHA256 checksums. Verify downloads:
 
 ```powershell
-CertUtil -hashfile WinInspect-Installer-v0.1.1.exe SHA256
+CertUtil -hashfile WinInspect-Installer-v0.1.2.exe SHA256
 ```
 
 Compare the output against the `.sha256` file published alongside each release.
