@@ -20,6 +20,7 @@
 
 #include "tcp_server.hpp"
 #include "tray.hpp"
+#include "request_handler.hpp"
 
 #include <list>
 #include <set>
@@ -33,8 +34,6 @@ using namespace wininspect;
 namespace {
 
 std::wstring g_pipe_name = L"\\\\.\\pipe\\wininspectd";
-
-std::string make_snap_id(std::uint64_t n) { return "s-" + std::to_string(n); }
 
 void cleanup_sessions(ServerState *st) {
   std::lock_guard<std::mutex> lk(st->snapshots_mu);
@@ -85,232 +84,13 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
     pinned_sid.clear();
 
     try {
-      auto req = parse_request_json(m.json);
-      resp.id = req.id;
-
-      // 1. Handshake Enforcement
-      if (!session.authenticated && req.method != "hello") {
-        LOG_WARN("Unauthorized request attempted: " + req.method);
-        resp.ok = false;
-        resp.error_code = "E_UNAUTHORIZED";
-        resp.error_message = "authentication required";
-        goto send;
-      }
-
-      auto itsid = req.params.find("session_id");
-      if (itsid != req.params.end() && itsid->second.is_str()) {
-        std::string sid_str = itsid->second.as_str();
-        std::lock_guard<std::mutex> lk(st->snapshots_mu);
-        if (st->sessions.count(sid_str)) {
-          auto &ps = st->sessions[sid_str];
-          session.id = SessionID(sid_str);
-          session.last_snap_id = ps.last_snap_id;
-          session.subscribed = ps.subscribed;
-          ps.last_activity = std::chrono::steady_clock::now();
-          LOG_DEBUG("Recovered session: " + sid_str);
-        } else {
-          // New session
-          session.id = SessionID(sid_str);
-          st->sessions[sid_str] = { "", false, std::chrono::steady_clock::now() };
-          LOG_DEBUG("Created persistent session: " + sid_str);
-        }
-      }
-
-
-      // Intercept subscribe before core dispatch -- captures baseline snapshot
-      if (req.method == "events.subscribe") {
-        Snapshot s = backend->capture_snapshot();
-        std::string sid;
-        {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
-          st->lru_order.push_back(sid);
-          session.subscribed = true;
-          session.last_snap_id = sid;
-          if (!session.id.empty()) {
-            st->sessions[session.id.val].subscribed = true;
-            st->sessions[session.id.val].last_snap_id = sid;
-          }
-        }
-        json::Object o;
-        o["subscribed"] = true;
-        o["snapshot_id"] = sid;
-        resp.ok = true;
-        resp.result = o;
-        goto send;
-      }
-
-      if (req.method == "events.unsubscribe") {
-        session.subscribed = false;
-        session.last_snap_id.clear();
-        if (!session.id.empty()) {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          if (st->sessions.count(session.id.val)) {
-            st->sessions[session.id.val].subscribed = false;
-            st->sessions[session.id.val].last_snap_id.clear();
-          }
-        }
-        json::Object o;
-        o["unsubscribed"] = true;
-        resp.ok = true;
-        resp.result = o;
-        goto send;
-      }
-      if (req.method == "clipboard.read" && no_clipboard) {
-        resp.ok = false;
-        resp.error_code = "E_ACCESS_DENIED";
-        resp.error_message = "clipboard access disabled (--no-clipboard)";
-        goto send;
-      }
-
-      if (req.method == "clipboard.write" && no_clipboard) {
-        resp.ok = false;
-        resp.error_code = "E_ACCESS_DENIED";
-        resp.error_message = "clipboard access disabled (--no-clipboard)";
-        goto send;
-      }
-      // Method-level authorization
-      if (!st->allow_methods.empty() && !st->allow_methods.count(req.method)) {
-        resp.ok = false;
-        resp.error_code = "E_ACCESS_DENIED";
-        resp.error_message = "method not in allow list";
-        goto send;
-      }
-      if (st->deny_methods.count(req.method)) {
-        resp.ok = false;
-        resp.error_code = "E_ACCESS_DENIED";
-        resp.error_message = "method is denied";
-        goto send;
-      }
-      if (req.method == "session.terminate") {
-        if (!session.id.empty()) {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          st->sessions.erase(session.id.val);
-          LOG_INFO("Session terminated explicitly: " + session.id.val);
-          session.id = SessionID(""); // Clear local ref
-        }
-      }
-
-      // Security: Check Read-Only mode
-      if (read_only &&
-          (req.method == "window.postMessage" || req.method == "input.send" || req.method.find("reg.write") != std::string::npos)) {
-        resp.ok = false;
-        resp.error_code = "E_ACCESS_DENIED";
-        resp.error_message = "daemon is running in read-only mode";
-        goto send;
-      }
-
-      auto itc = req.params.find("canonical");
-      if (itc != req.params.end() && itc->second.is_bool())
-        canonical = itc->second.as_bool();
-
-      if (req.method == "snapshot.capture") {
-        Snapshot s = backend->capture_snapshot();
-        std::string sid;
-        {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
-          st->lru_order.push_back(sid);
-
-          while (st->lru_order.size() > st->max_snapshots) {
-            std::string oldest = st->lru_order.front();
-            // Check pinning
-            if (st->pinned_counts[oldest] > 0) {
-               // Move to back of LRU to give it more time, don't evict yet
-               st->lru_order.pop_front();
-               st->lru_order.push_back(oldest);
-               continue; 
-            }
-            st->lru_order.pop_front();
-            st->snaps.erase(oldest);
-            st->pinned_counts.erase(oldest);
-          }
-        }
-        json::Object o;
-        o["snapshot_id"] = sid;
-        resp.ok = true;
-        resp.result = o;
-      } else {
-        Snapshot snap;
-        const Snapshot *old_snap_ptr = nullptr;
-        Snapshot old_snap_storage;
-
-        auto its = req.params.find("snapshot_id");
-        if (its != req.params.end() && its->second.is_str()) {
-          std::string sid = its->second.as_str();
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          auto it = st->snaps.find(sid);
-          if (it == st->snaps.end()) {
-            resp.ok = false;
-            resp.error_code = "E_BAD_SNAPSHOT";
-            resp.error_message = "unknown or evicted snapshot_id";
-            goto send;
-          }
-          snap = *it->second; // deep copy from shared_ptr
-          pinned_sid = sid;
-          st->pinned_counts[sid]++;
-          st->lru_order.remove(sid);
-          st->lru_order.push_back(sid);
-        } else {
-          snap = backend->capture_snapshot();
-        }
-
-        auto itos = req.params.find("old_snapshot_id");
-        if (itos != req.params.end() && itos->second.is_str()) {
-          std::string osid = itos->second.as_str();
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          auto it = st->snaps.find(osid);
-          if (it != st->snaps.end()) {
-            old_snap_storage = *it->second;
-            old_snap_ptr = &old_snap_storage;
-          }
-        } else if (req.method == "events.poll" && !session.last_snap_id.empty()) {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          auto it = st->snaps.find(session.last_snap_id);
-          if (it != st->snaps.end()) {
-            old_snap_storage = *it->second;
-            old_snap_ptr = &old_snap_storage;
-          }
-        }
-
-        // Watchdog: run core in async task
-        auto future = std::async(std::launch::async, [&]() {
-          return core.handle(req, snap, old_snap_ptr);
-        });
-
-        if (future.wait_for(std::chrono::milliseconds(st->request_timeout_ms)) == std::future_status::timeout) {
-          resp.ok = false;
-          resp.error_code = "E_TIMEOUT";
-          resp.error_message = "request timed out in core engine";
-        } else {
-          resp = future.get();
-        }
-
-        if (req.method == "events.poll" && resp.ok) {
-          Snapshot fresh = backend->capture_snapshot();
-          std::string sid;
-          {
-            std::lock_guard<std::mutex> lk(st->snapshots_mu);
-            sid = make_snap_id(st->snap_counter++);
-            st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(fresh)));
-            st->lru_order.push_back(sid);
-            session.last_snap_id = sid;
-            if (!session.id.empty()) {
-              st->sessions[session.id.val].last_snap_id = sid;
-            }
-          }
-        }
-      }
-
-    } catch (const std::exception &e) {
+      wininspectd::process_request(m.json, core, st, backend, session,
+                      read_only, no_clipboard, require_auth, auth_keys_data,
+                      resp, canonical, pinned_sid);
+    } catch (...) {
       resp.ok = false;
       resp.error_code = "E_BAD_REQUEST";
-      resp.error_message = e.what();
-      resp.result = json::Null{};
     }
-
   send:
     auto out = serialize_response_json(resp, canonical);
     wininspectd::pipe_write_message(hPipe, out);
