@@ -444,24 +444,54 @@ std::optional<Color> Win32Backend::get_pixel(int x, int y) {
 }
 
 std::optional<std::pair<int, int>> Win32Backend::pixel_search(Rect region, Color target, int variation) {
-  HDC hdc = GetDC(NULL);
-  if (!hdc) return std::nullopt;
+  int w = region.right - region.left;
+  int h = region.bottom - region.top;
+  if (w <= 0 || h <= 0) return std::nullopt;
 
-  for (int y = region.top; y < region.bottom; ++y) {
-    for (int x = region.left; x < region.right; ++x) {
-      COLORREF c = GetPixel(hdc, x, y);
-      if (c == CLR_INVALID) continue;
+  HDC hdcScreen = GetDC(NULL);
+  if (!hdcScreen) return std::nullopt;
 
-      int r = GetRValue(c), g = GetGValue(c), b = GetBValue(c);
+  HDC hdcMem = CreateCompatibleDC(hdcScreen);
+  HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, w, h);
+  SelectObject(hdcMem, hbm);
+
+  // One GDI read: capture the entire region
+  BitBlt(hdcMem, 0, 0, w, h, hdcScreen, region.left, region.top, SRCCOPY);
+
+  // Read raw pixel data into memory buffer
+  BITMAPINFOHEADER bih = {0};
+  bih.biSize = sizeof(BITMAPINFOHEADER);
+  bih.biWidth = w;
+  bih.biHeight = -h; // negative = top-down
+  bih.biPlanes = 1;
+  bih.biBitCount = 24; // 24-bit RGB
+  bih.biCompression = BI_RGB;
+
+  std::vector<uint8_t> pixels(w * h * 3);
+  GetDIBits(hdcMem, hbm, 0, h, pixels.data(), (BITMAPINFO*)&bih, DIB_RGB_COLORS);
+
+  // Scan the buffer in memory — no GDI calls
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      int idx = (y * w + x) * 3;
+      int r = pixels[idx + 2]; // RGB bitmap: BGR order
+      int g = pixels[idx + 1];
+      int b = pixels[idx + 0];
+
       if (std::abs(r - target.r) <= variation &&
           std::abs(g - target.g) <= variation &&
           std::abs(b - target.b) <= variation) {
-        ReleaseDC(NULL, hdc);
-        return std::make_pair(x, y);
+        DeleteObject(hbm);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return std::make_pair(region.left + x, region.top + y);
       }
     }
   }
-  ReleaseDC(NULL, hdc);
+
+  DeleteObject(hbm);
+  DeleteDC(hdcMem);
+  ReleaseDC(NULL, hdcScreen);
   return std::nullopt;
 }
 
