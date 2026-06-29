@@ -10,6 +10,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <set>
 #include <memory>
 #include "wininspect/types.hpp"
 
@@ -56,6 +57,9 @@ struct ServerState {
     std::chrono::steady_clock::time_point last_activity;
   };
   std::map<std::string, PersistentSession> sessions;
+  // Method authorization sets
+  std::set<std::string> allow_methods;  // empty = all allowed
+  std::set<std::string> deny_methods;   // empty = none denied
 };
 
 struct ClientSession {
