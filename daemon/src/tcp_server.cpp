@@ -252,7 +252,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         {
           std::lock_guard<std::mutex> lk(st->mu);
           sid = "s-" + std::to_string(st->snap_counter++);
-          st->snaps.emplace(sid, std::move(snap_base));
+          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(snap_base)));
           st->lru_order.push_back(sid);
           session.subscribed = true;
           session.last_snap_id = sid;
@@ -327,7 +327,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         {
           std::lock_guard<std::mutex> lk(st->mu);
           sid = "s-" + std::to_string(st->snap_counter++);
-          st->snaps.emplace(sid, std::move(s));
+          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
           st->lru_order.push_back(sid);
           while (st->lru_order.size() > st->max_snapshots) {
             std::string oldest = st->lru_order.front();
@@ -361,7 +361,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
             resp.error_message = "unknown snapshot";
             goto send_resp;
           }
-          snap = it->second;
+          snap = *it->second; // deep copy from shared_ptr
           pinned_sid = sid;
           st->pinned_counts[sid]++;
         } else {
@@ -374,14 +374,14 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
           std::lock_guard<std::mutex> lk(st->mu);
           auto it = st->snaps.find(osid);
           if (it != st->snaps.end()) {
-            old_storage = it->second;
+            old_storage = *it->second;
             old_ptr = &old_storage;
           }
         } else if (req.method == "events.poll" && !session.last_snap_id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);
           auto it = st->snaps.find(session.last_snap_id);
           if (it != st->snaps.end()) {
-            old_storage = it->second;
+            old_storage = *it->second;
             old_ptr = &old_storage;
           }
         }
@@ -403,7 +403,7 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
           {
             std::lock_guard<std::mutex> lk(st->mu);
             sid = "s-" + std::to_string(st->snap_counter++);
-            st->snaps.emplace(sid, fresh);
+            st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(fresh)));
             st->lru_order.push_back(sid);
             session.last_snap_id = sid;
             if (!session.id.empty()) {

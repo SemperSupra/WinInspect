@@ -10,6 +10,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <memory>
 #include "wininspect/types.hpp"
 
 namespace wininspect {
@@ -17,7 +18,7 @@ namespace wininspect {
 struct ServerState {
   std::mutex mu;
   std::uint64_t snap_counter = 1;
-  std::map<std::string, Snapshot> snaps;
+  std::map<std::string, std::shared_ptr<Snapshot>> snaps;
   std::map<std::string, int> pinned_counts;
   std::list<std::string> lru_order; // LRU: front is oldest, back is newest
 
