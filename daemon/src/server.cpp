@@ -22,6 +22,7 @@
 #include "tray.hpp"
 
 #include <list>
+#include <set>
 #include <future>
 #include <memory>
 #include <sstream>
@@ -167,6 +168,19 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
         resp.ok = false;
         resp.error_code = "E_ACCESS_DENIED";
         resp.error_message = "clipboard access disabled (--no-clipboard)";
+        goto send;
+      }
+      // Method-level authorization
+      if (!st->allow_methods.empty() && !st->allow_methods.count(req.method)) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "method not in allow list";
+        goto send;
+      }
+      if (st->deny_methods.count(req.method)) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "method is denied";
         goto send;
       }
       if (req.method == "session.terminate") {
@@ -422,6 +436,7 @@ int main(int argc, char **argv) {
   bool no_clipboard = false;
   int rate_limit_ms = 0;
   std::string auth_keys;
+  std::string allow_str, deny_str;
   bool require_auth = false;
   int tcp_port = 1985;
   int max_snaps = 1000;
@@ -443,6 +458,10 @@ int main(int argc, char **argv) {
       bind_public = true;
     if (std::string(argv[i]) == "--read-only")
       read_only = true;
+    if (std::string(argv[i]) == "--allow" && i + 1 < argc)
+      allow_str = argv[++i];
+    if (std::string(argv[i]) == "--deny" && i + 1 < argc)
+      deny_str = argv[++i];
     if (std::string(argv[i]) == "--require-auth")
       require_auth = true;
     if (std::string(argv[i]) == "--include-hostname")
@@ -514,6 +533,24 @@ int main(int argc, char **argv) {
   st->max_wait_ms = max_wait;
   st->discovery_port = discovery_port;
   st->rate_limit_ms = rate_limit_ms;
+
+  // Parse method authorization lists
+  if (!allow_str.empty()) {
+    size_t pos = 0;
+    while ((pos = allow_str.find(",")) != std::string::npos) {
+      st->allow_methods.insert(allow_str.substr(0, pos));
+      allow_str.erase(0, pos + 1);
+    }
+    st->allow_methods.insert(allow_str);
+  }
+  if (!deny_str.empty()) {
+    size_t pos = 0;
+    while ((pos = deny_str.find(",")) != std::string::npos) {
+      st->deny_methods.insert(deny_str.substr(0, pos));
+      deny_str.erase(0, pos + 1);
+    }
+    st->deny_methods.insert(deny_str);
+  }
   st->max_mem_read_size = (size_t)max_mem_read;
   if (uia_depth != -1) st->uia_depth = uia_depth;
   st->service_timeout_sec = service_timeout;

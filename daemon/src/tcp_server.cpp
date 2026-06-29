@@ -301,6 +301,19 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         goto send_resp;
       }
 
+      // Method-level authorization
+      if (!st->allow_methods.empty() && !st->allow_methods.count(req.method)) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "method not in allow list";
+        goto send_resp;
+      }
+      if (st->deny_methods.count(req.method)) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "method is denied";
+        goto send_resp;
+      }
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {
           std::lock_guard<std::mutex> lk(st->snapshots_mu);
