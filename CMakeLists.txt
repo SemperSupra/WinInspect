@@ -8,10 +8,12 @@ option(WININSPECT_BUILD_TESTS "Build tests" ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# MSVC compatibility
+# Windows cross-compile compatibility
+if(WIN32)
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 if(MSVC)
   add_compile_options(/utf-8 /wd4244)
-  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 add_library(wininspect_core

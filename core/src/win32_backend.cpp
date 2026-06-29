@@ -5,6 +5,13 @@
 #include "wininspect/win32_backend.hpp"
 #include "wininspect/util_win32.hpp"
 #include "wininspect/update.hpp"
+
+// MinGW compatibility: UIA header spells this TreeScope_SubTree (capital T)
+// while MSVC uses TreeScope_Subtree. Keep both happy.
+#ifndef TreeScope_Subtree
+#define TreeScope_Subtree TreeScope_SubTree
+#endif
+
 #include <chrono>
 #include <thread>
 #include <regex>
