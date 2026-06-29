@@ -21,7 +21,8 @@ public:
 
   void start(std::atomic<bool> *running, bool bind_public = false,
              const std::string &auth_keys = "", bool read_only = false,
-             bool admin_logs = false);
+             bool admin_logs = false, bool no_clipboard = false,
+             int rate_limit_ms = 0);
   void stop();
 
 private:

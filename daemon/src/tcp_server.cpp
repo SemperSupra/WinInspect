@@ -104,7 +104,7 @@ static bool verify_identity(const AuthContext &ctx) {
 static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
                                  wininspect::IBackend *backend,
                                  std::string auth_keys, bool read_only,
-                                 bool admin_logs) {
+                                 bool admin_logs, bool no_clipboard) {
   wininspect::CoreEngine core(backend);
   core.set_admin_logs_enabled(admin_logs);
 
@@ -286,6 +286,21 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         goto send_resp;
       }
 
+      // Block clipboard when --no-clipboard is set
+      if (req.method == "clipboard.read" && no_clipboard) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "clipboard access disabled (--no-clipboard)";
+        goto send_resp;
+      }
+
+      if (req.method == "clipboard.write" && no_clipboard) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "clipboard access disabled (--no-clipboard)";
+        goto send_resp;
+      }
+
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {
           std::lock_guard<std::mutex> lk(st->mu);
@@ -435,7 +450,8 @@ void TcpServer::stop() {
 
 void TcpServer::start(std::atomic<bool> *running, bool bind_public,
                       const std::string &auth_keys, bool read_only,
-                      bool admin_logs) {
+                      bool admin_logs, bool no_clipboard,
+                      int rate_limit_ms) {
   if (!wsa_init.ok) {
     LOG_ERROR("TCP Server: Winsock not initialized.");
     return;
@@ -484,11 +500,23 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     u_long m2 = 0;
     ioctlsocket(client, FIONBIO, &m2);
 
+    // Rate limiting: reject connections arriving within rate_limit_ms
+    if (rate_limit_ms > 0) {
+      auto now = std::chrono::steady_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now - state_->last_accept_time).count();
+      if (elapsed < rate_limit_ms) {
+        closesocket(client);
+        continue;
+      }
+      state_->last_accept_time = now;
+    }
+
     {
       std::lock_guard<std::mutex> lk(state_->thread_mu);
       state_->client_threads.emplace_back(handle_socket_client, client,
                                           state_, backend_, auth_keys, read_only,
-                                          admin_logs);
+                                          admin_logs, no_clipboard);
     }
   }
 

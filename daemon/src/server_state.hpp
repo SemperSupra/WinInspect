@@ -45,6 +45,8 @@ struct ServerState {
   int poll_interval_ms = 100;
   int max_wait_ms = 30000; // 30s max for long polls
   int discovery_port = 1986; // Discovery UDP port
+  int rate_limit_ms = 0;
+  std::chrono::steady_clock::time_point last_accept_time;
 
   struct PersistentSession {
     std::string last_snap_id;
