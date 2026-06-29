@@ -420,6 +420,7 @@ int main(int argc, char **argv) {
   bool include_hostname = false;
   bool admin_logs = false;
   bool no_clipboard = false;
+  int rate_limit_ms = 0;
   std::string auth_keys;
   bool require_auth = false;
   int tcp_port = 1985;
@@ -512,6 +513,7 @@ int main(int argc, char **argv) {
   st->poll_interval_ms = poll_interval;
   st->max_wait_ms = max_wait;
   st->discovery_port = discovery_port;
+  st->rate_limit_ms = rate_limit_ms;
   st->max_mem_read_size = (size_t)max_mem_read;
   if (uia_depth != -1) st->uia_depth = uia_depth;
   st->service_timeout_sec = service_timeout;
@@ -583,7 +585,7 @@ int main(int argc, char **argv) {
       // Create a background thread for TCP if tray is running
       std::thread([&, tcp, bind_public, read_only]() {
         try {
-          tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs);
+          tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, rate_limit_ms);
         } catch (...) {}
       }).detach();
       tray.run();
@@ -591,7 +593,7 @@ int main(int argc, char **argv) {
   }
 
   try {
-    tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs);
+    tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, rate_limit_ms);
   } catch (...) {
     LOG_ERROR("TCP Server fatal error.");
   }
