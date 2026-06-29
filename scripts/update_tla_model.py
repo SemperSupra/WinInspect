@@ -1,73 +1,102 @@
-"""Update TLA+ model with clipboard, authorization, and allow/deny features."""
-# Use raw strings throughout to avoid Python escape sequence corruption.
+"""
+Update TLA+ model with clipboard, authorization, and allow/deny features.
+"""
+import sys
 
-S1 = r'MaxSessions        \* Max persistent sessions'
-S2 = r'MaxSessions,       \* Max persistent sessions' + '\n' + \
-     r'  AllowMethods,      \* Set of allowed methods (empty = all allowed)' + '\n' + \
-     r'  DenyMethods        \* Set of denied methods (empty = none denied)'
+with open('formal/tla/WinInspect_v2.tla', 'rb') as f:
+    data = f.read()
 
-S3 = r'readOnly           \* BOOLEAN'
-S4 = r'readOnly,           \* BOOLEAN' + '\n' + r'  noClipboard        \* BOOLEAN'
+NL = b'\n'
+BS = b'\\'  # single backslash byte
 
-S5 = r'MutationMethods == {'
-S6 = r'ClipboardMethods == {\n  "ClipboardRead", "ClipboardWrite"\n}\n\nMutationMethods == {'
+replacements = [
+    # 1. Constants
+    (b'MaxSessions        ' + BS + b'* Max persistent sessions',
+     b'MaxSessions,       ' + BS + b'* Max persistent sessions' + NL +
+     b'  AllowMethods,      ' + BS + b'* Set of allowed methods (empty = all allowed)' + NL +
+     b'  DenyMethods        ' + BS + b'* Set of denied methods (empty = none denied)'),
 
-S7 = r'AllMethods == QueryMethods \cup DesiredStateMethods \cup MutationMethods \cup SpecialMethods'
-S8 = r'AllMethods == QueryMethods \cup DesiredStateMethods \cup MutationMethods \cup ClipboardMethods \cup SpecialMethods'
+    # 2. Variables
+    (b'readOnly           ' + BS + b'* BOOLEAN',
+     b'readOnly,           ' + BS + b'* BOOLEAN' + NL +
+     b'  noClipboard        ' + BS + b'* BOOLEAN'),
 
-S9 = r'/\ readOnly \in {TRUE, FALSE}'
-S10 = r'/\ readOnly \in {TRUE, FALSE}' + '\n' + r'  /\ noClipboard \in {TRUE, FALSE}'
+    # 3. ClipboardMethods
+    (b'MutationMethods == {',
+     b'ClipboardMethods == {' + NL +
+     b'  "ClipboardRead", "ClipboardWrite"' + NL +
+     b'}' + NL + NL +
+     b'MutationMethods == {'),
 
-with open('formal/tla/WinInspect_v2.tla', 'r') as f:
-    content = f.read()
+    # 4. AllMethods union
+    (b'AllMethods == QueryMethods ' + BS + b'cup DesiredStateMethods ' + BS + b'cup MutationMethods ' + BS + b'cup SpecialMethods',
+     b'AllMethods == QueryMethods ' + BS + b'cup DesiredStateMethods ' + BS + b'cup MutationMethods ' + BS + b'cup ClipboardMethods ' + BS + b'cup SpecialMethods'),
 
-content = content.replace(S1, S2)
-content = content.replace(S3, S4)
-content = content.replace(S5, S6)
-content = content.replace(S7, S8)
-content = content.replace(S9, S10)
+    # 5. Init
+    (b'/' + BS + b' readOnly ' + BS + b'in {TRUE, FALSE}',
+     b'/' + BS + b' readOnly ' + BS + b'in {TRUE, FALSE}' + NL +
+     b'  /' + BS + b' noClipboard ' + BS + b'in {TRUE, FALSE}'),
+]
 
-with open('formal/tla/WinInspect_v2.tla', 'w') as f:
-    f.write(content)
-print("Phase 1 done")
+# 6. Auth block: uses \notin (backslash-n-o-t-i-n, no newline issues because we use byte concatenation)
+AUTH  = b'            ' + BS + b'* ---- METHOD AUTHORIZATION (--allow/--deny) ----' + NL
+AUTH += b'            ELSE IF (AllowMethods # {} /' + BS + b' m.method ' + BS + b'notin AllowMethods)' + NL
+AUTH += b'                 ' + BS + b'/ m.method ' + BS + b'in DenyMethods' + NL
+AUTH += b"            THEN /" + BS + b" outbox' = [outbox EXCEPT ![c] = Append(@," + NL
+AUTH += b'                    [id |-> m.id, method |-> m.method,' + NL
+AUTH += b'                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,' + NL
+AUTH += b'                     changed |-> FALSE, ok |-> FALSE,' + NL
+AUTH += b'                     session |-> c])]' + NL
+AUTH += b'                 /' + BS + b' UNCHANGED <<conns, connCount, worldVisible, worldForeground,' + NL
+AUTH += b'                                lastSnapId, snaps, snapPinCount,' + NL
+AUTH += b'                                snapOrder, snapCounter, sessions,' + NL
+AUTH += b'                                sessionCount, subscribed, readOnly, noClipboard>>' + NL
+AUTH += b'            ' + BS + b'* ---- CLIPBOARD BLOCKING (--no-clipboard) ----' + NL
+AUTH += b'            ELSE IF m.method ' + BS + b'in ClipboardMethods /' + BS + b' noClipboard' + NL
+AUTH += b"            THEN /" + BS + b" outbox' = [outbox EXCEPT ![c] = Append(@," + NL
+AUTH += b'                    [id |-> m.id, method |-> m.method,' + NL
+AUTH += b'                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,' + NL
+AUTH += b'                     changed |-> FALSE, ok |-> FALSE,' + NL
+AUTH += b'                     session |-> c])]' + NL
+AUTH += b'                 /' + BS + b' UNCHANGED <<conns, connCount, worldVisible, worldForeground,' + NL
+AUTH += b'                                lastSnapId, snaps, snapPinCount,' + NL
+AUTH += b'                                snapOrder, snapCounter, sessions,' + NL
+AUTH += b'                                sessionCount, subscribed, readOnly, noClipboard>>' + NL
 
-# Phase 2: This is the tricky part with \n and \notin etc.
-with open('formal/tla/WinInspect_v2.tla', 'r') as f:
-    content = f.read()
+MARKER = b'            ' + BS + b'* ---- QUERY METHODS (side-effect-free) ----'
 
-# Build the auth block using raw strings for TLA+ operators
-marker = r'            \* ---- QUERY METHODS (side-effect-free) ----'
+# Apply all replacements
+for i, (old, new) in enumerate(replacements):
+    if old in data:
+        data = data.replace(old, new)
+        print(f"  [{i+1}] OK: {old[:60].decode('ascii', errors='replace').rstrip()}...")
+    else:
+        print(f"  [{i+1}] NOT FOUND: {old[:60].decode('ascii', errors='replace').rstrip()}...")
 
-auth = ''
-auth += r'            \* ---- METHOD AUTHORIZATION (--allow/--deny) ----' + '\n'
-auth += r'            ELSE IF (AllowMethods # {} /\ m.method \notin AllowMethods)' + '\n'
-auth += r'                 \/ m.method \in DenyMethods' + '\n'
-auth += r"            THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@," + '\n'
-auth += r'                    [id |-> m.id, method |-> m.method,' + '\n'
-auth += r'                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,' + '\n'
-auth += r'                     changed |-> FALSE, ok |-> FALSE,' + '\n'
-auth += r'                     session |-> c])]' + '\n'
-auth += r'                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,' + '\n'
-auth += r'                                lastSnapId, snaps, snapPinCount,' + '\n'
-auth += r'                                snapOrder, snapCounter, sessions,' + '\n'
-auth += r'                                sessionCount, subscribed, readOnly, noClipboard>>' + '\n'
-auth += r'            \* ---- CLIPBOARD BLOCKING (--no-clipboard) ----' + '\n'
-auth += r'            ELSE IF m.method \in ClipboardMethods /\ noClipboard' + '\n'
-auth += r"            THEN /\ outbox' = [outbox EXCEPT ![c] = Append(@," + '\n'
-auth += r'                    [id |-> m.id, method |-> m.method,' + '\n'
-auth += r'                     hwnd |-> NULL, snapId |-> NULL, oldSnapId |-> NULL,' + '\n'
-auth += r'                     changed |-> FALSE, ok |-> FALSE,' + '\n'
-auth += r'                     session |-> c])]' + '\n'
-auth += r'                 /\ UNCHANGED <<conns, connCount, worldVisible, worldForeground,' + '\n'
-auth += r'                                lastSnapId, snaps, snapPinCount,' + '\n'
-auth += r'                                snapOrder, snapCounter, sessions,' + '\n'
-auth += r'                                sessionCount, subscribed, readOnly, noClipboard>>' + '\n'
-auth += marker
+if MARKER in data:
+    data = data.replace(MARKER, AUTH + MARKER)
+    print(f"  [6] OK: authorization + clipboard blocks")
+else:
+    print(f"  [6] NOT FOUND: QUERY METHODS marker")
 
-content = content.replace(marker, auth)
+with open('formal/tla/WinInspect_v2.tla', 'wb') as f:
+    f.write(data)
 
-with open('formal/tla/WinInspect_v2.tla', 'w') as f:
-    f.write(content)
+# Verify
+counts = {
+    'noClipboard': data.count(b'noClipboard'),
+    'AllowMethods': data.count(b'AllowMethods'),
+    'DenyMethods': data.count(b'DenyMethods'),
+    'ClipboardMethods': data.count(b'ClipboardMethods'),
+    'notin': data.count(b'\\notin'),
+}
+print(f"\nVerification:")
+for k, v in counts.items():
+    print(f"  {k}: {v}", end='')
+    print(" OK" if v > 0 else " MISSING!")
 
-print("Phase 2: authorization and clipboard blocks inserted")
-print("Done!")
+if all(v > 0 for v in counts.values()):
+    print("\nSUCCESS: All changes applied. Ready for TLC.")
+else:
+    print("\nFAILURE: Some replacements missing.")
+    sys.exit(1)
