@@ -249,12 +249,31 @@ NetworkConfig NetworkConfig::from_json(const json::Object &o) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 static void ensure_dir_exists(const std::string &path) {
+  if (path.empty()) return;
 #ifdef _WIN32
-  // CreateDirectoryA creates intermediate components? No — just the last component.
-  // Use a simple approach: try to create, ignore if exists
-  CreateDirectoryA(path.c_str(), nullptr);
+  // Create directory tree recursively (CreateDirectoryA only creates one level)
+  std::string p = path;
+  // Use forward slashes for consistency
+  for (auto &c : p) if (c == '/') c = '\\';
+  // Try to create each component from root
+  size_t pos = 0;
+  while (true) {
+    pos = p.find_first_of("\\", pos + 1);
+    if (pos == std::string::npos) {
+      CreateDirectoryA(p.c_str(), nullptr);
+      break;
+    }
+    std::string part = p.substr(0, pos);
+    if (part.size() > 3) // skip "C:\" root
+      CreateDirectoryA(part.c_str(), nullptr);
+  }
 #else
-  mkdir(path.c_str(), 0755);
+  // POSIX: mkdir -p equivalent
+  std::string p = path;
+  for (size_t pos = 1; pos != std::string::npos; pos = p.find('/', pos + 1)) {
+    mkdir(p.substr(0, pos).c_str(), 0755);
+  }
+  mkdir(p.c_str(), 0755);
 #endif
 }
 
