@@ -49,6 +49,12 @@ if (WIN32)
   target_include_directories(wininspectd PRIVATE core/include third_party daemon/src)
   target_link_libraries(wininspectd PRIVATE wininspect_core ws2_32)
 
+  add_executable(wininspect-rendezvous
+    daemon/src/rendezvous_server.cpp
+  )
+  target_include_directories(wininspect-rendezvous PRIVATE core/include third_party)
+  target_link_libraries(wininspect-rendezvous PRIVATE wininspect_core ws2_32)
+
   add_executable(wininspect
     clients/cli/src/cli.cpp
   )
