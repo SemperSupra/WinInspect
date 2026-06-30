@@ -216,8 +216,10 @@ int main(int argc, char **argv) {
   bool no_clipboard = false;
   bool no_config = false;
   std::string config_path;
+  int per_ip_rate_limit_ms = 0;
   std::string auth_keys;
   std::string allow_str, deny_str;
+  std::vector<std::string> allow_cidrs, deny_cidrs;
   bool require_auth = false;
   int max_snaps = 1000;
   int max_conns = 32;
@@ -269,6 +271,30 @@ int main(int argc, char **argv) {
       no_clipboard = true;
     if (std::string(argv[i]) == "--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
+    }
+    if (std::string(argv[i]) == "--port" && i + 1 < argc) {
+      tcp_port = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--rate-limit-ms" && i + 1 < argc) {
+      per_ip_rate_limit_ms = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--allow-ips" && i + 1 < argc) {
+      std::string list = argv[++i];
+      size_t pos = 0;
+      while ((pos = list.find(",")) != std::string::npos) {
+        allow_cidrs.push_back(list.substr(0, pos));
+        list.erase(0, pos + 1);
+      }
+      if (!list.empty()) allow_cidrs.push_back(list);
+    }
+    if (std::string(argv[i]) == "--deny-ips" && i + 1 < argc) {
+      std::string list = argv[++i];
+      size_t pos = 0;
+      while ((pos = list.find(",")) != std::string::npos) {
+        deny_cidrs.push_back(list.substr(0, pos));
+        list.erase(0, pos + 1);
+      }
+      if (!list.empty()) deny_cidrs.push_back(list);
     }
     if (std::string(argv[i]) == "--max-snapshots" && i + 1 < argc) {
       max_snaps = std::stoi(argv[++i]);
@@ -322,6 +348,10 @@ int main(int argc, char **argv) {
   st->discovery_port = net_cfg.discovery_port;
   st->rate_limit_ms = net_cfg.rate_limit_ms;
   st->net_config = net_cfg;
+  st->discovery_port = discovery_port;
+  st->per_ip_rate_limit_ms = per_ip_rate_limit_ms;
+  st->allow_cidrs = allow_cidrs;
+  st->deny_cidrs = deny_cidrs;
 
   // Parse method authorization lists
   if (!allow_str.empty()) {
@@ -444,6 +474,7 @@ int main(int argc, char **argv) {
       std::thread([&, tcp, &auth_keys_data, read_only]() {
         try {
           tcp->start(&running, net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
+          tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, 0);
         } catch (...) {}
       }).detach();
       tray.run();
@@ -452,6 +483,7 @@ int main(int argc, char **argv) {
 
   try {
     tcp->start(&running, net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
+    tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, 0);
   } catch (...) {
     LOG_ERROR("TCP Server fatal error.");
   }
