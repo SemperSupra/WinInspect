@@ -65,6 +65,7 @@ jobs:
           done
 
       - name: Create Release
+        id: create_release
         uses: softprops/action-gh-release@v3
         with:
           files: |
@@ -79,3 +80,147 @@ jobs:
             dist/wi-portable-*-linux-x64
             dist/wi-portable-*-linux-x64.sha256
           generate_release_notes: true
+
+      # ── Package Manager Publishing ──────────────────────────────────────────
+
+      - name: Read Installer SHA256
+        id: installer_hash
+        shell: bash
+        run: |
+          HASH=$(cat dist/WinInspect-Installer-*.exe.sha256 | awk '{print $1}')
+          echo "sha256=$HASH" >> $GITHUB_OUTPUT
+          echo "Installer SHA256: $HASH"
+
+      - name: Publish to winget
+        shell: bash
+        env:
+          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$WINGET_GITHUB_TOKEN" ]; then
+            echo "WINGET_GITHUB_TOKEN not set — skipping winget publish"
+            exit 0
+          fi
+          TAG="${{ github.ref_name }}"
+          INSTALLER_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/WinInspect-Installer-${TAG}.exe"
+          SHA256="${{ steps.installer_hash.outputs.sha256 }}"
+
+          # wingetcreate updates the manifest and opens a PR
+          wingetcreate update SemperSupra.WinInspect \
+            --version "${TAG#v}" \
+            --urls "$INSTALLER_URL" \
+            --sha256 "$SHA256" \
+            --submit "$WINGET_GITHUB_TOKEN"
+
+      - name: Publish to Chocolatey
+        shell: bash
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          if [ -z "$CHOCO_API_KEY" ]; then
+            echo "CHOCO_API_KEY not set — skipping Chocolatey publish"
+            exit 0
+          fi
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          INSTALLER_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/WinInspect-Installer-${TAG}.exe"
+          SHA256="${{ steps.installer_hash.outputs.sha256 }}"
+
+          # Build chocolatey package
+          mkdir -p chocolatey/tools
+          cat > chocolatey/wininspect.nuspec << NUSPEC
+  <?xml version="1.0" encoding="utf-8"?>
+  <package>
+    <metadata>
+      <id>wininspect</id>
+      <version>${VERSION}</version>
+      <title>WinInspect</title>
+      <authors>Mark E. DeYoung</authors>
+      <projectUrl>https://github.com/${{ github.repository }}</projectUrl>
+      <licenseUrl>https://github.com/${{ github.repository }}/blob/master/LICENSE</licenseUrl>
+      <projectSourceUrl>https://github.com/${{ github.repository }}</projectSourceUrl>
+      <tags>windows remote-desktop automation inspection screen-capture wine</tags>
+      <summary>Remote Windows desktop inspection and automation daemon</summary>
+      <description>WinInspect provides remote desktop inspection, screen capture, window management, and automation over a secure TCP protocol. See https://github.com/${{ github.repository }} for details.</description>
+    </metadata>
+    <files>
+      <file src="tools\**" target="tools" />
+    </files>
+  </package>
+  NUSPEC
+          cat > chocolatey/tools/chocolateyInstall.ps1 << CHOCO
+  \$ErrorActionPreference = 'Stop'
+  \$toolsDir = "\$(Split-Path -parent \$MyInvocation.MyCommand.Definition)"
+  \$packageArgs = @{
+    packageName   = 'wininspect'
+    fileType      = 'exe'
+    url           = '${INSTALLER_URL}'
+    checksum      = '${SHA256}'
+    checksumType  = 'sha256'
+    silentArgs    = '/S'
+    validExitCodes= @(0)
+  }
+  Install-ChocolateyPackage @packageArgs
+  CHOCO
+          choco pack chocolatey/wininspect.nuspec
+          choco push wininspect.${VERSION}.nupkg --api-key "$CHOCO_API_KEY" --source https://push.chocolatey.org/
+
+      - name: Publish to Scoop
+        shell: bash
+        env:
+          SCOOP_GITHUB_TOKEN: ${{ secrets.SCOOP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$SCOOP_GITHUB_TOKEN" ]; then
+            echo "SCOOP_GITHUB_TOKEN not set — skipping Scoop publish"
+            exit 0
+          fi
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          INSTALLER_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/WinInspect-Installer-${TAG}.exe"
+          SHA256="${{ steps.installer_hash.outputs.sha256 }}"
+
+          # Clone the Extras bucket, update manifest, submit PR
+          git config --global user.name "wininspect-bot"
+          git config --global user.email "bot@wininspect.dev"
+          gh repo clone ScoopInstaller/Extras /tmp/scoop-extras -- "$SCOOP_GITHUB_TOKEN"
+          cd /tmp/scoop-extras
+          git checkout -b wininspect-${VERSION}
+          cat > bucket/wininspect.json << SCOOP
+  {
+    "version": "${VERSION}",
+    "description": "Remote Windows desktop inspection and automation daemon",
+    "homepage": "https://github.com/${{ github.repository }}",
+    "license": "Apache-2.0",
+    "architecture": {
+      "x86_64": {
+        "url": "${INSTALLER_URL}",
+        "hash": "${SHA256}"
+      }
+    },
+    "pre_install": "if (!(is_admin)) { error 'Admin required for installer'; break }",
+    "installer": {
+      "args": ["/S"]
+    },
+    "bin": [
+      ["wininspect.exe", "wininspect"],
+      ["wininspectd.exe", "wininspectd"],
+      ["wininspect-gui.exe", "wininspect-gui"]
+    ],
+    "checkver": "github",
+    "autoupdate": {
+      "architecture": {
+        "x86_64": {
+          "url": "https://github.com/${{ github.repository }}/releases/download/\$version/WinInspect-Installer-\$version.exe"
+        }
+      }
+    }
+  }
+  SCOOP
+          git add bucket/wininspect.json
+          git commit -m "wininspect: update to ${VERSION}"
+          git push origin wininspect-${VERSION}
+          gh pr create \
+            --repo ScoopInstaller/Extras \
+            --head wininspect-bot:wininspect-${VERSION} \
+            --base master \
+            --title "wininspect: update to ${VERSION}" \
+            --body "Auto-generated by release workflow for ${TAG}."
