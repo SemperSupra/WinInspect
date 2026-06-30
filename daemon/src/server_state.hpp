@@ -13,6 +13,7 @@
 #include <set>
 #include <memory>
 #include "wininspect/types.hpp"
+#include "wininspect/network_config.hpp"
 
 namespace wininspect {
 
@@ -60,6 +61,9 @@ struct ServerState {
   // Method authorization sets
   std::set<std::string> allow_methods;  // empty = all allowed
   std::set<std::string> deny_methods;   // empty = none denied
+
+  // Network configuration (loaded at startup)
+  NetworkConfig net_config;
 };
 
 struct ClientSession {

@@ -812,6 +812,28 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
+  dispatch_["daemon.identity"] = [this]( const CoreRequest &,
+                                      const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto id = backend_->get_instance_identity();
+    json::Object o;
+    o["uuid"] = id.uuid; o["name"] = id.name;
+    o["hostname"] = id.hostname;
+    if (!id.ecdh_pubkey.empty()) o["ecdh_pubkey"] = id.ecdh_pubkey;
+    resp.ok = true; resp.result = o; return resp;
+  };
+
+  dispatch_["daemon.network"] = [this]( const CoreRequest &,
+                                     const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    // Return static network config — no live state needed
+    json::Object o;
+    o["port"] = 1985.0;
+    o["protocol_version"] = std::string(PROTOCOL_VERSION);
+    o["bind"] = json::Array{json::Object{{"address", "::"}, {"family", "dual"}}};
+    resp.ok = true; resp.result = o; return resp;
+  };
+
   dispatch_["daemon.checkUpdate"] = [this]( const CoreRequest &,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;

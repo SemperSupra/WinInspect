@@ -114,6 +114,7 @@ public:
 
   virtual Capabilities get_capabilities() = 0;
   virtual json::Object get_env_metadata() = 0;
+  virtual InstanceIdentity get_instance_identity() = 0;
 
   // Auto-update
   virtual update::UpdateInfo check_for_update() = 0;

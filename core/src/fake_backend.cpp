@@ -380,6 +380,14 @@ json::Object FakeBackend::get_env_metadata() {
   return o;
 }
 
+InstanceIdentity FakeBackend::get_instance_identity() {
+  InstanceIdentity id;
+  id.uuid = "00000000-0000-4000-8000-000000000000";
+  id.name = "test";
+  id.hostname = "testhost";
+  return id;
+}
+
 update::UpdateInfo FakeBackend::check_for_update() {
   update::UpdateInfo info;
   info.current_version = std::string(WININSPECT_VERSION);

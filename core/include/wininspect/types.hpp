@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "tinyjson.hpp"
 
 namespace wininspect {
 
@@ -26,8 +27,8 @@ struct SessionID {
   bool empty() const { return val.empty(); }
 };
 
-inline constexpr std::string_view PROTOCOL_VERSION = "0.1.2";
-inline constexpr std::string_view WININSPECT_VERSION = "v0.1.2";
+inline constexpr std::string_view PROTOCOL_VERSION = "0.3.0";
+inline constexpr std::string_view WININSPECT_VERSION = "v0.3.0";
 
 struct Rect {
   long left{}, top{}, right{}, bottom{};
@@ -164,6 +165,18 @@ struct UIElementInfo {
   bool enabled = false;
   bool visible = false;
   std::vector<UIElementInfo> children;
+};
+
+// ── Instance Identity ─────────────────────────────────────────────────
+
+struct InstanceIdentity {
+  std::string uuid;           // RFC 4122 v4, auto-generated
+  std::string name;           // user-supplied --instance-name or hostname
+  std::string hostname;       // OS hostname
+  std::string ecdh_pubkey;    // base64 ECDH public key for mutual auth
+
+  json::Object to_json() const;
+  static InstanceIdentity from_json(const json::Object &o);
 };
 
 struct Capabilities {

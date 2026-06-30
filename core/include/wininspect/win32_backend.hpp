@@ -92,6 +92,7 @@ public:
   bool invoke_ui_element(hwnd_u64 hwnd, const std::string &automation_id) override;
 
   Capabilities get_capabilities() override;
+  InstanceIdentity get_instance_identity() override;
   json::Object get_env_metadata() override;
 
   update::UpdateInfo check_for_update() override;
