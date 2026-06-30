@@ -60,6 +60,15 @@ struct ServerState {
   // Method authorization sets
   std::set<std::string> allow_methods;  // empty = all allowed
   std::set<std::string> deny_methods;   // empty = none denied
+
+  // IP access control (CIDR notation)
+  std::vector<std::string> allow_cidrs;  // empty = all allowed
+  std::vector<std::string> deny_cidrs;   // empty = none denied
+
+  // Per-IP rate limiting (key = IP string)
+  int per_ip_rate_limit_ms = 0;
+  std::map<std::string, std::chrono::steady_clock::time_point> last_accept_per_ip;
+  std::mutex ip_rate_mu;
 };
 
 struct ClientSession {

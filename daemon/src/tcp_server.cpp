@@ -1,4 +1,5 @@
 #include "wininspect/base64.hpp"
+#include "wininspect/cidr.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
@@ -501,7 +502,10 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
   ioctlsocket(listen_sock, FIONBIO, &mode);
 
   while (running->load()) {
-    SOCKET client = accept(listen_sock, nullptr, nullptr);
+    struct sockaddr_storage client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+    SOCKET client = accept(listen_sock, (struct sockaddr *)&client_addr,
+                           &client_addr_len);
     if (client == INVALID_SOCKET) {
       if (WSAGetLastError() == WSAEWOULDBLOCK) {
         Sleep(100);
@@ -513,16 +517,49 @@ void TcpServer::start(std::atomic<bool> *running, bool bind_public,
     u_long m2 = 0;
     ioctlsocket(client, FIONBIO, &m2);
 
-    // Rate limiting: reject connections arriving within rate_limit_ms
-    if (rate_limit_ms > 0) {
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          now - state_->last_accept_time).count();
-      if (elapsed < rate_limit_ms) {
+    // Get client IP string for logging and access control
+    std::string client_ip = sockaddr_to_string(client_addr);
+
+    // Deny list check (checked first — explicit deny takes priority)
+    if (!state_->deny_cidrs.empty()) {
+      if (cidr_match_any(client_ip, state_->deny_cidrs)) {
+        LOG_DEBUG("Rejected connection from denied IP: " + client_ip);
         closesocket(client);
         continue;
       }
-      state_->last_accept_time = now;
+    }
+
+    // Allow list check (if non-empty, only matching IPs are accepted)
+    if (!state_->allow_cidrs.empty()) {
+      if (!cidr_match_any(client_ip, state_->allow_cidrs)) {
+        LOG_DEBUG("Rejected connection from non-allowed IP: " + client_ip);
+        closesocket(client);
+        continue;
+      }
+    }
+
+    // Per-IP rate limiting
+    if (state_->per_ip_rate_limit_ms > 0) {
+      auto now = std::chrono::steady_clock::now();
+      bool too_fast = false;
+      {
+        std::lock_guard<std::mutex> lk(state_->ip_rate_mu);
+        auto it = state_->last_accept_per_ip.find(client_ip);
+        if (it != state_->last_accept_per_ip.end()) {
+          auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+              now - it->second).count();
+          if (elapsed < state_->per_ip_rate_limit_ms) {
+            too_fast = true;
+          }
+        }
+        // Always update timestamp to prevent rapid retry flood
+        state_->last_accept_per_ip[client_ip] = now;
+      }
+      if (too_fast) {
+        LOG_DEBUG("Rate limited connection from " + client_ip);
+        closesocket(client);
+        continue;
+      }
     }
 
     {
