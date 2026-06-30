@@ -57,6 +57,7 @@ Milestone: v0.3.0 — Multi-Instance LAN & Remote Access
 ├── #54  Phase 2:  Network security (IP allow/deny, per-IP rate limiting)
 ├── #45  Phase 3a: Multicast discovery (mDNS/DNS-SD)
 ├── #46  Phase 3b: Rendezvous discovery (HTTP registry + heartbeat)
+├── #61  Phase 3c: Rendezvous admin (kick, ban, access tiers, metadata)
 ├── #47  Phase 4:  HTTP server + REST API
 ├── #48  Phase 5:  WebUI dashboard
 ├── #49  Phase 6:  Burst capture (screen.record)
