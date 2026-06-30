@@ -17,6 +17,7 @@
 #include "wininspect/fake_backend.hpp"
 #include "wininspect/win32_backend.hpp"
 #include "wininspect/util_win32.hpp"
+#include "wininspect/mdns.hpp"
 
 #include "tcp_server.hpp"
 #include "tray.hpp"
@@ -84,9 +85,11 @@ void handle_client(HANDLE hPipe, ServerState *st, IBackend *backend,
     pinned_sid.clear();
 
     try {
-      wininspectd::process_request(m.json, core, st, backend, session,
+      [[maybe_unused]] auto pr_ok = wininspectd::process_request(
+                      m.json, core, st, backend, session,
                       read_only, no_clipboard, require_auth, auth_keys_data,
                       resp, canonical, pinned_sid);
+      (void)pr_ok;
     } catch (...) {
       resp.ok = false;
       resp.error_code = "E_BAD_REQUEST";
@@ -362,12 +365,23 @@ int main(int argc, char **argv) {
     LOG_INFO("Loaded " + std::to_string(auth_keys_data.size()) + " bytes of authorized keys from " + auth_keys);
   }
 
-  // 1. Start discovery responder
+  // 1. Start discovery responder (UDP broadcast, existing)
   LOG_INFO("Starting Discovery responder...");
   std::thread disc_thread([&running, st = st.get(), tcp_port, backend = backend.get(), include_hostname]() {
     run_discovery_responder(&running, st, tcp_port, backend, include_hostname);
   });
   disc_thread.detach();
+
+  // 1b. Start mDNS responder (multicast DNS, standard)
+  LOG_INFO("Starting mDNS responder...");
+  std::thread mdns_thread([&running, tcp_port, backend = backend.get()]() {
+    char hostname_buf[256] = {};
+    gethostname(hostname_buf, sizeof(hostname_buf));
+    MdnsResponder mdns;
+    mdns.start(&running, "wininspect", tcp_port,
+               std::string(hostname_buf));
+  });
+  mdns_thread.detach();
 
   // 2. Start cleanup thread
   LOG_INFO("Starting Cleanup thread...");
