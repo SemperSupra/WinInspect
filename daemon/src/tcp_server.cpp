@@ -15,12 +15,21 @@
 #include <future>
 
 #include "tcp_server.hpp"
+#include "rendezvous_client.hpp"
 #include "wininspect/core.hpp"
 #include "wininspect/logger.hpp"
 
 #include "wininspect/crypto.hpp"
 
 using namespace wininspect;
+
+// Helper: extract optional string from JSON params
+static std::optional<std::string> get_str(const json::Object &o, const std::string &k) {
+  auto it = o.find(k);
+  if (it != o.end() && it->second.is_str())
+    return it->second.as_str();
+  return std::nullopt;
+}
 
 namespace wininspectd {
 
@@ -284,6 +293,116 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         resp.ok = true;
         resp.result = o;
         goto send_resp;
+      }
+
+      // ── Rendezvous fleet management ─────────────────────────────────
+      if (req.method == "rendezvous.list") {
+        std::lock_guard<std::mutex> lk(st->rendezvous_mu);
+        wininspect::json::Array arr;
+        for (auto &[url, d] : st->rendezvous_domains) {
+          wininspect::json::Object o;
+          o["url"] = d.url;
+          o["domain_uuid"] = d.domain_uuid;
+          o["domain_nickname"] = d.domain_nickname;
+          o["heartbeat_ok"] = d.heartbeat_ok;
+          o["active"] = d.active.load();
+          arr.push_back(o);
+        }
+        resp.ok = true; resp.result = arr; goto send_resp;
+      }
+
+      if (req.method == "rendezvous.join") {
+        auto url = get_str(req.params, "url");
+        auto key = get_str(req.params, "crypto_key");
+        auto nickname = get_str(req.params, "domain_nickname").value_or("");
+        if (!url || !key) {
+          resp.ok = false; resp.error_code = "E_MISSING_PARAM";
+          resp.error_message = "url and crypto_key required"; goto send_resp;
+        }
+
+        // Get hostname for registration
+        char hostname_buf[256] = {};
+        gethostname(hostname_buf, sizeof(hostname_buf));
+        std::string instance_uuid = "unknown";
+        try {
+          auto env = backend->get_env_metadata();
+          if (env.count("instance_uuid")) instance_uuid = env.at("instance_uuid").as_str();
+        } catch (...) {}
+
+        std::lock_guard<std::mutex> lk(st->rendezvous_mu);
+        if (st->rendezvous_domains.count(*url)) {
+          resp.ok = false; resp.error_code = "E_ALREADY_JOINED";
+          resp.error_message = "already registered with this rendezvous"; goto send_resp;
+        }
+
+        // Register — use port 0, rendezvous records source IP
+        auto port_str = get_str(req.params, "port").value_or("0");
+        int reg_port = std::stoi(port_str);
+        if (!rendezvous_register(*url, *key, instance_uuid, "", hostname_buf, reg_port)) {
+          resp.ok = false; resp.error_code = "E_REGISTER_FAILED";
+          resp.error_message = "failed to register with rendezvous server"; goto send_resp;
+        }
+
+        // Copy fields for heartbeat thread (capture by value to avoid dangling ref)
+        auto domain_url = *url;
+        auto domain_key = *key;
+        auto domain_uuid = instance_uuid;
+
+        auto &domain = st->rendezvous_domains[*url];
+        domain.url = *url;
+        domain.crypto_key = *key;
+        domain.domain_nickname = nickname;
+        domain.instance_uuid = instance_uuid;
+        domain.active = true;
+        domain.heartbeat_ok = true;
+
+        // Start heartbeat thread (copy fields, no reference to st)
+        domain.heartbeat_thread = std::thread([domain_url, domain_key, domain_uuid]() {
+          int hb_sec = 30;
+          std::atomic<bool> active{true};
+          while (active.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(hb_sec));
+            rendezvous_heartbeat(domain_url, domain_key, domain_uuid);
+          }
+          rendezvous_deregister(domain_url, domain_key, domain_uuid);
+        });
+        domain.heartbeat_thread.detach();
+
+        wininspect::json::Object o;
+        o["ok"] = true; o["url"] = *url;
+        resp.ok = true; resp.result = o; goto send_resp;
+      }
+
+      if (req.method == "rendezvous.leave") {
+        auto url = get_str(req.params, "url");
+        auto domain_uuid = get_str(req.params, "domain_uuid");
+        if (!url && !domain_uuid) {
+          resp.ok = false; resp.error_code = "E_MISSING_PARAM";
+          resp.error_message = "url or domain_uuid required"; goto send_resp;
+        }
+
+        std::lock_guard<std::mutex> lk(st->rendezvous_mu);
+        std::string key;
+        if (url && st->rendezvous_domains.count(*url)) key = *url;
+        else if (domain_uuid) {
+          for (auto &[u, d] : st->rendezvous_domains) {
+            if (d.domain_uuid == *domain_uuid) { key = u; break; }
+          }
+        }
+        if (key.empty()) {
+          resp.ok = false; resp.error_code = "E_NOT_FOUND";
+          resp.error_message = "not registered with this rendezvous"; goto send_resp;
+        }
+
+        auto &domain = st->rendezvous_domains[key];
+        domain.active = false;
+        // Wait briefly for heartbeat thread to complete deregister
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        st->rendezvous_domains.erase(key);
+
+        wininspect::json::Object o;
+        o["ok"] = true; o["url"] = key;
+        resp.ok = true; resp.result = o; goto send_resp;
       }
 
       // Block clipboard when --no-clipboard is set

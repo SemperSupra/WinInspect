@@ -60,6 +60,22 @@ struct ServerState {
   // Method authorization sets
   std::set<std::string> allow_methods;  // empty = all allowed
   std::set<std::string> deny_methods;   // empty = none denied
+
+  // ── Rendezvous Domain Management ─────────────────────────────────────
+  struct RendezvousDomain {
+    std::string url;
+    std::string crypto_key;
+    std::string domain_uuid;
+    std::string domain_nickname;
+    std::string instance_uuid; // our daemon UUID
+    int heartbeat_sec = 30;
+    bool heartbeat_ok = false;
+    int64_t last_heartbeat_time = 0;
+    std::atomic<bool> active{false};
+    std::thread heartbeat_thread;
+  };
+  std::map<std::string, RendezvousDomain> rendezvous_domains; // keyed by url
+  std::mutex rendezvous_mu;
 };
 
 struct ClientSession {

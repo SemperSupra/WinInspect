@@ -268,7 +268,10 @@ static int usage() {
             << "  capabilities\n"
             << "  check-update\n"
             << "  update [--type portable|installer]\n"
-            << "  config --key <path>\n";
+            << "  config --key <path>\n"
+            << "  rendezvous list\n"
+            << "  rendezvous join <url> <key> [nickname]\n"
+            << "  rendezvous leave <url-or-uuid>\n";
   return 2;
 }
 
@@ -829,6 +832,30 @@ int main(int argc, char **argv) {
       }
     }
     return send_and_print("daemon.downloadUpdate");
+  }
+
+  if (cmd == "rendezvous") {
+    if (args.size() < 2) return usage();
+    std::string sub = args[1];
+    if (sub == "list") {
+      return send_and_print("rendezvous.list");
+    }
+    if (sub == "join") {
+      if (args.size() < 4) return usage();
+      params["url"] = args[2];
+      params["crypto_key"] = args[3];
+      if (args.size() > 4) params["domain_nickname"] = args[4];
+      return send_and_print("rendezvous.join");
+    }
+    if (sub == "leave") {
+      if (args.size() < 3) return usage();
+      // Check if it looks like a URL (contains ://) or a UUID
+      std::string val = args[2];
+      if (val.find("://") != std::string::npos) params["url"] = val;
+      else params["domain_uuid"] = val;
+      return send_and_print("rendezvous.leave");
+    }
+    return usage();
   }
 
   if (cmd == "config") {
