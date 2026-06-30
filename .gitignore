@@ -21,7 +21,4 @@ formal/tla/*_TTrace_*.tla
 formal/tla/*_TTrace_*.bin
 formal/tla/states/
 formal/tla/*.states
-build_msvc/
-bld/
-build*/
-build/
+REPLACED
