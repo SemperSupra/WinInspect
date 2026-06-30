@@ -26,6 +26,7 @@ add_library(wininspect_core
   core/src/update.cpp
   core/src/network_config.cpp
   core/src/cidr.cpp
+  core/src/mdns.cpp
 )
 target_include_directories(wininspect_core PUBLIC
   core/include
