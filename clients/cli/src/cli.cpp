@@ -268,7 +268,10 @@ static int usage() {
             << "  capabilities\n"
             << "  check-update\n"
             << "  update [--type portable|installer]\n"
-            << "  config --key <path>\n";
+            << "  config --key <path>\n"
+            << "  cert generate-ca\n"
+            << "  cert sign <uuid> <name> <hostname> <pubkey> [--ca-key <key>] [--ttl <days>]\n"
+            << "  cert verify <cert-file> <ca-key>\n";
   return 2;
 }
 

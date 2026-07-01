@@ -1,0 +1,10 @@
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/wininspect_core.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/wininspectd.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/wininspect.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/wininspect-gui.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/test_core.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/test_gui_viewmodel.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/test_discovery.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/test.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/edit_cache.dir
+C:/Users/Mark/Projects/WinInspect/bld/CMakeFiles/rebuild_cache.dir

@@ -24,6 +24,7 @@ add_library(wininspect_core
   core/src/crypto.cpp
   core/src/logger.cpp
   core/src/update.cpp
+  core/src/cert.cpp
 )
 target_include_directories(wininspect_core PUBLIC
   core/include
