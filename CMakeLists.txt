@@ -74,6 +74,7 @@ if (WININSPECT_BUILD_TESTS)
     core/tests/test_uia.cpp
     core/tests/test_contract_methods.cpp
     core/tests/test_properties.cpp
+    core/tests/test_fuzz.cpp
   )
   target_include_directories(test_core PRIVATE core/include third_party third_party/rapidcheck)
   target_link_libraries(test_core PRIVATE wininspect_core)
