@@ -37,6 +37,7 @@ public:
                                      const Snapshot *old_snapshot = nullptr);
 
   // Enable or disable admin-only methods (daemon.logs)
+  IBackend *get_backend() const { return backend_; }
   void set_admin_logs_enabled(bool v) { admin_logs_enabled_ = v; }
 
 private:

@@ -291,6 +291,20 @@ DOCTEST_TEST_CASE("contract: process.execute") {
   DOCTEST_REQUIRE(r.ok);
 }
 
+// ── Control awareness ───────────────────────────────────────────────
+
+DOCTEST_TEST_CASE("contract: control.status") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p;
+  CoreRequest req{"t99a","control.status",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  // control methods are intercepted in TCP server, not core.
+  // This tests that the method resolves (will get error in core).
+  // Actual control tests require the TCP server integration.
+  DOCTEST_REQUIRE(r.ok == false); // not handled by core
+}
+
 // --- file methods ---
 
 DOCTEST_TEST_CASE("contract: file.getInfo") {

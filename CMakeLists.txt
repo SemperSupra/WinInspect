@@ -27,6 +27,7 @@ add_library(wininspect_core
   core/src/network_config.cpp
   core/src/cidr.cpp
   core/src/mdns.cpp
+  core/src/cert.cpp
 )
 target_include_directories(wininspect_core PUBLIC
   core/include
@@ -48,17 +49,13 @@ if (WIN32)
     daemon/src/pipe_win32.cpp
     daemon/src/tray.cpp
     daemon/src/tcp_server.cpp
+    daemon/src/control_manager.cpp
     daemon/src/rendezvous_http.cpp
+    daemon/src/http_server.cpp
     daemon/src/network_config.cpp
   )
   target_include_directories(wininspectd PRIVATE core/include third_party daemon/src daemon/include)
   target_link_libraries(wininspectd PRIVATE wininspect_core ws2_32)
-
-  add_executable(wininspect-rendezvous
-    daemon/src/rendezvous_server.cpp
-  )
-  target_include_directories(wininspect-rendezvous PRIVATE core/include third_party)
-  target_link_libraries(wininspect-rendezvous PRIVATE wininspect_core ws2_32)
 
   add_executable(wininspect
     clients/cli/src/cli.cpp
@@ -85,6 +82,7 @@ if (WININSPECT_BUILD_TESTS)
     core/tests/test_uia.cpp
     core/tests/test_contract_methods.cpp
     core/tests/test_properties.cpp
+    core/tests/test_fuzz.cpp
   )
   target_include_directories(test_core PRIVATE core/include third_party third_party/rapidcheck)
   target_link_libraries(test_core PRIVATE wininspect_core)

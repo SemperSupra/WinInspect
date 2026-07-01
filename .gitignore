@@ -22,3 +22,4 @@ formal/tla/*_TTrace_*.bin
 formal/tla/states/
 formal/tla/*.states
 REPLACED
+bld/

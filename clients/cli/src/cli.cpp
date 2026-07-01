@@ -116,12 +116,7 @@ static bool perform_auth(Conn &conn) {
   if (!v.is_obj() || v.as_obj().at("type").as_str() != "hello")
     return true; // No auth required (or old daemon)
 
-  // Hello with no nonce means no auth required
-  auto obj = v.as_obj();
-  if (obj.find("nonce") == obj.end())
-    return true;
-
-  std::string nonce_b64 = obj.at("nonce").as_str();
+  std::string nonce_b64 = v.as_obj().at("nonce").as_str();
   std::string key_path = load_key_path();
   if (key_path.empty()) {
     std::cerr << "Daemon requires authentication. Set key with: wininspect "
@@ -273,7 +268,12 @@ static int usage() {
             << "  capabilities\n"
             << "  check-update\n"
             << "  update [--type portable|installer]\n"
-            << "  config --key <path>\n";
+            << "  config --key <path>\n"
+            << "  control\n"
+            << "  control take [--controller human|agent|script] [--id <id>]\n"
+            << "  control release\n"
+            << "  control mode <auto|hybrid|human>\n"
+            << "  control audit-log\n";
   return 2;
 }
 
@@ -817,12 +817,24 @@ int main(int argc, char **argv) {
     return send_and_print("daemon.health");
   }
 
-  if (cmd == "identity") {
-    return send_and_print("daemon.identity");
-  }
-
   if (cmd == "capabilities") {
     return send_and_print("daemon.capabilities");
+  }
+
+  if (cmd == "control") {
+    if (args.size() < 2) return send_and_print("control.status");
+    std::string sub = args[1];
+    if (sub == "take") {
+      for (size_t i = 2; i < args.size(); i++) {
+        if (args[i] == "--controller" && i+1 < args.size()) params["controller"] = args[++i];
+        if (args[i] == "--id" && i+1 < args.size()) params["id"] = args[++i];
+      }
+      return send_and_print("control.take");
+    }
+    if (sub == "release") return send_and_print("control.release");
+    if (sub == "mode" && args.size() > 2) { params["mode"] = args[2]; return send_and_print("control.setMode"); }
+    if (sub == "audit-log") return send_and_print("control.auditLog");
+    return usage();
   }
 
   if (cmd == "check-update") {
