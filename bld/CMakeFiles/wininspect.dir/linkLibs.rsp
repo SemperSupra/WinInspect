@@ -1,1 +1,0 @@
- libwininspect_core.a -lws2_32 -lole32 -loleaut32 -luuid -lbcrypt -lwinhttp -ldxgi -ld3d11 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 
