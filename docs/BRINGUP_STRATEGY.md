@@ -53,14 +53,22 @@ contains the full checklist for that phase.
 
 ```
 Milestone: v0.3.0 — Multi-Instance LAN & Remote Access
-├── #50  Phase 1: Instance identity (--instance-name, --include-hostname, UUID)
-├── #51  Phase 2: Dynamic port acquisition (--port-file, bind-zero)
-├── #52  Phase 3a: Multicast discovery (mDNS/DNS-SD)
-├── #53  Phase 3b: Rendezvous discovery (HTTP registry + heartbeat)
-├── #54  Phase 4: HTTP server + REST API
-├── #55  Phase 5: WebUI dashboard
-├── #56  Phase 6: Burst capture (screen.record)
-└── #57  Phase 7: Integration smoke tests
+├── #43  Phase 1:  Networking foundation (identity, dual-stack, config, rendezvous)
+├── #54  Phase 2:  Network security (IP allow/deny, per-IP rate limiting)
+├── #45  Phase 3a: Multicast discovery (mDNS/DNS-SD)
+├── #46  Phase 3b: Rendezvous discovery (HTTP registry + heartbeat)
+├── #61  Phase 3c: Rendezvous admin (kick, ban, access tiers, metadata)
+├── #47  Phase 4:  HTTP server + REST API
+├── #48  Phase 5:  WebUI dashboard
+├── #49  Phase 6:  Burst capture (screen.record)
+├── #50  Phase 7:  Integration smoke tests
+├── #51  Phase 8:  Mutual authentication (daemon → client mTLS)
+├── #55  Phase 9:  TLS 1.3 transport
+├── #56  Phase 10: WebSocket event stream
+├── #57  Phase 11: Unix domain sockets (Linux/Wine)
+├── #58  Phase 12: Tailscale mesh VPN integration
+├── #59  Phase 13: SOCKS5 proxy support
+└── #60  Phase 14: Windows Registry config backend (deferred)
 ```
 
 ---
@@ -773,18 +781,27 @@ Phase 7 (Smoke tests) → needs all phases complete
 ## Quick-Reference Table
 
 ```
-┌─────────┬──────────────────────────────┬──────────┬──────────┬───────────┐
-│ Phase   │ Feature                      │ Branches │ Issues   │ Effort    │
-├─────────┼──────────────────────────────┼──────────┼──────────┼───────────┤
-│ 1       │ Instance identity            │ 1        │ 1        │ 1-2 days  │
-│ 2       │ Dynamic port acquisition     │ 1        │ 1        │ 1 day     │
-│ 3a      │ Multicast discovery (mDNS)   │ 1        │ 1        │ 3-5 days  │
-│ 3b      │ Rendezvous discovery         │ 1        │ 1        │ 3-5 days  │
-│ 4       │ HTTP server + REST API       │ 1        │ 1        │ 5-10 days │
-│ 5       │ WebUI dashboard              │ 1        │ 1        │ 3-5 days  │
-│ 6       │ Burst capture (screen.record)│ 1        │ 1        │ 2-3 days  │
-│ 7       │ Integration smoke tests      │ 1        │ 1        │ 2-3 days  │
-├─────────┼──────────────────────────────┼──────────┼──────────┼───────────┤
-│         │ Total                        │ 8        │ 8        │ 20-34 days│
-└─────────┴──────────────────────────────┴──────────┴──────────┴───────────┘
+┌─────────┬──────────────────────────────────────┬──────────┬──────────┬───────────┐
+│ Phase   │ Feature                              │ Branches │ Issues   │ Effort    │
+├─────────┼──────────────────────────────────────┼──────────┼──────────┼───────────┤
+│ 1       │ Networking foundation (identity,      │ 1        │ 1        │ 2-3 days  │
+│         │   dual-stack, config, rendezvous)     │          │          │           │
+│ 2       │ Network security (IP allow/deny,      │ 1        │ 1        │ 2-3 days  │
+│         │   per-IP rate limiting)               │          │          │           │
+│ 3a      │ Multicast discovery (mDNS)            │ 1        │ 1        │ 3-5 days  │
+│ 3b      │ Rendezvous discovery (HTTP registry)  │ 1        │ 1        │ 3-5 days  │
+│ 4       │ HTTP server + REST API                │ 1        │ 1        │ 5-10 days │
+│ 5       │ WebUI dashboard                       │ 1        │ 1        │ 3-5 days  │
+│ 6       │ Burst capture (screen.record)         │ 1        │ 1        │ 2-3 days  │
+│ 7       │ Integration smoke tests               │ 1        │ 1        │ 2-3 days  │
+│ 8       │ Mutual authentication (mTLS)          │ 1        │ 1        │ 3-5 days  │
+│ 9       │ TLS 1.3 transport                     │ 1        │ 1        │ 5-10 days │
+│ 10      │ WebSocket event stream                │ 1        │ 1        │ 2-3 days  │
+│ 11      │ Unix domain sockets (Linux/Wine)      │ 1        │ 1        │ 2-3 days  │
+│ 12      │ Tailscale mesh VPN integration        │ 1        │ 1        │ 3-5 days  │
+│ 13      │ SOCKS5 proxy support                  │ 1        │ 1        │ 2-3 days  │
+│ 14      │ Registry config backend (optional)    │ 1        │ 1        │ 2-3 days  │
+├─────────┼──────────────────────────────────────┼──────────┼──────────┼───────────┤
+│         │ Total                                │ 16       │ 16       │ 45-70 days│
+└─────────┴──────────────────────────────────────┴──────────┴──────────┴───────────┘
 ```

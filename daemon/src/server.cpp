@@ -21,6 +21,8 @@
 #include "tcp_server.hpp"
 #include "tray.hpp"
 #include "request_handler.hpp"
+#include "network_config.hpp"
+#include "rendezvous_client.hpp"
 
 #include <list>
 #include <set>
@@ -153,7 +155,7 @@ void run_server(std::atomic<bool> *running, ServerState *st,
   }
 }
 
-void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend, bool include_hostname) {
+void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tcp_port, IBackend *backend, const NetworkConfig &cfg) {
   SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (s == INVALID_SOCKET) return;
 
@@ -191,7 +193,7 @@ void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tc
         size_t last_bs = full_pipe.rfind('\\');
         resp["pipe_name"] = (last_bs != std::string::npos) ? full_pipe.substr(last_bs + 1) : full_pipe;
 
-        if (include_hostname) {
+        if (cfg.include_hostname) {
           char hostname_buf[256];
           gethostname(hostname_buf, sizeof(hostname_buf));
           resp["hostname"] = std::string(hostname_buf);
@@ -209,33 +211,50 @@ void run_discovery_responder(std::atomic<bool> *running, ServerState *st, int tc
 
 int main(int argc, char **argv) {
   bool headless = false;
-  bool bind_public = false;
   bool read_only = false;
-  bool include_hostname = false;
   bool admin_logs = false;
   bool no_clipboard = false;
-  int rate_limit_ms = 0;
+  bool no_config = false;
+  std::string config_path;
   std::string auth_keys;
   std::string allow_str, deny_str;
   bool require_auth = false;
-  int tcp_port = 1985;
   int max_snaps = 1000;
   int max_conns = 32;
   int session_ttl = 3600;
-  int req_timeout = 5000;
   int poll_interval = 100;
   int max_wait = 30000;
-  int discovery_port = 1986;
   int max_mem_read = 1024 * 1024;
-  int uia_depth = -1; // -1 means use backend default
+  int uia_depth = -1;
   int service_timeout = 30;
   int max_event_log = 1000;
 
+  // Parse config path early (others handled by apply_cli_overrides)
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--config" && i + 1 < argc)
+      config_path = argv[++i];
+    if (std::string(argv[i]) == "--no-config")
+      no_config = true;
+  }
+
+  // Load config (or use defaults)
+  NetworkConfig net_cfg;
+  if (!no_config) {
+    if (config_path.empty()) config_path = default_config_path();
+    net_cfg = load_config(config_path);
+  }
+
+  // Ensure identity exists
+  auto id = load_or_create_identity(default_config_dir());
+  net_cfg.identity = id;
+
+  // Apply CLI overrides (flags override config file)
+  net_cfg = wininspectd::apply_cli_overrides(net_cfg, argc, argv);
+
+  // Extract remaining flags not covered by apply_cli_overrides
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--headless")
       headless = true;
-    if (std::string(argv[i]) == "--public")
-      bind_public = true;
     if (std::string(argv[i]) == "--read-only")
       read_only = true;
     if (std::string(argv[i]) == "--allow" && i + 1 < argc)
@@ -244,17 +263,12 @@ int main(int argc, char **argv) {
       deny_str = argv[++i];
     if (std::string(argv[i]) == "--require-auth")
       require_auth = true;
-    if (std::string(argv[i]) == "--include-hostname")
-      include_hostname = true;
     if (std::string(argv[i]) == "--admin-logs")
       admin_logs = true;
     if (std::string(argv[i]) == "--no-clipboard")
       no_clipboard = true;
     if (std::string(argv[i]) == "--auth-keys" && i + 1 < argc) {
       auth_keys = argv[++i];
-    }
-    if (std::string(argv[i]) == "--port" && i + 1 < argc) {
-      tcp_port = std::stoi(argv[++i]);
     }
     if (std::string(argv[i]) == "--max-snapshots" && i + 1 < argc) {
       max_snaps = std::stoi(argv[++i]);
@@ -264,9 +278,6 @@ int main(int argc, char **argv) {
     }
     if (std::string(argv[i]) == "--session-ttl" && i + 1 < argc) {
       session_ttl = std::stoi(argv[++i]);
-    }
-    if (std::string(argv[i]) == "--request-timeout" && i + 1 < argc) {
-      req_timeout = std::stoi(argv[++i]);
     }
     if (std::string(argv[i]) == "--poll-interval" && i + 1 < argc) {
       poll_interval = std::stoi(argv[++i]);
@@ -278,9 +289,6 @@ int main(int argc, char **argv) {
       std::string name = argv[++i];
       std::wstring wname(name.begin(), name.end());
       g_pipe_name = L"\\\\.\\pipe\\" + wname;
-    }
-    if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
-      discovery_port = std::stoi(argv[++i]);
     }
     if (std::string(argv[i]) == "--max-mem-read" && i + 1 < argc) {
       max_mem_read = std::stoi(argv[++i]);
@@ -308,11 +316,12 @@ int main(int argc, char **argv) {
   st->max_snapshots = (size_t)max_snaps;
   st->max_connections = max_conns;
   st->session_ttl_sec = session_ttl;
-  st->request_timeout_ms = req_timeout;
+  st->request_timeout_ms = net_cfg.request_timeout_ms;
   st->poll_interval_ms = poll_interval;
   st->max_wait_ms = max_wait;
-  st->discovery_port = discovery_port;
-  st->rate_limit_ms = rate_limit_ms;
+  st->discovery_port = net_cfg.discovery_port;
+  st->rate_limit_ms = net_cfg.rate_limit_ms;
+  st->net_config = net_cfg;
 
   // Parse method authorization lists
   if (!allow_str.empty()) {
@@ -337,7 +346,7 @@ int main(int argc, char **argv) {
   st->max_event_log = (size_t)max_event_log;
 
   auto backend = std::make_unique<Win32Backend>();
-  
+
   // Propagate config to backend
   json::Object bcfg;
   bcfg["max_mem_read"] = (double)st->max_mem_read_size;
@@ -349,6 +358,7 @@ int main(int argc, char **argv) {
 
   LOG_INFO("WinInspect Daemon starting up...");
   auto env = backend->get_env_metadata();
+  LOG_INFO("Instance: " + net_cfg.identity.uuid + " (" + net_cfg.identity.name + ")");
   LOG_INFO("Environment: " + env.at("os").as_str() + " (" + env.at("arch").as_str() + ")");
   if (env.count("wine_version")) LOG_INFO("Wine Version: " + env.at("wine_version").as_str());
 
@@ -364,8 +374,8 @@ int main(int argc, char **argv) {
 
   // 1. Start discovery responder
   LOG_INFO("Starting Discovery responder...");
-  std::thread disc_thread([&running, st = st.get(), tcp_port, backend = backend.get(), include_hostname]() {
-    run_discovery_responder(&running, st, tcp_port, backend, include_hostname);
+  std::thread disc_thread([&running, st = st.get(), backend = backend.get(), &net_cfg]() {
+    run_discovery_responder(&running, st, net_cfg.port, backend, net_cfg);
   });
   disc_thread.detach();
 
@@ -387,9 +397,41 @@ int main(int argc, char **argv) {
   });
   pipe_thread.detach();
 
-  // 4. Run TCP server (BLOCKING MAIN THREAD)
+  // 4. Auto-update checker (background)
+  if (net_cfg.enable_update_check) {
+    LOG_INFO("Auto-update checker enabled (every " + std::to_string(net_cfg.update_check_interval_hours) + "h)");
+    std::thread update_thread([&running, backend = backend.get(), &net_cfg]() {
+      while (running.load()) {
+        auto info = backend->check_for_update();
+        if (info.update_available) {
+          LOG_INFO("Update available: " + info.latest_version + " (current: " + info.current_version + ")");
+        }
+        Sleep(net_cfg.update_check_interval_hours * 3600 * 1000);
+      }
+    });
+    update_thread.detach();
+  }
+
+  // 5. Rendezvous registration + heartbeat
+  for (auto &rv_cfg : net_cfg.rendezvous) {
+    auto rv_client = wininspectd::create_rendezvous_client(rv_cfg);
+    if (rv_client) {
+      if (rv_client->register_instance(net_cfg.identity, "", net_cfg.port)) {
+        LOG_INFO("Registered with rendezvous: " + rv_cfg.url);
+        std::thread rv_thread([&running, c = std::move(rv_client)]() {
+          while (running.load()) {
+            Sleep(c->heartbeat() ? 30000 : 10000);
+          }
+          c->deregister();
+        });
+        rv_thread.detach();
+      }
+    }
+  }
+
+  // 6. Run TCP server (BLOCKING MAIN THREAD)
   LOG_INFO("Starting TCP Server (blocking main thread)...");
-  auto tcp = std::make_shared<wininspectd::TcpServer>(tcp_port, st.get(), backend.get());
+  auto tcp = std::make_shared<wininspectd::TcpServer>(st.get(), backend.get());
 
   if (!headless) {
     wininspectd::TrayManager tray([&]() {
@@ -399,10 +441,9 @@ int main(int argc, char **argv) {
       exit(0);
     });
     if (tray.init(GetModuleHandle(nullptr))) {
-      // Create a background thread for TCP if tray is running
-      std::thread([&, tcp, bind_public, read_only]() {
+      std::thread([&, tcp, &auth_keys_data, read_only]() {
         try {
-          tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, rate_limit_ms);
+          tcp->start(&running, net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
         } catch (...) {}
       }).detach();
       tray.run();
@@ -410,7 +451,7 @@ int main(int argc, char **argv) {
   }
 
   try {
-    tcp->start(&running, bind_public, auth_keys_data, read_only, admin_logs, no_clipboard, rate_limit_ms);
+    tcp->start(&running, net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
   } catch (...) {
     LOG_ERROR("TCP Server fatal error.");
   }

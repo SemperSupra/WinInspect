@@ -24,6 +24,7 @@ add_library(wininspect_core
   core/src/crypto.cpp
   core/src/logger.cpp
   core/src/update.cpp
+  core/src/network_config.cpp
 )
 target_include_directories(wininspect_core PUBLIC
   core/include
@@ -33,7 +34,7 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
-  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp dxgi d3d11)
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp dxgi d3d11 ws2_32)
   if(NOT MSVC)
     target_link_options(wininspect_core PUBLIC -static-libgcc -static-libstdc++)
   endif()
@@ -45,8 +46,10 @@ if (WIN32)
     daemon/src/pipe_win32.cpp
     daemon/src/tray.cpp
     daemon/src/tcp_server.cpp
+    daemon/src/rendezvous_http.cpp
+    daemon/src/network_config.cpp
   )
-  target_include_directories(wininspectd PRIVATE core/include third_party daemon/src)
+  target_include_directories(wininspectd PRIVATE core/include third_party daemon/src daemon/include)
   target_link_libraries(wininspectd PRIVATE wininspect_core ws2_32)
 
   add_executable(wininspect

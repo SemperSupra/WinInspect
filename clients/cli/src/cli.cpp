@@ -116,7 +116,12 @@ static bool perform_auth(Conn &conn) {
   if (!v.is_obj() || v.as_obj().at("type").as_str() != "hello")
     return true; // No auth required (or old daemon)
 
-  std::string nonce_b64 = v.as_obj().at("nonce").as_str();
+  // Hello with no nonce means no auth required
+  auto obj = v.as_obj();
+  if (obj.find("nonce") == obj.end())
+    return true;
+
+  std::string nonce_b64 = obj.at("nonce").as_str();
   std::string key_path = load_key_path();
   if (key_path.empty()) {
     std::cerr << "Daemon requires authentication. Set key with: wininspect "
@@ -810,6 +815,10 @@ int main(int argc, char **argv) {
 
   if (cmd == "health") {
     return send_and_print("daemon.health");
+  }
+
+  if (cmd == "identity") {
+    return send_and_print("daemon.identity");
   }
 
   if (cmd == "capabilities") {

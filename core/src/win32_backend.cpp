@@ -1,4 +1,5 @@
 #include "wininspect/base64.hpp"
+#include "wininspect/network_config.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Mark E. DeYoung
 
@@ -1745,6 +1746,16 @@ json::Object Win32Backend::get_env_metadata() {
   return o;
 }
 
+InstanceIdentity Win32Backend::get_instance_identity() {
+  // Load from config file on first call, cache for subsequent
+  static InstanceIdentity cached_id = []() {
+    auto cfg_dir = wininspect::default_config_dir();
+    auto id = wininspect::load_or_create_identity(cfg_dir);
+    return id;
+  }();
+  return cached_id;
+}
+
 std::vector<Event> Win32Backend::poll_events(const Snapshot &old_snap,
                                              const Snapshot &new_snap) {
   std::vector<Event> out;
@@ -1814,6 +1825,17 @@ json::Object Win32Backend::get_env_metadata() {
   json::Object o;
   o["os"] = "unknown";
   return o;
+}
+
+InstanceIdentity Win32Backend::get_instance_identity() {
+  // Load from config file on first call, cache for subsequent
+  static InstanceIdentity cached_id = []() {
+    auto cfg_dir = wininspect::default_config_dir();
+    auto id = wininspect::load_or_create_identity(cfg_dir);
+    // Override name from CLI flag if set
+    return id;
+  }();
+  return cached_id;
 }
 
 update::UpdateInfo Win32Backend::check_for_update() {
