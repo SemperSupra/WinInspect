@@ -20,6 +20,47 @@
 #include "wininspect/core.hpp"
 #include "wininspect/logger.hpp"
 #include "wininspect/tinyjson.hpp"
+#include <fstream>
+
+// Embedded WebUI dashboard (served at /dashboard)
+static const char *DASHBOARD_HTML = R"raw(<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>WinInspect Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,sans-serif}
+body{background:#1a1a2e;color:#e0e0e0;padding:20px}
+h1{color:#00d4aa;margin-bottom:20px;font-size:24px}
+h2{color:#00d4aa;margin:20px 0 10px;font-size:18px}
+.card{background:#16213e;border-radius:8px;padding:15px;margin-bottom:15px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+label{display:block;margin:8px 0 4px;color:#888;font-size:12px}
+input,select,button{width:100%;padding:8px;border:1px solid #0f3460;border-radius:4px;background:#0f3460;color:#e0e0e0;font-size:14px}
+button{background:#00d4aa;color:#1a1a2e;font-weight:bold;cursor:pointer;margin-top:8px}
+button:hover{background:#00f5c0}
+pre{background:#0f3460;padding:10px;border-radius:4px;overflow:auto;font-size:12px;max-height:300px}
+img{max-width:100%;border-radius:4px}
+.row{display:flex;gap:8px}.row input{flex:1}.row button{flex:0;width:auto;padding:8px 16px}
+</style></head><body>
+<h1>WinInspect Dashboard</h1>
+<div class=grid><div>
+<div class=card><h2>Connection</h2><label>Daemon URL</label><div class=row><input id=url value=http://localhost:8088><button onclick=connect()>Connect</button></div><div id=status style=margin-top:8px;color:#888>Disconnected</div></div>
+<div class=card><h2>Identity</h2><pre id=identity></pre></div></div><div>
+<div class=card><h2>Actions</h2>
+<label>Click X,Y</label><div class=row><input id=cx placeholder=X value=500><input id=cy placeholder=Y value=500><button onclick=doClick()>Click</button></div>
+<label>Type text</label><div class=row><input id=txt placeholder=text><button onclick=doType()>Type</button></div>
+<label>Hotkey</label><div class=row><input id=hk placeholder="Ctrl+C"><button onclick=doHotkey()>Send</button></div>
+</div></div></div>
+<div class=card><h2>Screen</h2><button onclick=capture()>Capture</button><img id=ss style=display:none;margin-top:10px></div>
+<div class=card><h2>Windows</h2><button onclick=listWin()>Refresh</button><pre id=wlist></pre></div>
+<script>
+let BASE='http://localhost:8088';
+async function api(p,m,b){let o={method:m||'GET',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return(await fetch(BASE+p,o)).json()}
+async function connect(){BASE=document.getElementById('url').value.replace(/\/+$/,'');document.getElementById('status').textContent='Connecting...';try{let h=await api('/api/v1/health');let i=await api('/api/v1/identity');document.getElementById('status').textContent='Connected '+(h.result?.os||'');document.getElementById('identity').textContent=JSON.stringify(i.result||i,null,2)}catch(e){document.getElementById('status').textContent='Error: '+e.message}}
+async function capture(){try{let r=await api('/api/v1/capture','POST',{left:0,top:0,right:1920,bottom:1080});let d=r.result?.data_b64;if(d){document.getElementById('ss').src='data:image/bmp;base64,'+d;document.getElementById('ss').style.display='block'}}catch(e){alert(e.message)}}
+async function doClick(){await api('/api/v1/click','POST',{x:+document.getElementById('cx').value,y:+document.getElementById('cy').value})}
+async function doType(){let t=document.getElementById('txt').value;if(t)await api('/api/v1/type','POST',{text:t})}
+async function doHotkey(){let k=document.getElementById('hk').value;if(k)await api('/api/v1/hotkey','POST',{keys:k})}
+async function listWin(){let r=await api('/api/v1/windows');document.getElementById('wlist').textContent=JSON.stringify(r.result||r,null,2)}
+</script></body></html>)raw";
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -211,11 +252,23 @@ void run_http_server(std::atomic<bool> *running, int port,
       if (req.method == rt.method && req.path == rt.path) { matched = &rt; break; }
     }
 
+    // Serve dashboard UI (embedded HTML)
+    if (req.path == "/dashboard") {
+      resp.content_type = "text/html; charset=utf-8";
+      resp.body = DASHBOARD_HTML;
+      goto send_it;
+    }
+    // Redirect / to /dashboard
+    if (req.path == "/") {
+      resp.code = 301; resp.status = "Moved";
+      resp.body = "<html><body>Redirecting to <a href='/dashboard'>dashboard</a>...</body></html>";
+      resp.content_type = "text/html";
+      goto send_it;
+    }
+
     if (!matched) {
       resp.code = 404; resp.status = "Not Found"; resp.body = R"({"error":"not found"})";
-      std::string out = build_response(resp);
-      send(c, out.data(), (int)out.size(), 0);
-      closesocket(c); continue;
+      goto send_it;
     }
 
     // Dispatch to core engine
@@ -239,6 +292,7 @@ void run_http_server(std::atomic<bool> *running, int port,
       resp.body = json::dumps(err);
     }
 
+  send_it:
     std::string out = build_response(resp);
     send(c, out.data(), (int)out.size(), 0);
     closesocket(c);

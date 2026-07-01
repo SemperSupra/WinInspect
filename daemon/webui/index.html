@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>WinInspect Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, sans-serif; }
+body { background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+h1 { color: #00d4aa; margin-bottom: 20px; font-size: 24px; }
+h2 { color: #00d4aa; margin: 20px 0 10px; font-size: 18px; }
+.card { background: #16213e; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+label { display: block; margin: 8px 0 4px; color: #888; font-size: 12px; }
+input, select, button { width: 100%; padding: 8px; border: 1px solid #0f3460; border-radius: 4px;
+  background: #0f3460; color: #e0e0e0; font-size: 14px; }
+button { background: #00d4aa; color: #1a1a2e; font-weight: bold; cursor: pointer; margin-top: 8px; }
+button:hover { background: #00f5c0; }
+pre { background: #0f3460; padding: 10px; border-radius: 4px; overflow: auto; font-size: 12px; max-height: 300px; }
+img { max-width: 100%; border-radius: 4px; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; }
+.row button { flex: 0; width: auto; padding: 8px 16px; }
+</style></head>
+<body>
+<h1>🔍 WinInspect</h1>
+<div class="grid">
+<div>
+<div class="card"><h2>Connection</h2>
+<label>Daemon URL</label><div class="row"><input id="url" value="http://localhost:8088"><button onclick="connect()">Connect</button></div>
+<div id="status" style="margin-top:8px;color:#888">Disconnected</div>
+</div>
+<div class="card"><h2>Identity</h2><pre id="identity">—</pre></div>
+</div>
+<div>
+<div class="card"><h2>Actions</h2>
+<label>Click X, Y</label><div class="row"><input id="cx" placeholder="X" value="500"><input id="cy" placeholder="Y" value="500"><button onclick="doClick()">Click</button></div>
+<label>Type text</label><div class="row"><input id="txt" placeholder="text"><button onclick="doType()">Type</button></div>
+<label>Hotkey</label><div class="row"><input id="hk" placeholder="Ctrl+C"><button onclick="doHotkey()">Send</button></div>
+</div>
+</div>
+</div>
+<div class="card"><h2>Screen Capture</h2>
+<button onclick="capture()">Capture</button>
+<img id="screenshot" style="display:none;margin-top:10px">
+</div>
+<div class="card"><h2>Windows</h2><button onclick="listWindows()">Refresh</button><pre id="windows">—</pre></div>
+
+<script>
+let BASE = 'http://localhost:8088';
+function id(v) { return document.getElementById(v); }
+
+async function api(path, method='GET', body=null) {
+  let opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  let r = await fetch(BASE + path, opts);
+  return r.json();
+}
+
+async function connect() {
+  BASE = id('url').value.replace(/\/+$/, '');
+  id('status').textContent = 'Connecting...';
+  try {
+    let h = await api('/api/v1/health');
+    let cap = await api('/api/v1/capabilities');
+    let ide = await api('/api/v1/identity');
+    id('status').textContent = '✅ Connected — ' + (h.result?.os || 'unknown');
+    id('identity').textContent = JSON.stringify(ide.result || ide, null, 2);
+  } catch(e) { id('status').textContent = '❌ ' + e.message; }
+}
+
+async function capture() {
+  try {
+    let r = await api('/api/v1/capture', 'POST', { left:0, top:0, right:1920, bottom:1080 });
+    let data = r.result?.data_b64;
+    if (data) {
+      id('screenshot').src = 'data:image/bmp;base64,' + data;
+      id('screenshot').style.display = 'block';
+    } else alert('No image data: ' + JSON.stringify(r));
+  } catch(e) { alert(e.message); }
+}
+
+async function doClick() {
+  let x = +id('cx').value, y = +id('cy').value;
+  await api('/api/v1/click', 'POST', { x, y });
+}
+
+async function doType() {
+  let text = id('txt').value;
+  if (text) await api('/api/v1/type', 'POST', { text });
+}
+
+async function doHotkey() {
+  let keys = id('hk').value;
+  if (keys) await api('/api/v1/hotkey', 'POST', { keys });
+}
+
+async function listWindows() {
+  let r = await api('/api/v1/windows');
+  id('windows').textContent = JSON.stringify(r.result || r, null, 2);
+}
+</script>
+</body></html>
