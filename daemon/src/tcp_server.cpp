@@ -22,6 +22,18 @@
 
 using namespace wininspect;
 
+// Helper: extract optional string from JSON params
+static std::optional<std::string> get_str(const json::Object &o, const std::string &k) {
+  auto it = o.find(k);
+  if (it != o.end() && it->second.is_str()) return it->second.as_str();
+  return std::nullopt;
+}
+static std::optional<double> get_num(const json::Object &o, const std::string &k) {
+  auto it = o.find(k);
+  if (it != o.end() && it->second.is_num()) return it->second.as_num();
+  return std::nullopt;
+}
+
 namespace wininspectd {
 
 // Ensure Winsock is initialized exactly once for the lifetime of the process,
@@ -283,6 +295,57 @@ static void handle_socket_client(SOCKET s, wininspect::ServerState *st,
         o["unsubscribed"] = true;
         resp.ok = true;
         resp.result = o;
+        goto send_resp;
+      }
+
+      // ── Control awareness ──────────────────────────────────────────
+      if (!st->control) st->control = std::make_unique<wininspectd::ControlManager>();
+
+      if (req.method == "control.take") {
+        auto who_s = get_str(req.params, "controller").value_or("human");
+        auto who = wininspect::controller_type_from_str(who_s);
+        auto id = get_str(req.params, "id").value_or("");
+        auto ok = st->control->take_control(who, id);
+        if (!ok && who == wininspect::ControllerType::Agent) {
+          resp.ok = false; resp.error_code = "E_CONTROL_DENIED";
+          resp.error_message = "human has control — cannot take";
+          goto send_resp;
+        }
+        if (!ok && who == wininspect::ControllerType::Script) {
+          resp.ok = false; resp.error_code = "E_CONTROL_DENIED";
+          resp.error_message = "cannot take control in current mode";
+          goto send_resp;
+        }
+        wininspect::json::Object o;
+        o["controller"] = who_s; o["ok"] = ok;
+        resp.ok = true; resp.result = o; goto send_resp;
+      }
+
+      if (req.method == "control.release") {
+        auto who_s = get_str(req.params, "controller").value_or("human");
+        auto who = wininspect::controller_type_from_str(who_s);
+        auto id = get_str(req.params, "id").value_or("");
+        st->control->release_control(who, id);
+        wininspect::json::Object o; o["ok"] = true;
+        resp.ok = true; resp.result = o; goto send_resp;
+      }
+
+      if (req.method == "control.status") {
+        resp.ok = true; resp.result = st->control->get_status();
+        goto send_resp;
+      }
+
+      if (req.method == "control.setMode") {
+        auto mode = get_str(req.params, "mode").value_or("hybrid");
+        st->control->set_operation_mode(mode);
+        if (mode == "human") st->control->take_control(wininspect::ControllerType::Human, "system");
+        wininspect::json::Object o; o["mode"] = mode; o["ok"] = true;
+        resp.ok = true; resp.result = o; goto send_resp;
+      }
+
+      if (req.method == "control.auditLog") {
+        auto max = (size_t)get_num(req.params, "max").value_or(100);
+        resp.ok = true; resp.result = st->control->get_audit_log(max);
         goto send_resp;
       }
 

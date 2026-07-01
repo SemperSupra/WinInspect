@@ -12,6 +12,7 @@
 #include <vector>
 #include <set>
 #include <memory>
+#include "control_manager.hpp"
 #include "wininspect/types.hpp"
 
 namespace wininspect {
@@ -60,6 +61,9 @@ struct ServerState {
   // Method authorization sets
   std::set<std::string> allow_methods;  // empty = all allowed
   std::set<std::string> deny_methods;   // empty = none denied
+
+  // Control awareness
+  std::unique_ptr<wininspectd::ControlManager> control; // lazily created
 };
 
 struct ClientSession {

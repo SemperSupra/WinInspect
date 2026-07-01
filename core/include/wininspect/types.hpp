@@ -6,10 +6,48 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "tinyjson.hpp"
 
 namespace wininspect {
 
 using hwnd_u64 = std::uint64_t;
+
+// ── Control State ───────────────────────────────────────────────────
+
+enum class ControllerType : uint8_t {
+  None = 0,
+  Human = 1,
+  Agent = 2,
+  Script = 3
+};
+
+inline const char* controller_type_str(ControllerType ct) {
+  switch (ct) {
+    case ControllerType::None:   return "none";
+    case ControllerType::Human:  return "human";
+    case ControllerType::Agent:  return "agent";
+    case ControllerType::Script: return "script";
+    default: return "unknown";
+  }
+}
+
+inline ControllerType controller_type_from_str(const std::string &s) {
+  if (s == "human") return ControllerType::Human;
+  if (s == "agent") return ControllerType::Agent;
+  if (s == "script") return ControllerType::Script;
+  return ControllerType::None;
+}
+
+struct AuditEntry {
+  uint64_t seq{};
+  int64_t timestamp{};      // unix ms
+  std::string controller;   // "human", "agent", "script"
+  std::string controller_id;
+  std::string method;
+  json::Object params;
+  bool ok{};
+  int64_t duration_ms{};
+};
 
 struct Hwnd {
   hwnd_u64 val{};
