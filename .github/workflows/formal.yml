@@ -1,0 +1,27 @@
+name: Formal Methods
+
+on:
+  push:
+    branches: [master, 'feature/**']
+    paths:
+      - 'formal/**'
+      - 'daemon/src/tcp_server.cpp'
+      - 'Makefile'
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '0 6 * * 1'
+
+jobs:
+  tlc-fast:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Run TLC (handshake model)
+        run: make formal-handshake-fast
+      - name: Run TLC (v2 model)
+        run: make formal-v2-fast
