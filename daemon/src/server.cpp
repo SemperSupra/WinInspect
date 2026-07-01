@@ -21,6 +21,7 @@
 #include "tcp_server.hpp"
 #include "tray.hpp"
 #include "request_handler.hpp"
+#include "http_server.hpp"
 
 #include <list>
 #include <set>
@@ -215,6 +216,8 @@ int main(int argc, char **argv) {
   bool admin_logs = false;
   bool no_clipboard = false;
   int rate_limit_ms = 0;
+  int http_port = 0;
+  std::string http_token;
   std::string auth_keys;
   std::string allow_str, deny_str;
   bool require_auth = false;
@@ -281,6 +284,12 @@ int main(int argc, char **argv) {
     }
     if (std::string(argv[i]) == "--discovery-port" && i + 1 < argc) {
       discovery_port = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--http-port" && i + 1 < argc) {
+      http_port = std::stoi(argv[++i]);
+    }
+    if (std::string(argv[i]) == "--http-token" && i + 1 < argc) {
+      http_token = argv[++i];
     }
     if (std::string(argv[i]) == "--max-mem-read" && i + 1 < argc) {
       max_mem_read = std::stoi(argv[++i]);
@@ -387,7 +396,21 @@ int main(int argc, char **argv) {
   });
   pipe_thread.detach();
 
-  // 4. Run TCP server (BLOCKING MAIN THREAD)
+  // 4. Start HTTP server (if --http-port set)
+  CoreEngine core(backend.get());
+  if (http_port > 0) {
+    LOG_INFO("Starting HTTP server on port " + std::to_string(http_port) + "...");
+    std::thread http_thread([&running, http_port, &auth_keys_data, read_only, admin_logs, no_clipboard, st = st.get(), backend = backend.get()]() {
+      // HTTP server has its own CoreEngine instance
+      CoInitGuard coinit;
+      CoreEngine http_core(backend);
+      [[maybe_unused]] auto unused = http_core.handle(CoreRequest{"init","daemon.health",{}}, backend->capture_snapshot(), nullptr);
+      wininspectd::run_http_server(&running, http_port, http_core, "");
+    });
+    http_thread.detach();
+  }
+
+  // 5. Run TCP server (BLOCKING MAIN THREAD)
   LOG_INFO("Starting TCP Server (blocking main thread)...");
   auto tcp = std::make_shared<wininspectd::TcpServer>(tcp_port, st.get(), backend.get());
 

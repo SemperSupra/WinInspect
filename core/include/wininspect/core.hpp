@@ -39,6 +39,9 @@ public:
   // Enable or disable admin-only methods (daemon.logs)
   void set_admin_logs_enabled(bool v) { admin_logs_enabled_ = v; }
 
+  // Get the backend (for HTTP server snapshot capture)
+  IBackend *get_backend() const { return backend_; }
+
 private:
   using Handler = std::function<CoreResponse(const CoreRequest&,
                                              const Snapshot&, const Snapshot*)>;

@@ -45,8 +45,9 @@ if (WIN32)
     daemon/src/pipe_win32.cpp
     daemon/src/tray.cpp
     daemon/src/tcp_server.cpp
+    daemon/src/http_server.cpp
   )
-  target_include_directories(wininspectd PRIVATE core/include third_party daemon/src)
+  target_include_directories(wininspectd PRIVATE core/include third_party daemon/src daemon/include)
   target_link_libraries(wininspectd PRIVATE wininspect_core ws2_32)
 
   add_executable(wininspect
