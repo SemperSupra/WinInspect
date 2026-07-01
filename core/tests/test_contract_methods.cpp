@@ -243,6 +243,16 @@ DOCTEST_TEST_CASE("contract: screen.capture") {
   DOCTEST_REQUIRE(r.ok);
 }
 
+DOCTEST_TEST_CASE("contract: screen.record") {
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  json::Object p; p["left"] = 0.0; p["top"] = 0.0; p["right"] = 100.0; p["bottom"] = 100.0;
+  p["frames"] = 5.0; p["interval_ms"] = 10.0;
+  CoreRequest req{"t19a","screen.record",p};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(r.ok);
+}
+
 DOCTEST_TEST_CASE("contract: screen.desktopInfo") {
   auto fb = make_fake();
   CoreEngine core(&fb);

@@ -227,6 +227,7 @@ static int usage() {
             << "  drag <sx> <sy> <ex> <ey> [button] [duration_ms]\n"
             << "  pixel-search <left> <top> <right> <bottom> <r> <g> <b> [variation]\n"
             << "  capture <left> <top> <right> <bottom>\n"
+            << "  record <left> <top> <right> <bottom> [--frames N] [--interval N]\n"
             << "  desktop-info\n"
             << "  hotkey <keys>\n"
             << "  ps\n"
@@ -554,6 +555,21 @@ int main(int argc, char **argv) {
     params["right"] = std::stod(args[3]);
     params["bottom"] = std::stod(args[4]);
     return send_and_print("screen.capture");
+  }
+
+  if (cmd == "record") {
+    if (args.size() < 5) return usage();
+    params["left"] = std::stod(args[1]);
+    params["top"] = std::stod(args[2]);
+    params["right"] = std::stod(args[3]);
+    params["bottom"] = std::stod(args[4]);
+    if (args.size() > 5) {
+      for (size_t i = 5; i < args.size(); i++) {
+        if (args[i] == "--frames" && i + 1 < args.size()) params["frames"] = std::stod(args[++i]);
+        if (args[i] == "--interval" && i + 1 < args.size()) params["interval_ms"] = std::stod(args[++i]);
+      }
+    }
+    return send_and_print("screen.record");
   }
 
   if (cmd == "desktop-info") {

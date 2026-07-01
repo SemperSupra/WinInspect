@@ -58,6 +58,7 @@ public:
 
   std::optional<Color> get_pixel(int x, int y) override;
   std::optional<ScreenCapture> capture_screen(Rect region) override;
+  std::optional<ScreenRecording> record_screen(Rect region, int frames, int interval_ms) override;
   std::optional<std::pair<int, int>> pixel_search(Rect region, Color target, int variation) override;
   DesktopInfo get_desktop_info() override;
 

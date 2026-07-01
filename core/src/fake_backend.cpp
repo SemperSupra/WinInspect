@@ -145,6 +145,13 @@ std::optional<ScreenCapture> FakeBackend::capture_screen(Rect) {
   return ScreenCapture{100, 100, "fake_b64"};
 }
 
+std::optional<ScreenRecording> FakeBackend::record_screen(Rect, int frames, int) {
+  ScreenRecording r; r.width = 100; r.height = 100; r.actual_fps = 10.0;
+  for (int i = 0; i < frames && i < 10; i++)
+    r.frames.push_back({100, 100, "fake_b64"});
+  return r;
+}
+
 std::optional<std::pair<int, int>> FakeBackend::pixel_search(Rect, Color, int) {
   return std::make_pair(50, 50);
 }

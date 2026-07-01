@@ -828,6 +828,24 @@ std::optional<ScreenCapture> Win32Backend::capture_screen(Rect region) {
   return sc;
 }
 
+std::optional<ScreenRecording> Win32Backend::record_screen(Rect region, int frames, int interval_ms) {
+  ScreenRecording rec;
+  if (frames <= 0) return std::nullopt;
+  if (interval_ms < 10) interval_ms = 50;
+  auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < frames; i++) {
+    auto f = capture_screen(region);
+    if (!f) break;
+    if (rec.width == 0) { rec.width = f->width; rec.height = f->height; }
+    rec.frames.push_back(std::move(*f));
+    if (i < frames - 1) Sleep(interval_ms);
+  }
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start).count();
+  if (elapsed > 0) rec.actual_fps = (double)rec.frames.size() / ((double)elapsed / 1000.0);
+  return rec;
+}
+
 std::optional<FileInfo> Win32Backend::get_file_info(const std::string &path) {
   std::wstring wpath(path.begin(), path.end());
   WIN32_FILE_ATTRIBUTE_DATA attr;
@@ -1814,6 +1832,10 @@ json::Object Win32Backend::get_env_metadata() {
   json::Object o;
   o["os"] = "unknown";
   return o;
+}
+
+std::optional<ScreenRecording> Win32Backend::record_screen(Rect, int, int) {
+  return std::nullopt;
 }
 
 update::UpdateInfo Win32Backend::check_for_update() {

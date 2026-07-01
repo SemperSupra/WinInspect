@@ -62,6 +62,7 @@ public:
   // Visuals
   virtual std::optional<Color> get_pixel(int x, int y) = 0;
   virtual std::optional<ScreenCapture> capture_screen(Rect region) = 0;
+  virtual std::optional<ScreenRecording> record_screen(Rect region, int frames, int interval_ms) = 0;
   virtual std::optional<std::pair<int, int>> pixel_search(Rect region, Color target, int variation) = 0;
   virtual DesktopInfo get_desktop_info() = 0;
 

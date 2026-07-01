@@ -459,6 +459,31 @@ void CoreEngine::build_dispatch_table() {
     resp.ok = true; resp.result = o; return resp;
   };
 
+  dispatch_["screen.record"] = [this]( const CoreRequest &req,
+                                    const Snapshot &, const Snapshot *) {
+    CoreResponse resp;
+    auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
+         r = get_num(req.params, "right"), bm = get_num(req.params, "bottom");
+    auto frames = get_num(req.params, "frames").value_or(10);
+    auto interval_ms = get_num(req.params, "interval_ms").value_or(100);
+    if (!l || !t || !r || !bm) throw std::runtime_error("missing region");
+    Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
+    auto rec = backend_->record_screen(rect, (int)frames, (int)interval_ms);
+    if (!rec) throw std::runtime_error("recording failed");
+    json::Object o;
+    o["width"] = (double)rec->width; o["height"] = (double)rec->height;
+    o["actual_fps"] = rec->actual_fps;
+    json::Array arr;
+    for (auto &f : rec->frames) {
+      json::Object fo;
+      fo["width"] = (double)f.width; fo["height"] = (double)f.height;
+      fo["data_b64"] = f.data_b64;
+      arr.push_back(fo);
+    }
+    o["frames"] = arr;
+    resp.ok = true; resp.result = o; return resp;
+  };
+
   dispatch_["screen.desktopInfo"] = [this]( const CoreRequest &,
                                          const Snapshot &, const Snapshot *) {
     CoreResponse resp;

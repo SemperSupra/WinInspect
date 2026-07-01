@@ -43,6 +43,12 @@ struct ScreenCapture {
   std::string data_b64; // Base64 encoded BMP data
 };
 
+struct ScreenRecording {
+  int width{}, height{};
+  std::vector<ScreenCapture> frames;
+  double actual_fps{};
+};
+
 struct DesktopInfo {
   int width{}, height{};
   int dpi_x{}, dpi_y{};

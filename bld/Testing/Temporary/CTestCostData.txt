@@ -1,0 +1,4 @@
+test_core 2 0.0723295
+test_gui_viewmodel 2 0.044067
+test_discovery 2 0.512381
+---
