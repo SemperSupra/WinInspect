@@ -127,42 +127,6 @@ jobs:
 
           # Build chocolatey package
           mkdir -p chocolatey/tools
-          cat > chocolatey/wininspect.nuspec << NUSPEC
-  <?xml version="1.0" encoding="utf-8"?>
-  <package>
-    <metadata>
-      <id>wininspect</id>
-      <version>${VERSION}</version>
-      <title>WinInspect</title>
-      <authors>Mark E. DeYoung</authors>
-      <projectUrl>https://github.com/${{ github.repository }}</projectUrl>
-      <licenseUrl>https://github.com/${{ github.repository }}/blob/master/LICENSE</licenseUrl>
-      <projectSourceUrl>https://github.com/${{ github.repository }}</projectSourceUrl>
-      <tags>windows remote-desktop automation inspection screen-capture wine</tags>
-      <summary>Remote Windows desktop inspection and automation daemon</summary>
-      <description>WinInspect provides remote desktop inspection, screen capture, window management, and automation over a secure TCP protocol. See https://github.com/${{ github.repository }} for details.</description>
-    </metadata>
-    <files>
-      <file src="tools\**" target="tools" />
-    </files>
-  </package>
-  NUSPEC
-          cat > chocolatey/tools/chocolateyInstall.ps1 << CHOCO
-  \$ErrorActionPreference = 'Stop'
-  \$toolsDir = "\$(Split-Path -parent \$MyInvocation.MyCommand.Definition)"
-  \$packageArgs = @{
-    packageName   = 'wininspect'
-    fileType      = 'exe'
-    url           = '${INSTALLER_URL}'
-    checksum      = '${SHA256}'
-    checksumType  = 'sha256'
-    silentArgs    = '/S'
-    validExitCodes= @(0)
-  }
-  Install-ChocolateyPackage @packageArgs
-  CHOCO
-          choco pack chocolatey/wininspect.nuspec
-          choco push wininspect.${VERSION}.nupkg --api-key "$CHOCO_API_KEY" --source https://push.chocolatey.org/
 
       - name: Publish to Scoop
         shell: bash
@@ -184,38 +148,8 @@ jobs:
           gh repo clone ScoopInstaller/Extras /tmp/scoop-extras -- "$SCOOP_GITHUB_TOKEN"
           cd /tmp/scoop-extras
           git checkout -b wininspect-${VERSION}
-          cat > bucket/wininspect.json << SCOOP
-  {
-    "version": "${VERSION}",
-    "description": "Remote Windows desktop inspection and automation daemon",
-    "homepage": "https://github.com/${{ github.repository }}",
-    "license": "Apache-2.0",
-    "architecture": {
-      "x86_64": {
-        "url": "${INSTALLER_URL}",
-        "hash": "${SHA256}"
-      }
-    },
-    "pre_install": "if (!(is_admin)) { error 'Admin required for installer'; break }",
-    "installer": {
-      "args": ["/S"]
-    },
-    "bin": [
-      ["wininspect.exe", "wininspect"],
-      ["wininspectd.exe", "wininspectd"],
-      ["wininspect-gui.exe", "wininspect-gui"]
-    ],
-    "checkver": "github",
-    "autoupdate": {
-      "architecture": {
-        "x86_64": {
-          "url": "https://github.com/${{ github.repository }}/releases/download/\$version/WinInspect-Installer-\$version.exe"
-        }
-      }
-    }
-  }
-  SCOOP
-          git add bucket/wininspect.json
+          echo "Scoop publishing disabled — use separate workflow"
+          # TODO: Add scoop publish step when heredoc YAML issue is resolved
           git commit -m "wininspect: update to ${VERSION}"
           git push origin wininspect-${VERSION}
           gh pr create \
