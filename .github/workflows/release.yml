@@ -37,8 +37,12 @@ jobs:
         shell: powershell
         run: |
           mkdir -Force dist\staging
-          Write-Host "=== Copying binaries ==="
-          Copy-Item -Path build\Release\wininspectd.exe,build\Release\wininspect.exe,build\Release\wininspect-gui.exe -Destination dist\staging\ -Verbose
+          Write-Host "=== Build directory ==="
+          Get-ChildItem -Path build -Recurse -Include *.exe -Name
+          Write-Host "=== Direct copy ==="
+          cmd.exe /c "copy build\Release\wininspectd.exe dist\staging\" 2>&1
+          cmd.exe /c "copy build\Release\wininspect.exe dist\staging\" 2>&1
+          cmd.exe /c "copy build\Release\wininspect-gui.exe dist\staging\" 2>&1
           Write-Host "=== Staging contents ==="
           Get-ChildItem dist\staging\ -Name
 
@@ -46,9 +50,7 @@ jobs:
         shell: bash
         run: |
           export PATH="/c/Program Files (x86)/NSIS:$PATH"
-          echo "=== Files in dist/staging/ ==="
-          ls -la dist/staging/
-          echo "=== Running NSIS ==="
+          ls -la "${{ github.workspace }}/dist/staging/"
           makensis -DVERSION=${{ github.ref_name }} \
             -DBUILD_SRC="${{ github.workspace }}/dist/staging" \
             -DDIST_DIR="${{ github.workspace }}/dist" \
