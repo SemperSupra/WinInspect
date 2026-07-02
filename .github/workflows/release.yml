@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
-          cmake --build build -j$(nproc)
+          cmake --build build --config Release -j$(nproc)
           ls -la build/
           ctest --test-dir build -C Release --output-on-failure
 
@@ -39,10 +39,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/staging
-          ls -la build/
-          cp -v build/wininspectd.exe dist/staging/ 2>/dev/null || cp -v build/Release/wininspectd.exe dist/staging/
-          cp -v build/wininspect.exe dist/staging/ 2>/dev/null || cp -v build/Release/wininspect.exe dist/staging/
-          cp -v build/wininspect-gui.exe dist/staging/ 2>/dev/null || cp -v build/Release/wininspect-gui.exe dist/staging/
+          ls -la build/Release/
+          cp -v build/Release/wininspectd.exe dist/staging/
+          cp -v build/Release/wininspect.exe dist/staging/
+          cp -v build/Release/wininspect-gui.exe dist/staging/
           ls -la dist/staging/
 
       - name: Package Installer (NSIS)
