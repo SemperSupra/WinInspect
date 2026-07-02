@@ -15,7 +15,7 @@ jobs:
 
       - name: Build and Test
         run: |
-          cmake -S . -B build -DWININSPECT_BUILD_TESTS=ON
+          cmake -S . -B build -G "Visual Studio 17 2022" -DWININSPECT_BUILD_TESTS=ON
           cmake --build build --config Release
           ctest --test-dir build -C Release --output-on-failure
 
