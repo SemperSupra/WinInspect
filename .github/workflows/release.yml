@@ -34,17 +34,31 @@ jobs:
         run: choco install nsis 7zip --no-progress -y
 
       - name: Stage Binaries
+        shell: powershell
         run: |
           mkdir -Force dist\staging
-          Get-ChildItem -Path build\* -Recurse -Include wininspectd.exe,wininspect.exe,wininspect-gui.exe -File |
-            Copy-Item -Destination dist\staging\ -Verbose
+          Write-Host "=== Build directory structure ==="
+          Get-ChildItem -Path build -Recurse -Depth 3 -Name
+          Write-Host "=== Copying binaries ==="
+          $files = Get-ChildItem -Path build\* -Recurse -Include wininspectd.exe,wininspect.exe,wininspect-gui.exe -File
+          Write-Host "Found $($files.Count) files"
+          $files | Copy-Item -Destination dist\staging\ -Verbose
+          Write-Host "=== Staging contents ==="
+          Get-ChildItem dist\staging\ -Name
 
       - name: Package Installer (NSIS)
         shell: bash
         run: |
           export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          echo "=== Files in dist/staging/ ==="
           ls -la dist/staging/
-          makensis -DVERSION=${{ github.ref_name }} -DBUILD_SRC=../dist/staging -DDIST_DIR=../dist tools/wininspect.nsi
+          echo "=== NSIS version ==="
+          makensis /VERSION
+          echo "=== Running NSIS ==="
+          makensis -DVERSION=${{ github.ref_name }} \
+            -DBUILD_SRC="${{ github.workspace }}/dist/staging" \
+            -DDIST_DIR="${{ github.workspace }}/dist" \
+            tools/wininspect.nsi
 
       - name: Package PortableApps.com
         shell: bash
