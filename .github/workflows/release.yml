@@ -14,10 +14,16 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build and Test
+        shell: powershell
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -DWININSPECT_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
           cmake --build build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+          Write-Host "=== Build output files ==="
+          Get-ChildItem -Path build -Recurse -Include *.exe -Name
           ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 
       - name: Build Portable CLI (Windows)
         shell: bash
@@ -37,14 +43,12 @@ jobs:
         shell: powershell
         run: |
           mkdir -Force dist\staging
-          Write-Host "=== Build directory ==="
-          Get-ChildItem -Path build -Recurse -Include *.exe -Name
-          Write-Host "=== Direct copy ==="
-          cmd.exe /c "copy build\Release\wininspectd.exe dist\staging\" 2>&1
-          cmd.exe /c "copy build\Release\wininspect.exe dist\staging\" 2>&1
-          cmd.exe /c "copy build\Release\wininspect-gui.exe dist\staging\" 2>&1
-          Write-Host "=== Staging contents ==="
-          Get-ChildItem dist\staging\ -Name
+          Write-Host "=== Finding exes ==="
+          $exes = Get-ChildItem -Path build -Recurse -Include *.exe -Name
+          Write-Host "Found $($exes.Count) exes"
+          $exes
+          Write-Host "=== Copying ==="
+          $exes | ForEach-Object { Copy-Item -Path "build\$_" -Destination dist\staging\ -Verbose }
 
       - name: Package Installer (NSIS)
         shell: bash
