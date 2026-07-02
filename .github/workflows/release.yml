@@ -109,7 +109,7 @@ jobs:
             echo "WINGET_GITHUB_TOKEN not set — skipping winget publish"
             exit 0
           fi
-          dotnet tool install --global Microsoft.Winget.Create.Cli 2>&1 | tail -1
+          winget install "Microsoft.Winget.Create" --accept-package-agreements 2>&1 | tail -3
           TAG="${{ github.ref_name }}"
           INSTALLER_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/WinInspect-Installer-${TAG}.exe"
           SHA256="${{ steps.installer_hash.outputs.sha256 }}"
