@@ -392,7 +392,7 @@ int main(int argc, char **argv) {
   // 3. Start Named Pipe server (background)
   LOG_INFO("Starting Named Pipe server (background)...");
   std::thread pipe_thread([&running, st = st.get(), backend = backend.get(),
-                            read_only, require_auth, admin_logs, no_clipboard, &auth_keys_data]() {
+                            read_only, require_auth, admin_logs, no_clipboard, auth_keys_data]() {
     run_server(&running, st, backend, read_only, require_auth, admin_logs, no_clipboard, auth_keys_data);
   });
   pipe_thread.detach();
@@ -441,7 +441,7 @@ int main(int argc, char **argv) {
       exit(0);
     });
     if (tray.init(GetModuleHandle(nullptr))) {
-      std::thread([&, tcp, &auth_keys_data, read_only]() {
+      std::thread([&, tcp, read_only]() {
         try {
           tcp->start(&running, net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
         } catch (...) {}
