@@ -52,7 +52,7 @@ jobs:
           foreach ($path in @(
             'source/CMakeLists.txt',
             'source/LICENSE',
-            'source/tools/winspect.nsi',
+            'source/tools/wininspect.nsi',
             'source/scripts/build-portableapps.sh',
             'source/scripts/Test-InstallerLifecycle.ps1',
             '.projection/source-manifest.json'
@@ -125,7 +125,7 @@ jobs:
       - name: Package NSIS installer
         shell: pwsh
         run: |
-          $script = Join-Path $env:GITHUB_WORKSPACE 'source/tools/winspect.nsi'
+          $script = Join-Path $env:GITHUB_WORKSPACE 'source/tools/wininspect.nsi'
           $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/staging'
           $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist'
           $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
