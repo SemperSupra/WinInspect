@@ -46,22 +46,44 @@ if ($statusBefore.Count -gt 0) {
 }
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('winspect-public-import-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $temp | Out-Null
+$incoming = Join-Path $temp 'incoming'
+$backup = Join-Path $temp 'backup'
+New-Item -ItemType Directory -Force -Path $incoming, $backup | Out-Null
 try {
-    Copy-Item -LiteralPath (Join-Path $projection 'source') -Destination (Join-Path $temp 'source') -Recurse -Force
-    New-Item -ItemType Directory -Force -Path (Join-Path $temp '.projection') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $projection '.projection/source-manifest.json') -Destination (Join-Path $temp '.projection/source-manifest.json') -Force
-    & $validator -RepositoryRoot $temp
+    Copy-Item -LiteralPath (Join-Path $projection 'source') -Destination (Join-Path $incoming 'source') -Recurse -Force
+    New-Item -ItemType Directory -Force -Path (Join-Path $incoming '.projection') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projection '.projection/source-manifest.json') -Destination (Join-Path $incoming '.projection/source-manifest.json') -Force
+    & $validator -RepositoryRoot $incoming
 
     foreach ($relative in @('source', '.projection')) {
-        $destination = Join-Path $repo $relative
-        if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
-        Move-Item -LiteralPath (Join-Path $temp $relative) -Destination $destination
+        $current = Join-Path $repo $relative
+        if (Test-Path -LiteralPath $current) {
+            Copy-Item -LiteralPath $current -Destination (Join-Path $backup $relative) -Recurse -Force
+        }
     }
 
-    & $validator -RepositoryRoot $repo
+    try {
+        foreach ($relative in @('source', '.projection')) {
+            $destination = Join-Path $repo $relative
+            if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
+            Move-Item -LiteralPath (Join-Path $incoming $relative) -Destination $destination
+        }
+
+        & $validator -RepositoryRoot $repo
+    } catch {
+        $failure = $_
+        Write-Warning 'Imported projection failed final validation; restoring previous clean projection.'
+        foreach ($relative in @('source', '.projection')) {
+            $destination = Join-Path $repo $relative
+            if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
+            $saved = Join-Path $backup $relative
+            if (Test-Path -LiteralPath $saved) { Move-Item -LiteralPath $saved -Destination $destination }
+        }
+        throw $failure
+    }
+
     $manifest = Get-Content -LiteralPath (Join-Path $repo '.projection/source-manifest.json') -Raw | ConvertFrom-Json
-    Write-Host "Imported WinInspect source projection."
+    Write-Host 'Imported WinInspect source projection.'
     Write-Host "Private source commit: $($manifest.sourceCommitSha)"
     Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
     Write-Host 'Review the git diff, commit source/ + .projection/ on a projection branch, and push it for public CI.'
