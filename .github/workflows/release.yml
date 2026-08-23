@@ -66,12 +66,6 @@ jobs:
           Write-Host "Private source commit: $($manifest.sourceCommitSha)"
           Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
 
-      - name: Install OpenSSL
-        shell: pwsh
-        run: |
-          winget install OpenSSL.OpenSSL --accept-source-agreements --accept-package-agreements --disable-interactivity
-          if ($LASTEXITCODE -ne 0) { throw "OpenSSL installation failed with exit code $LASTEXITCODE." }
-
       - name: Build and test projected source
         shell: pwsh
         run: |
