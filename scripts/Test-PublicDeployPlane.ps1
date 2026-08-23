@@ -11,6 +11,7 @@ $required = @(
     'docs/public-build-deploy-architecture.md',
     'docs/zero-budget-development.md',
     'scripts/Test-ProjectedSource.ps1',
+    'scripts/Test-ProjectedSourcePathSafety.ps1',
     'scripts/Import-ProjectedSource.ps1',
     'scripts/Test-PublicDeployPlane.ps1',
     '.github/workflows/projected-source-ci.yml',
@@ -45,6 +46,19 @@ foreach ($file in $workflowFiles) {
         if ($text.Contains($forbidden, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Public deploy workflow contains forbidden private/credential capability marker '$forbidden': $($file.Name)"
         }
+    }
+}
+
+foreach ($buildWorkflow in @('projected-source-ci.yml','release.yml')) {
+    $buildText = Get-Content -LiteralPath (Join-Path $workflowRoot $buildWorkflow) -Raw
+    if ($buildText.Contains('-DWININSPECT_BUILD_TESTS=ON', [StringComparison]::Ordinal)) {
+        throw "Public build workflow must not require the private comprehensive test graph: $buildWorkflow"
+    }
+    if (-not $buildText.Contains('-DWININSPECT_BUILD_TESTS=OFF', [StringComparison]::Ordinal)) {
+        throw "Public build workflow lost explicit private-test exclusion: $buildWorkflow"
+    }
+    if (-not $buildText.Contains('Test-ProjectedSourcePathSafety.ps1', [StringComparison]::Ordinal)) {
+        throw "Public build workflow lost projected path-safety regression: $buildWorkflow"
     }
 }
 
