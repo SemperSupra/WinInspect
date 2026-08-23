@@ -19,11 +19,20 @@ This repository is a **sanitized deployment/release plane**, not the authoritati
 
 Public content should be limited to material deliberately classified as public-required/public-trust or an approved sanitized derivative.
 
-The public repository should contain enough source, build material, documentation, and ordinary tests to make released versions inspectable and credible without publishing the comprehensive private exam.
+The public repository should contain enough source, build material, documentation, and ordinary public-safe tests to make released versions inspectable and credible without publishing the comprehensive private exam.
+
+Comprehensive private tests, formal/conformance fixtures, evaluator corpora, failure fingerprints, and equivalent validation knowledge must not be relocated into otherwise-public files merely to satisfy the projection boundary.
+
+## Projection discipline
+
+- Every generated source projection must carry an auditable receipt binding it to the exact authoritative private source commit and emitted-file hashes.
+- Projection updates should arrive through a reviewable pull request and pass the public projection/deploy-plane checks before reaching `main`.
+- Do not push generated source directly to `main` as the normal publication path.
+- A successful public build proves public buildability of the projected source; it does not grant private promotion approval.
 
 ## Release discipline
 
-A release candidate must be bound to the exact public commit and exact built artifacts. Where private specialized validation applies, promotion should publish the exact validated artifacts rather than rebuild after approval when practical.
+A release candidate must be bound to the exact reviewed public commit and exact built artifacts. Where private specialized validation applies, promotion should publish the exact validated artifacts rather than rebuild after approval when practical.
 
 ## Visibility
 
