@@ -11,7 +11,9 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "Projected-
 function Write-ReceiptCase {
     param(
         [Parameter(Mandatory)][string] $Root,
-        [Parameter(Mandatory)][string] $RelativePath
+        [Parameter(Mandatory)][string] $RelativePath,
+        [ValidateSet(1,2)][int] $SchemaVersion = 1,
+        [switch] $LeakPrivateSourceSha
     )
 
     $sourceRoot = Join-Path $Root 'source'
@@ -25,11 +27,11 @@ function Write-ReceiptCase {
     $normalized = $RelativePath.Replace('\', '/')
     $canonical = "$normalized`t$($item.Length)`t$sha`tfalse`n"
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
+
     $receipt = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = $SchemaVersion
         projectionPolicyVersion = 1
         sourceAuthority = 'private-development'
-        sourceCommitSha = ('a' * 40)
         authoritativeCandidate = $true
         projectionDigestSha256 = $digest
         fileCount = 1
@@ -40,21 +42,30 @@ function Write-ReceiptCase {
             executable = $false
         })
     }
+    if ($SchemaVersion -eq 1) {
+        $receipt['sourceCommitSha'] = ('a' * 40)
+    } else {
+        $receipt['projectionPolicySha256'] = ('b' * 64)
+        if ($LeakPrivateSourceSha) { $receipt['sourceCommitSha'] = ('a' * 40) }
+    }
+
     $receipt | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $manifestRoot 'source-manifest.json') -Encoding utf8NoBOM
 }
 
 function Assert-Rejected {
     param(
         [Parameter(Mandatory)][string] $RelativePath,
-        [Parameter(Mandatory)][string] $ExpectedMessage
+        [Parameter(Mandatory)][string] $ExpectedMessage,
+        [ValidateSet(1,2)][int] $SchemaVersion = 1,
+        [switch] $LeakPrivateSourceSha
     )
 
     $caseRoot = Join-Path ([IO.Path]::GetTempPath()) ('winspect-path-safety-' + [guid]::NewGuid().ToString('N'))
     try {
-        Write-ReceiptCase -Root $caseRoot -RelativePath $RelativePath
+        Write-ReceiptCase -Root $caseRoot -RelativePath $RelativePath -SchemaVersion $SchemaVersion -LeakPrivateSourceSha:$LeakPrivateSourceSha
         try {
             & $validator -RepositoryRoot $caseRoot
-            throw "Unsafe projected path was accepted: $RelativePath"
+            throw "Unsafe projected receipt was accepted: schema=$SchemaVersion path=$RelativePath"
         } catch {
             if ($_.Exception.Message -notmatch [regex]::Escape($ExpectedMessage)) { throw }
         }
@@ -63,8 +74,19 @@ function Assert-Rejected {
     }
 }
 
+# Positive v2 case: public receipt binds policy/digest/file commitments while
+# deliberately omitting the private development commit identity.
+$v2Root = Join-Path ([IO.Path]::GetTempPath()) ('winspect-v2-receipt-' + [guid]::NewGuid().ToString('N'))
+try {
+    Write-ReceiptCase -Root $v2Root -RelativePath 'CMakeLists.txt' -SchemaVersion 2
+    & $validator -RepositoryRoot $v2Root
+} finally {
+    if (Test-Path -LiteralPath $v2Root) { Remove-Item -LiteralPath $v2Root -Recurse -Force }
+}
+
 Assert-Rejected -RelativePath '.github/workflows/private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath '.github\workflows\private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath '.claude/agent.md' -ExpectedMessage 'Private/control-plane path is forbidden'
+Assert-Rejected -RelativePath 'CMakeLists.txt' -SchemaVersion 2 -LeakPrivateSourceSha -ExpectedMessage 'must not expose the private source commit SHA'
 
-Write-Host 'Projected-source path safety regression tests passed.'
+Write-Host 'Projected-source path/schema safety regression tests passed.'
