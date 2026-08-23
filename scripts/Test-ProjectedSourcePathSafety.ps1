@@ -16,13 +16,14 @@ function Write-ReceiptCase {
 
     $sourceRoot = Join-Path $Root 'source'
     $manifestRoot = Join-Path $Root '.projection'
-    $filePath = Join-Path $sourceRoot ($RelativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+    $filePath = Join-Path $sourceRoot (($RelativePath -replace '\\', [IO.Path]::DirectorySeparatorChar) -replace '/', [IO.Path]::DirectorySeparatorChar)
     $parent = Split-Path -Parent $filePath
     New-Item -ItemType Directory -Force -Path $parent, $manifestRoot | Out-Null
     [IO.File]::WriteAllText($filePath, "synthetic`n", [Text.UTF8Encoding]::new($false))
     $item = Get-Item -LiteralPath $filePath
     $sha = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $canonical = "$RelativePath`t$($item.Length)`t$sha`tfalse`n"
+    $normalized = $RelativePath.Replace('\', '/')
+    $canonical = "$normalized`t$($item.Length)`t$sha`tfalse`n"
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
     $receipt = [ordered]@{
         schemaVersion = 1
@@ -63,6 +64,7 @@ function Assert-Rejected {
 }
 
 Assert-Rejected -RelativePath '.github/workflows/private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
+Assert-Rejected -RelativePath '.github\workflows\private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath '.claude/agent.md' -ExpectedMessage 'Private/control-plane path is forbidden'
 
 Write-Host 'Projected-source path safety regression tests passed.'
