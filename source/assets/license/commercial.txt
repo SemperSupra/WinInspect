@@ -1,0 +1,52 @@
+Commercial License — WinInspect
+
+WinInspect Commercial License
+
+Copyright (c) 2026 Mark E. DeYoung
+
+This software is licensed for commercial use under the terms of a
+separate Commercial License Agreement.
+
+For licensing terms and pricing, contact:
+
+    Mark E. DeYoung
+    mark.e.deyoung+wininspect-license@gmail.com
+
+By installing this software under a commercial license, you agree to the
+terms of your Commercial License Agreement. If you do not have a current
+Commercial License Agreement, installing with /LICENSE-TYPE commercial
+grants you an evaluation license for 30 days, after which you must
+purchase a commercial license or reinstall under the noncommercial terms.
+
+A commercial license is REQUIRED for:
+  - Deploying WinInspect in a business or enterprise environment
+  - Using WinInspect as part of a commercial product or service
+  - Using WinInspect for internal business operations
+  - Use by federal, state, or local government agencies
+  - Use by military, law enforcement, or emergency services
+  - Use by government contractors and subcontractors
+  - Business-to-business automation and fleet management
+  - Any entity with annual revenue exceeding USD $1M
+  - Any for-profit entity, regardless of revenue
+
+A commercial license is NOT required for (these use cases fall under
+the PolyForm Noncommercial License 1.0.0):
+  - Individual personal use, hobby projects, and tinkering
+  - Students and educators for coursework, teaching, and research
+  - K-12 schools, universities, and academic institutions
+  - Public libraries and public-benefit nonprofit institutions
+  - Open-source projects not operated by a commercial entity
+  - Hackathons, coding bootcamps, and educational workshops
+
+License Integrity
+
+You may not distribute modified versions of this software under a
+different name or license in a way that misrepresents its origin.
+The copyright holder reserves all rights not expressly granted.
+Cloning, rebranding, and redistributing under a different license
+without explicit written permission is prohibited and constitutes
+copyright infringement.
+
+For open-source and non-commercial use, the PolyForm Noncommercial
+License 1.0.0 applies instead. Commercial users must obtain a
+Commercial License Agreement.

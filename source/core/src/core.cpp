@@ -1,0 +1,1786 @@
+#include "wininspect/base64.hpp"
+// SPDX-License-Identifier: PolyForm-NC-1.0.0
+// Copyright (c) 2026 Mark E. DeYoung
+
+#include "wininspect/core.hpp"
+#include <cctype>
+#include <sstream>
+#include <chrono>
+#include <thread>
+#include <iomanip>
+#include <fstream>
+
+namespace wininspect {
+
+  std::string Hwnd::to_string() const
+  {
+    std::ostringstream oss;
+    oss << "0x" << std::hex << std::uppercase << val;
+    return oss.str();
+  }
+
+  static json::Value make_error(const std::string& code, const std::string& msg)
+  {
+    json::Object e;
+    e["code"] = code;
+    e["message"] = msg;
+    return e;
+  }
+
+  json::Object CoreResponse::to_json_obj(bool /*canonical*/) const
+  {
+    json::Object o;
+    o["id"] = id;
+    o["ok"] = ok;
+    if (ok)
+      o["result"] = result;
+    else
+      o["error"] = make_error(error_code, error_message);
+    if (!metrics.empty())
+      o["metrics"] = metrics;
+    return o;
+  }
+
+  // --- parameter helpers (unchanged) ---
+
+  static std::optional<std::string> get_str(const json::Object& o, const std::string& k)
+  {
+    auto it = o.find(k);
+    if (it == o.end() || !it->second.is_str())
+      return std::nullopt;
+    return it->second.as_str();
+  }
+  // string_view variant — avoids copy for hot-path callers
+  static std::optional<std::string_view> get_str_view(const json::Object& o, std::string_view k)
+  {
+    auto it = o.find(std::string(k));
+    if (it == o.end() || !it->second.is_str())
+      return std::nullopt;
+    return it->second.as_str();
+  }
+  static std::optional<bool> get_bool(const json::Object& o, const std::string& k)
+  {
+    auto it = o.find(k);
+    if (it == o.end() || !it->second.is_bool())
+      return std::nullopt;
+    return it->second.as_bool();
+  }
+  static std::optional<double> get_num(const json::Object& o, const std::string& k)
+  {
+    auto it = o.find(k);
+    if (it == o.end() || !it->second.is_num())
+      return std::nullopt;
+    return it->second.as_num();
+  }
+
+  // ── Capability Check ───────────────────────────────────────────────────────────
+  // Maps a capability string from the policy table to its corresponding runtime flag
+  // in the Capabilities struct. Returns false when the capability string is unknown
+  // (defensive — treat unknown as denied).
+  static bool check_capability(const Capabilities& caps, const char* cap)
+  {
+    if (!cap)
+      return true; // null = no capability required
+    if (strcmp(cap, "clipboard") == 0)
+      return caps.clipboard_available;
+    if (strcmp(cap, "uia") == 0)
+      return caps.uia_available;
+    if (strcmp(cap, "memory") == 0)
+      return caps.process_memory;
+    if (strcmp(cap, "input") == 0)
+      return caps.input_injection;
+    if (strcmp(cap, "registry") == 0)
+      return caps.registry_writable;
+    if (strcmp(cap, "service") == 0)
+      return caps.service_manager;
+    if (strcmp(cap, "dxgi") == 0)
+      return caps.dxgi_capture;
+    if (strcmp(cap, "highlight") == 0)
+      return caps.window_highlight;
+    return false; // unknown capability → deny
+  }
+  static std::optional<hwnd_u64> parse_hwnd(const std::string& s)
+  {
+    if (s.rfind("0x", 0) != 0)
+      return std::nullopt;
+    std::uint64_t v = 0;
+    std::stringstream ss;
+    ss << std::hex << s.substr(2);
+    ss >> v;
+    if (ss.fail())
+      return std::nullopt;
+    return (hwnd_u64)v;
+  }
+
+  // --- JSON converters (unchanged) ---
+
+  static json::Object event_to_json(const Event& e)
+  {
+    json::Object o;
+    o["seq"] = (double)e.seq;
+    o["type"] = e.type;
+    o["hwnd"] = Hwnd(e.hwnd).to_string();
+    if (!e.property.empty())
+      o["property"] = e.property;
+    return o;
+  }
+
+  static json::Object window_node_to_json(const WindowNode& n)
+  {
+    json::Object o;
+    o["hwnd"] = Hwnd(n.hwnd).to_string();
+    o["title"] = n.title;
+    o["class_name"] = n.class_name;
+    if (!n.children.empty()) {
+      json::Array arr;
+      for (const auto& c : n.children)
+        arr.push_back(window_node_to_json(c));
+      o["children"] = arr;
+    }
+    return o;
+  }
+
+  static json::Object window_info_to_json(const WindowInfo& wi)
+  {
+    json::Object o;
+    o["hwnd"] = Hwnd(wi.hwnd).to_string();
+    o["parent"] = Hwnd(wi.parent).to_string();
+    o["owner"] = Hwnd(wi.owner).to_string();
+    o["class_name"] = wi.class_name;
+    o["title"] = wi.title;
+
+    auto r2j = [](const Rect& r) -> json::Object {
+      json::Object obj;
+      obj["left"] = (double)r.left;
+      obj["top"] = (double)r.top;
+      obj["right"] = (double)r.right;
+      obj["bottom"] = (double)r.bottom;
+      return obj;
+    };
+    o["window_rect"] = r2j(wi.window_rect);
+    o["client_rect"] = r2j(wi.client_rect);
+    o["screen_rect"] = r2j(wi.screen_rect);
+
+    o["pid"] = (double)wi.pid;
+    o["tid"] = (double)wi.tid;
+    o["style"] = Hwnd(wi.style).to_string();
+    o["exstyle"] = Hwnd(wi.exstyle).to_string();
+
+    json::Array sf, esf;
+    for (const auto& s : wi.style_flags)
+      sf.push_back(s);
+    for (const auto& s : wi.ex_style_flags)
+      esf.push_back(s);
+    o["style_flags"] = sf;
+    o["ex_style_flags"] = esf;
+
+    o["visible"] = wi.visible;
+    o["enabled"] = wi.enabled;
+    o["iconic"] = wi.iconic;
+    o["zoomed"] = wi.zoomed;
+    o["process_image"] = wi.process_image;
+    return o;
+  }
+
+  static json::Object ui_element_to_json(const UIElementInfo& el)
+  {
+    json::Object o;
+    o["automation_id"] = el.automation_id;
+    o["name"] = el.name;
+    o["class_name"] = el.class_name;
+    o["control_type"] = el.control_type;
+
+    json::Object r;
+    r["left"] = (double)el.bounding_rect.left;
+    r["top"] = (double)el.bounding_rect.top;
+    r["right"] = (double)el.bounding_rect.right;
+    r["bottom"] = (double)el.bounding_rect.bottom;
+    o["bounding_rect"] = r;
+    o["enabled"] = el.enabled;
+    o["visible"] = el.visible;
+
+    if (!el.children.empty()) {
+      json::Array arr;
+      for (const auto& c : el.children)
+        arr.push_back(ui_element_to_json(c));
+      o["children"] = arr;
+    }
+    return o;
+  }
+
+  // --- dispatch table builder ---
+
+  static json::Value ok_json(bool v)
+  {
+    json::Object o;
+    o["ok"] = v;
+    return o;
+  }
+  static json::Value sent_json(bool v)
+  {
+    json::Object o;
+    o["sent"] = v;
+    return o;
+  }
+  static json::Value changed_json(bool v)
+  {
+    json::Object o;
+    o["changed"] = v;
+    return o;
+  }
+
+  // ── Method Policy Table ────────────────────────────────────────────────────
+  // Classifies every dispatch method for read-only enforcement, auth requirements,
+  // and capability gating. Adding a new method requires an entry here.
+
+  const std::unordered_map<std::string, CoreEngine::MethodPolicy>& CoreEngine::policy_table()
+  {
+    static const std::unordered_map<std::string, MethodPolicy> table = {
+        // Query methods (side-effect-free)
+        {"window.listTop", {false, false, nullptr}},
+        {"window.listChildren", {false, false, nullptr}},
+        {"window.getTree", {false, false, nullptr}},
+        {"window.getInfo", {false, false, nullptr}},
+        {"window.pickAtPoint", {false, false, nullptr}},
+        {"window.getZOrder", {false, false, nullptr}},
+        {"window.findRegex", {false, false, nullptr}},
+        {"screen.getPixel", {false, false, nullptr}},
+        {"screen.capture", {false, false, nullptr}},
+        {"screen.desktopInfo", {false, false, nullptr}},
+        {"screen.pixelSearch", {false, false, nullptr}},
+        {"process.list", {false, false, nullptr}},
+        {"file.getInfo", {false, false, nullptr}},
+        {"file.read", {false, false, nullptr}},
+        {"clipboard.read", {false, false, "clipboard"}},
+        {"service.list", {false, false, "service"}},
+        {"service.status", {false, false, "service"}},
+        {"env.get", {false, false, nullptr}},
+        {"wine.drives", {false, false, nullptr}},
+        {"wine.overrides", {false, false, nullptr}},
+        {"sync.checkMutex", {false, false, nullptr}},
+        {"mem.read", {false, false, "memory"}},
+        {"image.match", {false, false, nullptr}},
+        {"ui.inspect", {false, false, "uia"}},
+        {"daemon.health", {false, false, nullptr}},
+        {"daemon.capabilities", {false, false, nullptr}},
+        {"daemon.checkUpdate", {false, false, nullptr}},
+        {"daemon.status", {false, false, nullptr}},
+        {"daemon.identity", {false, false, nullptr}},
+        {"daemon.metrics", {false, false, nullptr}},
+        {"daemon.diag", {false, false, nullptr}},
+        {"daemon.notify", {true, false, nullptr}},
+        {"daemon.shutdown", {true, false, nullptr}},
+        {"daemon.logs", {false, false, nullptr}},
+        {"daemon.recordingStatus", {false, false, nullptr}},
+        {"credential.list", {false, true, nullptr}},
+        {"credential.retrieve", {false, true, nullptr}},
+        {"events.poll", {false, false, nullptr}},
+        {"session.terminate", {false, false, nullptr}},
+        {"reg.read", {false, false, nullptr}},
+
+        // Desired-state methods (idempotent, non-destructive)
+        {"window.highlight", {false, false, "highlight"}},
+        {"window.ensureVisible", {false, false, nullptr}},
+        {"window.ensureForeground", {false, false, nullptr}},
+
+        // Mutation methods (blocked in read-only mode)
+        {"window.setProperty", {true, false, nullptr}},
+        {"window.move", {true, false, nullptr}},
+        {"window.resize", {true, false, nullptr}},
+        {"window.postMessage", {true, true, nullptr}},
+        {"input.send", {true, true, "input"}},
+        {"input.mouseClick", {true, true, "input"}},
+        {"input.mouseDrag", {true, true, "input"}},
+        {"input.keyPress", {true, true, "input"}},
+        {"input.text", {true, true, "input"}},
+        {"input.hotkey", {true, true, "input"}},
+        {"input.hook", {true, true, "input"}},
+        {"window.controlClick", {true, true, nullptr}},
+        {"window.controlSend", {true, true, nullptr}},
+        {"process.execute", {true, true, nullptr}},
+        {"process.kill", {true, true, nullptr}},
+        {"clipboard.write", {true, false, "clipboard"}},
+        {"service.control", {true, true, "service"}},
+        {"env.set", {true, false, nullptr}},
+        {"sync.createMutex", {true, false, nullptr}},
+        {"mem.write", {true, true, "memory"}},
+        {"ui.invoke", {true, true, "uia"}},
+        {"reg.write", {true, true, "registry"}},
+        {"reg.delete", {true, true, "registry"}},
+        {"credential.store", {true, true, nullptr}},
+        {"credential.delete", {true, true, nullptr}},
+        {"credential.generate", {true, true, nullptr}},
+        {"daemon.downloadUpdate", {true, true, nullptr}},
+        {"daemon.session.startRecording", {true, false, nullptr}},
+        {"daemon.session.stopRecording", {true, false, nullptr}},
+    };
+    return table;
+  }
+
+  void CoreEngine::build_dispatch_table()
+  {
+    IBackend* b = backend_; // stored in the class, but we capture by member ptr via this
+
+    // --- snapshot + events (handled in daemon layer) ---
+    dispatch_["events.poll"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                      const Snapshot* old) -> CoreResponse {
+      CoreResponse resp;
+      resp.id = req.id;
+      if (!old)
+        throw std::runtime_error("events.poll requires two snapshots");
+      auto wait_ms = get_num(req.params, "wait_ms").value_or(0);
+      auto interval_ms = get_num(req.params, "interval_ms").value_or(100);
+      auto start = std::chrono::steady_clock::now();
+      while (true) {
+        auto events = backend_->poll_events(*old, snap);
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
+        if (!events.empty() || wait_ms == 0 || elapsed >= (int64_t)wait_ms) {
+          json::Array arr;
+          for (size_t i = 0; i < events.size(); ++i) {
+            events[i].seq = i + 1;
+            arr.push_back(event_to_json(events[i]));
+          }
+          resp.ok = true;
+          resp.result = arr;
+          return resp;
+        }
+        auto sleep_for_ms = std::min((int64_t)interval_ms, (int64_t)wait_ms - elapsed);
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_for_ms));
+      }
+    };
+
+    dispatch_["session.terminate"] = [](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      json::Object o;
+      o["terminated"] = true;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- window methods ---
+    dispatch_["window.listTop"] = [this](const CoreRequest&, const Snapshot& snap,
+                                         const Snapshot*) {
+      CoreResponse resp;
+      auto top = backend_->list_top(snap);
+      json::Array arr;
+      for (auto h : top) {
+        json::Object e;
+        e["hwnd"] = Hwnd(h).to_string();
+        arr.emplace_back(e);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["window.listChildren"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                              const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      auto ch = backend_->list_children(snap, *hwnd);
+      json::Array arr;
+      for (auto h : ch) {
+        json::Object e;
+        e["hwnd"] = Hwnd(h).to_string();
+        arr.emplace_back(e);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["window.getTree"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                         const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      hwnd_u64 root = 0;
+      if (hwnd_s) {
+        auto h = parse_hwnd(*hwnd_s);
+        if (!h)
+          throw std::runtime_error("bad hwnd");
+        root = *h;
+      }
+      auto nodes = backend_->get_window_tree(snap, root);
+      json::Array arr;
+      for (const auto& n : nodes)
+        arr.push_back(window_node_to_json(n));
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["window.highlight"] = [this](const CoreRequest& req, const Snapshot&,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      json::Object o;
+      o["highlighted"] = backend_->highlight_window(*hwnd);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["window.getInfo"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                         const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      auto info = backend_->get_info(snap, *hwnd);
+      if (!info) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_HWND";
+        resp.error_message = "not a valid window handle";
+        return resp;
+      }
+      resp.ok = true;
+      resp.result = window_info_to_json(*info);
+      return resp;
+    };
+
+    dispatch_["window.pickAtPoint"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                             const Snapshot*) {
+      CoreResponse resp;
+      auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
+      PickFlags flags;
+      if (auto bv = get_bool(req.params, "prefer_child"))
+        flags.prefer_child = *bv;
+      if (auto bv = get_bool(req.params, "ignore_transparent"))
+        flags.ignore_transparent = *bv;
+      auto h = backend_->pick_at_point(snap, (int)*x, (int)*y, flags);
+      if (!h) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        resp.error_message = "no window at point";
+        return resp;
+      }
+      json::Object o;
+      o["hwnd"] = Hwnd(*h).to_string();
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- desired-state actions (idempotent) ---
+    dispatch_["window.ensureVisible"] = [this](const CoreRequest& req, const Snapshot&,
+                                               const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto vis = get_bool(req.params, "visible");
+      if (!hwnd_s || !vis)
+        throw std::runtime_error("missing hwnd/visible");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = changed_json(backend_->ensure_visible(*hwnd, *vis).changed);
+      return resp;
+    };
+
+    dispatch_["window.ensureForeground"] = [this](const CoreRequest& req, const Snapshot&,
+                                                  const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = changed_json(backend_->ensure_foreground(*hwnd).changed);
+      return resp;
+    };
+
+    dispatch_["window.setProperty"] = [this](const CoreRequest& req, const Snapshot&,
+                                             const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto name = get_str(req.params, "name");
+      auto val = get_str(req.params, "value");
+      if (!hwnd_s || !name || !val)
+        throw std::runtime_error("missing hwnd/name/value");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = ok_json(backend_->set_property(*hwnd, *name, *val));
+      return resp;
+    };
+
+    dispatch_["window.getZOrder"] = [this](const CoreRequest& req, const Snapshot&,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      auto zo = backend_->get_z_order(*hwnd);
+      if (!zo) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_HWND";
+        resp.error_message = "invalid window";
+        return resp;
+      }
+      json::Object o;
+      o["z_index"] = (double)zo->first;
+      o["total_siblings"] = (double)zo->second;
+      o["hwnd"] = *hwnd_s;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["window.move"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto x = get_num(req.params, "x");
+      auto y = get_num(req.params, "y");
+      if (!hwnd_s || !x || !y)
+        throw std::runtime_error("missing hwnd/x/y");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = ok_json(backend_->move_window(*hwnd, (int)*x, (int)*y));
+      return resp;
+    };
+
+    dispatch_["window.resize"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto w = get_num(req.params, "width");
+      auto h = get_num(req.params, "height");
+      if (!hwnd_s || !w || !h)
+        throw std::runtime_error("missing hwnd/width/height");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = ok_json(backend_->resize_window(*hwnd, (int)*w, (int)*h));
+      return resp;
+    };
+
+    dispatch_["window.postMessage"] = [this](const CoreRequest& req, const Snapshot&,
+                                             const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto msg = get_num(req.params, "msg");
+      if (!hwnd_s || !msg)
+        throw std::runtime_error("missing hwnd/msg");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      auto wparam = get_num(req.params, "wparam"), lparam = get_num(req.params, "lparam");
+      resp.ok = true;
+      resp.result = sent_json(backend_->post_message(
+          *hwnd, (uint32_t)*msg, (uint64_t)(wparam.value_or(0)), (uint64_t)(lparam.value_or(0))));
+      return resp;
+    };
+
+    // --- input methods ---
+    dispatch_["input.send"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto data_b64 = get_str(req.params, "data_b64");
+      if (!data_b64)
+        throw std::runtime_error("missing data_b64");
+      resp.ok = true;
+      resp.result = sent_json(backend_->send_input(base64::decode(*data_b64)));
+      return resp;
+    };
+
+    dispatch_["input.mouseClick"] = [this](const CoreRequest& req, const Snapshot&,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
+      int btn = (int)get_num(req.params, "button").value_or(0);
+      resp.ok = true;
+      resp.result = sent_json(backend_->send_mouse_click((int)*x, (int)*y, btn));
+      return resp;
+    };
+
+    dispatch_["input.mouseDrag"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto sx = get_num(req.params, "start_x"), sy = get_num(req.params, "start_y");
+      auto ex = get_num(req.params, "end_x"), ey = get_num(req.params, "end_y");
+      if (!sx || !sy || !ex || !ey)
+        throw std::runtime_error("missing start/end coords");
+      int btn = (int)get_num(req.params, "button").value_or(0);
+      int dur = (int)get_num(req.params, "duration_ms").value_or(200);
+      resp.ok = true;
+      resp.result =
+          sent_json(backend_->mouse_drag((int)*sx, (int)*sy, (int)*ex, (int)*ey, btn, dur));
+      return resp;
+    };
+
+    dispatch_["input.keyPress"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto vk = get_num(req.params, "vk");
+      if (!vk)
+        throw std::runtime_error("missing vk");
+      resp.ok = true;
+      resp.result = sent_json(backend_->send_key_press((int)*vk));
+      return resp;
+    };
+
+    dispatch_["input.text"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto text = get_str(req.params, "text");
+      if (!text)
+        throw std::runtime_error("missing text");
+      resp.ok = true;
+      resp.result = sent_json(backend_->send_text(*text));
+      return resp;
+    };
+
+    dispatch_["input.hotkey"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto keys = get_str(req.params, "keys");
+      if (!keys)
+        throw std::runtime_error("missing keys");
+      resp.ok = true;
+      resp.result = sent_json(backend_->send_hotkey(*keys));
+      return resp;
+    };
+
+    // --- stealth input ---
+    dispatch_["window.controlClick"] = [this](const CoreRequest& req, const Snapshot&,
+                                              const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto x = get_num(req.params, "x");
+      auto y = get_num(req.params, "y");
+      if (!hwnd_s || !x || !y)
+        throw std::runtime_error("missing hwnd/x/y");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      int btn = (int)get_num(req.params, "button").value_or(0);
+      resp.ok = true;
+      resp.result = sent_json(backend_->control_click(*hwnd, (int)*x, (int)*y, btn));
+      return resp;
+    };
+
+    dispatch_["window.controlSend"] = [this](const CoreRequest& req, const Snapshot&,
+                                             const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto text = get_str(req.params, "text");
+      if (!hwnd_s || !text)
+        throw std::runtime_error("missing hwnd/text");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      resp.ok = true;
+      resp.result = sent_json(backend_->control_send(*hwnd, *text));
+      return resp;
+    };
+
+    // --- screen methods ---
+    dispatch_["screen.getPixel"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto x = get_num(req.params, "x"), y = get_num(req.params, "y");
+      if (!x || !y)
+        throw std::runtime_error("missing x/y");
+      auto c = backend_->get_pixel((int)*x, (int)*y);
+      if (!c)
+        throw std::runtime_error("failed to get pixel");
+      json::Object o;
+      o["hex"] = c->to_hex();
+      o["r"] = (double)c->r;
+      o["g"] = (double)c->g;
+      o["b"] = (double)c->b;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["screen.capture"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
+           r = get_num(req.params, "right"), bm = get_num(req.params, "bottom");
+      if (!l || !t || !r || !bm)
+        throw std::runtime_error("missing region");
+      Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
+      auto sc = backend_->capture_screen(rect);
+      if (!sc)
+        throw std::runtime_error("capture failed");
+      json::Object o;
+      o["width"] = (double)sc->width;
+      o["height"] = (double)sc->height;
+      o["data_b64"] = sc->data_b64;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["screen.desktopInfo"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto info = backend_->get_desktop_info();
+      json::Object o;
+      o["width"] = (double)info.width;
+      o["height"] = (double)info.height;
+      o["dpi_x"] = (double)info.dpi_x;
+      o["dpi_y"] = (double)info.dpi_y;
+      o["scale_factor"] = info.scale_factor;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["screen.pixelSearch"] = [this](const CoreRequest& req, const Snapshot&,
+                                             const Snapshot*) {
+      CoreResponse resp;
+      auto l = get_num(req.params, "left"), t = get_num(req.params, "top"),
+           r = get_num(req.params, "right"), bm = get_num(req.params, "bottom"),
+           rv = get_num(req.params, "r"), gv = get_num(req.params, "g"),
+           bv = get_num(req.params, "b");
+      if (!l || !t || !r || !bm || !rv || !gv || !bv)
+        throw std::runtime_error("missing parameters");
+      Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
+      Color target{(uint8_t)*rv, (uint8_t)*gv, (uint8_t)*bv};
+      int var = (int)get_num(req.params, "variation").value_or(0);
+      auto res = backend_->pixel_search(rect, target, var);
+      if (res) {
+        json::Object o;
+        o["x"] = (double)res->first;
+        o["y"] = (double)res->second;
+        resp.ok = true;
+        resp.result = o;
+      }
+      else {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        resp.error_message = "color not found in region";
+      }
+      return resp;
+    };
+
+    // --- process ---
+    dispatch_["process.list"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto procs = backend_->list_processes();
+      json::Array arr;
+      for (const auto& p : procs) {
+        json::Object o;
+        o["pid"] = (double)p.pid;
+        o["name"] = p.name;
+        o["path"] = p.path;
+        arr.push_back(o);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["process.execute"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto cmd = get_str(req.params, "command");
+      if (!cmd)
+        throw std::runtime_error("missing command");
+      auto args = get_str(req.params, "args").value_or("");
+      auto r = backend_->execute_process(*cmd, args);
+      json::Object o;
+      o["pid"] = (double)r.pid;
+      o["stdout"] = r.stdout_str;
+      o["stderr"] = r.stderr_str;
+      o["exit_code"] = (double)r.exit_code;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["process.kill"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto pid = get_num(req.params, "pid");
+      if (!pid)
+        throw std::runtime_error("missing pid");
+      resp.ok = true;
+      resp.result = ok_json(backend_->kill_process((uint32_t)*pid));
+      return resp;
+    };
+
+    // --- file ---
+    dispatch_["file.getInfo"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto path = get_str(req.params, "path");
+      if (!path)
+        throw std::runtime_error("missing path");
+      auto fi = backend_->get_file_info(*path);
+      if (!fi) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        return resp;
+      }
+      json::Object o;
+      o["path"] = fi->path;
+      o["size"] = (double)fi->size;
+      o["is_directory"] = fi->is_directory;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["file.read"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto path = get_str(req.params, "path");
+      if (!path)
+        throw std::runtime_error("missing path");
+      auto content = backend_->read_file_content(*path);
+      if (!content) {
+        resp.ok = false;
+        resp.error_code = "E_READ_FAILED";
+        return resp;
+      }
+      json::Object o;
+      o["content_b64"] = base64::encode(std::vector<uint8_t>(content->begin(), content->end()));
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- clipboard ---
+    dispatch_["clipboard.read"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto text = backend_->clipboard_read();
+      json::Object o;
+      if (text)
+        o["text"] = *text;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["clipboard.write"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto text = get_str(req.params, "text");
+      if (!text)
+        throw std::runtime_error("missing text");
+      resp.ok = true;
+      resp.result = ok_json(backend_->clipboard_write(*text));
+      return resp;
+    };
+
+    // --- services ---
+    dispatch_["service.list"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto svcs = backend_->service_list();
+      json::Array arr;
+      for (const auto& s : svcs) {
+        json::Object o;
+        o["name"] = s.name;
+        o["display_name"] = s.display_name;
+        o["state"] = s.state;
+        arr.push_back(o);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["service.status"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto name = get_str(req.params, "name");
+      if (!name)
+        throw std::runtime_error("missing name");
+      json::Object o;
+      o["status"] = backend_->service_status(*name);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["service.control"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto name = get_str(req.params, "name"), action = get_str(req.params, "action");
+      if (!name || !action)
+        throw std::runtime_error("missing name/action");
+      resp.ok = true;
+      resp.result = ok_json(backend_->service_control(*name, *action));
+      return resp;
+    };
+
+    // --- env ---
+    dispatch_["env.get"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto vars = backend_->env_get_all();
+      json::Object o;
+      for (const auto& v : vars) {
+        // Redact credential-like environment variables by default.
+        // Use --env-include-secrets to disable this filter.
+        std::string upper = v.name;
+        for (auto& c : upper)
+          c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        bool sensitive =
+            (upper.find("SECRET") != std::string::npos ||
+             upper.find("TOKEN") != std::string::npos || upper.find("KEY") != std::string::npos ||
+             upper.find("PASSWORD") != std::string::npos ||
+             upper.find("PASSWD") != std::string::npos ||
+             upper.find("CREDENTIAL") != std::string::npos ||
+             upper.find("AUTH") != std::string::npos);
+        o[v.name] = sensitive ? "<REDACTED>" : v.value;
+      }
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["env.set"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto name = get_str(req.params, "name"), val = get_str(req.params, "value");
+      if (!name || !val)
+        throw std::runtime_error("missing name/value");
+      resp.ok = true;
+      resp.result = ok_json(backend_->env_set(*name, *val));
+      return resp;
+    };
+
+    // --- wine ---
+    dispatch_["wine.drives"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto drives = backend_->wine_get_drives();
+      json::Array arr;
+      for (const auto& d : drives) {
+        json::Object o;
+        o["letter"] = d.letter;
+        o["mapping"] = d.mapping;
+        o["type"] = d.type;
+        arr.push_back(o);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["wine.overrides"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto ovr = backend_->wine_get_overrides();
+      json::Array arr;
+      for (const auto& s : ovr)
+        arr.push_back(s);
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    // --- sync ---
+    dispatch_["sync.checkMutex"] = [this](const CoreRequest& req, const Snapshot&,
+                                          const Snapshot*) {
+      CoreResponse resp;
+      auto name = get_str(req.params, "name");
+      if (!name)
+        throw std::runtime_error("missing name");
+      json::Object o;
+      o["exists"] = backend_->sync_check_mutex(*name);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["sync.createMutex"] = [this](const CoreRequest& req, const Snapshot&,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto name = get_str(req.params, "name");
+      if (!name)
+        throw std::runtime_error("missing name");
+      bool own = get_bool(req.params, "own").value_or(true);
+      json::Object o;
+      o["created"] = backend_->sync_create_mutex(*name, own);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- memory ---
+    dispatch_["mem.read"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto pid = get_num(req.params, "pid"), addr = get_num(req.params, "address"),
+           sz = get_num(req.params, "size");
+      if (!pid || !addr || !sz)
+        throw std::runtime_error("missing parameters");
+      auto res = backend_->mem_read((uint32_t)*pid, (uint64_t)*addr, (size_t)*sz);
+      if (!res) {
+        resp.ok = false;
+        return resp;
+      }
+      json::Object o;
+      o["address"] = (double)res->address;
+      o["data_b64"] = res->data_b64;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["mem.write"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto pid = get_num(req.params, "pid");
+      auto addr = get_num(req.params, "address");
+      auto data_b64 = get_str(req.params, "data_b64");
+      if (!pid || !addr || !data_b64)
+        throw std::runtime_error("missing parameters");
+      auto data = base64::decode(*data_b64);
+      resp.ok = true;
+      resp.result = ok_json(backend_->mem_write((uint32_t)*pid, (uint64_t)*addr, data));
+      return resp;
+    };
+
+    // --- image ---
+    dispatch_["image.match"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto l = get_num(req.params, "left"), t = get_num(req.params, "top");
+      auto r = get_num(req.params, "right"), bm = get_num(req.params, "bottom");
+      auto sub_b64 = get_str(req.params, "sub_image_b64");
+      if (!l || !t || !r || !bm || !sub_b64)
+        throw std::runtime_error("missing parameters");
+      Rect rect{(long)*l, (long)*t, (long)*r, (long)*bm};
+      auto sub = base64::decode(*sub_b64);
+      auto res = backend_->image_match(rect, sub);
+      if (!res) {
+        resp.ok = false;
+        return resp;
+      }
+      json::Object o;
+      o["x"] = (double)res->x;
+      o["y"] = (double)res->y;
+      o["confidence"] = res->confidence;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- input hook ---
+    dispatch_["input.hook"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto enabled = get_bool(req.params, "enabled");
+      if (!enabled)
+        throw std::runtime_error("missing enabled");
+      resp.ok = true;
+      resp.result = ok_json(backend_->input_hook_enable(*enabled));
+      return resp;
+    };
+
+    // --- regex ---
+    dispatch_["window.findRegex"] = [this](const CoreRequest& req, const Snapshot& snap,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto t_re = get_str(req.params, "title_regex").value_or(".*");
+      auto c_re = get_str(req.params, "class_regex").value_or(".*");
+      auto hwnds = backend_->find_windows_regex(t_re, c_re);
+      json::Array arr;
+      for (auto h : hwnds) {
+        json::Object e;
+        e["hwnd"] = Hwnd(h).to_string();
+        arr.push_back(e);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    // --- registry ---
+    dispatch_["reg.read"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto path = get_str(req.params, "path");
+      if (!path)
+        throw std::runtime_error("missing path");
+      auto res = backend_->reg_read(*path);
+      if (!res) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        return resp;
+      }
+      json::Object o;
+      o["path"] = res->path;
+      json::Array sk;
+      for (const auto& s : res->subkeys)
+        sk.push_back(s);
+      o["subkeys"] = sk;
+      json::Array vals;
+      for (const auto& v : res->values) {
+        json::Object vo;
+        vo["name"] = v.name;
+        vo["type"] = v.type;
+        vo["data"] = v.data;
+        vals.push_back(vo);
+      }
+      o["values"] = vals;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["reg.write"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto path = get_str(req.params, "path"), name = get_str(req.params, "name"),
+           type = get_str(req.params, "type"), data = get_str(req.params, "data");
+      if (!path || !name || !type || !data)
+        throw std::runtime_error("missing parameters");
+      RegistryValue rv;
+      rv.name = *name;
+      rv.type = *type;
+      rv.data = *data;
+      resp.ok = true;
+      resp.result = ok_json(backend_->reg_write(*path, rv));
+      return resp;
+    };
+
+    dispatch_["reg.delete"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto path = get_str(req.params, "path");
+      if (!path)
+        throw std::runtime_error("missing path");
+      auto name = get_str(req.params, "name").value_or("");
+      resp.ok = true;
+      resp.result = ok_json(backend_->reg_delete(*path, name));
+      return resp;
+    };
+
+    // --- ui automation ---
+    dispatch_["ui.inspect"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      if (!hwnd_s)
+        throw std::runtime_error("missing hwnd");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      auto elements = backend_->inspect_ui_elements(*hwnd);
+      json::Array arr;
+      for (const auto& el : elements)
+        arr.push_back(ui_element_to_json(el));
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    dispatch_["ui.invoke"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto hwnd_s = get_str(req.params, "hwnd");
+      auto aid = get_str(req.params, "automation_id");
+      if (!hwnd_s || !aid)
+        throw std::runtime_error("missing hwnd/automation_id");
+      auto hwnd = parse_hwnd(*hwnd_s);
+      if (!hwnd)
+        throw std::runtime_error("bad hwnd");
+      json::Object o;
+      o["invoked"] = backend_->invoke_ui_element(*hwnd, *aid);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    // --- daemon meta ---
+    dispatch_["daemon.health"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      resp.ok = true;
+      resp.result = backend_->get_env_metadata();
+      return resp;
+    };
+
+    dispatch_["daemon.capabilities"] = [this](const CoreRequest&, const Snapshot&,
+                                              const Snapshot*) {
+      CoreResponse resp;
+      auto caps = backend_->get_capabilities();
+      json::Object o;
+      o["os"] = caps.os;
+      o["is_wine"] = caps.is_wine;
+      o["arch"] = caps.arch;
+      o["win_major"] = (double)caps.win_major;
+      o["win_minor"] = (double)caps.win_minor;
+      o["win_build"] = (double)caps.win_build;
+      if (!caps.wine_version.empty())
+        o["wine_version"] = caps.wine_version;
+      json::Object features;
+      features["uia"] = caps.uia_available;
+      features["clipboard"] = caps.clipboard_available;
+      features["registry_write"] = caps.registry_writable;
+      features["service_manager"] = caps.service_manager;
+      features["process_memory"] = caps.process_memory;
+      features["input_injection"] = caps.input_injection;
+      features["window_highlight"] = caps.window_highlight;
+      features["dxgi_capture"] = caps.dxgi_capture;
+      features["pipe_available"] = caps.pipe_available;
+      o["features"] = features;
+      o["daemon_state"] = daemon_state_;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.checkUpdate"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto info = backend_->check_for_update();
+      json::Object o;
+      o["update_available"] = info.update_available;
+      o["current_version"] = info.current_version;
+      o["latest_version"] = info.latest_version;
+      o["installer_url"] = info.installer_url;
+      o["portable_zip_url"] = info.portable_zip_url;
+      o["release_notes"] = info.release_notes;
+      if (!info.error.empty())
+        o["error"] = info.error;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.notify"] = [this](const CoreRequest& req, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      json::Object o;
+      o["ok"] = true;
+      auto title = get_str(req.params, "title");
+      auto message = get_str(req.params, "message");
+      if (title) {
+        LOG_INFO("Agent notification: [" + *title + "] " + (message ? *message : ""));
+      }
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.shutdown"] = [](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      // Signal the daemon to shut down gracefully.
+      // We schedule exit on a thread so the RPC response is sent first.
+      CoreResponse resp;
+      resp.ok = true;
+      resp.result = json::Object{{"ok", true}};
+      std::thread([]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::exit(0);
+      }).detach();
+      return resp;
+    };
+
+    dispatch_["daemon.downloadUpdate"] = [this](const CoreRequest& req, const Snapshot&,
+                                                const Snapshot*) {
+      CoreResponse resp;
+      auto url = get_str(req.params, "url").value_or("");
+      auto type_hint = get_str(req.params, "type").value_or("installer");
+      auto path = backend_->download_update(url, type_hint);
+      json::Object o;
+      if (path.empty()) {
+        resp.ok = false;
+        o["ok"] = false;
+        o["error"] = "download failed";
+      }
+      else {
+        o["ok"] = true;
+        o["path"] = path;
+      }
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.status"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      json::Object o;
+      o["version"] = std::string(WININSPECT_VERSION);
+      o["protocol"] = std::string(PROTOCOL_VERSION);
+      o["mode"] = admin_logs_enabled_ ? "admin" : "normal";
+      auto caps = backend_->get_capabilities();
+      json::Object features;
+      features["uia"] = caps.uia_available;
+      features["clipboard"] = caps.clipboard_available;
+      features["input_injection"] = caps.input_injection;
+      features["dxgi_capture"] = caps.dxgi_capture;
+      o["features"] = features;
+      o["daemon_state"] = daemon_state_;
+      o["deployment"] = deployment_;
+      o["license"] = license_type_;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.identity"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      auto id = backend_->get_instance_identity();
+      json::Object o;
+      o["uuid"] = id.uuid;
+      o["name"] = id.name;
+      o["hostname"] = id.hostname;
+      if (!id.ecdh_pubkey.empty())
+        o["ecdh_pubkey"] = id.ecdh_pubkey;
+      o["version"] = std::string(WININSPECT_VERSION);
+      o["deployment"] = deployment_;
+      o["license"] = license_type_;
+      json::Object brand;
+      brand["tagline"] = "window inspection for Windows and Wine";
+      brand["mascot"] = "Strix the Window Owl";
+      brand["color"] = "#1565c0";
+      o["brand"] = brand;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.metrics"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      resp.ok = true;
+      resp.result = metrics_collector_.snapshot();
+      return resp;
+    };
+
+    dispatch_["daemon.diag"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      json::Object bundle;
+      bundle["version"] = std::string(WININSPECT_VERSION);
+      bundle["protocol"] = std::string(PROTOCOL_VERSION);
+      bundle["collected_at"] =
+          std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count());
+
+      // Health / environment
+      bundle["health"] = backend_->get_env_metadata();
+
+      // Identity
+      auto id = backend_->get_instance_identity();
+      json::Object idObj;
+      idObj["uuid"] = id.uuid;
+      idObj["name"] = id.name;
+      idObj["hostname"] = id.hostname;
+      bundle["identity"] = idObj;
+
+      // Capabilities
+      auto caps = backend_->get_capabilities();
+      json::Object capsObj;
+      capsObj["os"] = caps.os;
+      capsObj["is_wine"] = caps.is_wine;
+      capsObj["arch"] = caps.arch;
+      capsObj["win_major"] = (double)caps.win_major;
+      capsObj["win_minor"] = (double)caps.win_minor;
+      capsObj["win_build"] = (double)caps.win_build;
+      if (!caps.wine_version.empty())
+        capsObj["wine_version"] = caps.wine_version;
+      json::Object features;
+      features["uia"] = caps.uia_available;
+      features["clipboard"] = caps.clipboard_available;
+      features["registry_write"] = caps.registry_writable;
+      features["input_injection"] = caps.input_injection;
+      features["dxgi_capture"] = caps.dxgi_capture;
+      capsObj["features"] = features;
+      bundle["capabilities"] = capsObj;
+
+      // Performance metrics
+      bundle["metrics"] = metrics_collector_.snapshot();
+
+      resp.ok = true;
+      resp.result = bundle;
+      return resp;
+    };
+
+    // ── Credential Management ───────────────────────────────────────────
+    // Requires --auth-keys (encrypted TCP) for access.
+    // Credential blobs are NEVER logged or included in diagnostic output.
+
+    dispatch_["credential.store"] = [this](const CoreRequest& req, const Snapshot&,
+                                           const Snapshot*) {
+      CoreResponse resp;
+      auto target = get_str(req.params, "target");
+      auto username = get_str(req.params, "username");
+      auto type_opt = get_str(req.params, "type");
+      auto data_b64 = get_str(req.params, "data_b64");
+      if (!target || !username || !data_b64) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_REQUEST";
+        resp.error_message = "missing target, username, or data_b64";
+        return resp;
+      }
+      auto blob = base64::decode(*data_b64);
+      if (blob.empty()) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_REQUEST";
+        resp.error_message = "empty data";
+        return resp;
+      }
+      std::string stype = type_opt.value_or("generic");
+      cred_mgr_.force_dpapi();
+      bool ok = cred_mgr_.store(*target, *username, stype, blob);
+      json::Object o;
+      o["ok"] = ok;
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["credential.retrieve"] = [this](const CoreRequest& req, const Snapshot&,
+                                              const Snapshot*) {
+      CoreResponse resp;
+      auto target = get_str(req.params, "target");
+      if (!target) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_REQUEST";
+        resp.error_message = "missing target";
+        return resp;
+      }
+      cred_mgr_.force_dpapi();
+      auto entry = cred_mgr_.retrieve(*target);
+      if (!entry) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_FOUND";
+        return resp;
+      }
+      json::Object o;
+      o["target"] = entry->target;
+      o["username"] = entry->username;
+      o["type"] = entry->type;
+      if (!entry->blob.empty())
+        o["data_b64"] = base64::encode(entry->blob);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["credential.delete"] = [this](const CoreRequest& req, const Snapshot&,
+                                            const Snapshot*) {
+      CoreResponse resp;
+      auto target = get_str(req.params, "target");
+      if (!target) {
+        resp.ok = false;
+        resp.error_code = "E_BAD_REQUEST";
+        resp.error_message = "missing target";
+        return resp;
+      }
+      cred_mgr_.force_dpapi();
+      json::Object o;
+      o["ok"] = cred_mgr_.remove(*target);
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["credential.list"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      cred_mgr_.force_dpapi();
+      auto entries = cred_mgr_.list();
+      json::Array arr;
+      for (auto& e : entries) {
+        json::Object o;
+        o["target"] = e.target;
+        o["username"] = e.username;
+        o["type"] = e.type;
+        arr.push_back(o);
+      }
+      json::Object result;
+      result["credentials"] = arr;
+      result["count"] = (double)arr.size();
+      resp.ok = true;
+      resp.result = result;
+      return resp;
+    };
+
+    dispatch_["credential.generate"] = [this](const CoreRequest& req, const Snapshot&,
+                                              const Snapshot*) {
+      CoreResponse resp;
+      auto type = get_str(req.params, "type").value_or("password");
+      auto length = (size_t)get_num(req.params, "length").value_or(32);
+      auto target = get_str(req.params, "target");
+
+      json::Object o;
+      if (type == "password" || type == "password-only") {
+        o["password"] = CredentialManager::generate_password(length);
+        if (target) {
+          cred_mgr_.force_dpapi();
+          std::vector<uint8_t> blob(o["password"].as_str().begin(), o["password"].as_str().end());
+          cred_mgr_.store(*target, "generated", "password", blob);
+          o["stored"] = true;
+        }
+        else {
+          o["stored"] = false;
+        }
+      }
+      else if (type == "ed25519") {
+        auto kp = CredentialManager::generate_ed25519_keypair();
+        o["private_key"] = kp.first;
+        o["public_key"] = kp.second;
+        if (target) {
+          cred_mgr_.force_dpapi();
+          std::vector<uint8_t> blob(kp.first.begin(), kp.first.end());
+          cred_mgr_.store(*target, "generated", "ssh-key", blob);
+          o["stored"] = true;
+        }
+        else {
+          o["stored"] = false;
+        }
+      }
+      else {
+        resp.ok = false;
+        resp.error_code = "E_BAD_REQUEST";
+        resp.error_message = "unknown type: " + type;
+        return resp;
+      }
+      resp.ok = true;
+      resp.result = o;
+      return resp;
+    };
+
+    dispatch_["daemon.logs"] = [this](const CoreRequest&, const Snapshot&, const Snapshot*) {
+      CoreResponse resp;
+      if (!admin_logs_enabled_) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "admin logs not enabled (use --admin-logs)";
+        return resp;
+      }
+      auto logs = Logger::get().get_recent_logs();
+      json::Array arr;
+      for (const auto& l : logs) {
+        json::Object lo;
+        lo["timestamp"] = l.timestamp;
+        lo["level"] = (double)static_cast<int>(l.level);
+        lo["message"] = l.message;
+        arr.push_back(lo);
+      }
+      resp.ok = true;
+      resp.result = arr;
+      return resp;
+    };
+
+    // ── Session Recording ────────────────────────────────────────────────────────
+
+    dispatch_["daemon.session.startRecording"] = [this](const CoreRequest& req, const Snapshot&,
+                                                        const Snapshot*) {
+      CoreResponse resp;
+      if (recording_.active.load()) {
+        resp.ok = false;
+        resp.error_code = "E_ALREADY_RECORDING";
+        resp.error_message = "a recording is already in progress";
+        return resp;
+      }
+
+      auto path = get_str(req.params, "output_path").value_or("session.wisession");
+      auto interval_ms = (int)get_num(req.params, "interval_ms").value_or(1000);
+      auto max_frames = (int)get_num(req.params, "max_frames").value_or(0);
+
+      recording_.active = true;
+      recording_.path = path;
+      recording_.interval_ms = interval_ms;
+      recording_.max_frames = max_frames;
+      recording_.frame_count = 0;
+
+      auto state = &recording_;
+      auto backend = backend_;
+      recording_.worker = std::thread([state, backend]() {
+        // Write header line (JSON Lines format — each line is self-describing
+        // so partial files are recoverable after a crash).
+        std::ofstream f(state->path);
+        if (f.is_open()) {
+          json::Object header;
+          header["_type"] = std::string("header");
+          header["version"] = 1.0;
+          header["interval_ms"] = (double)state->interval_ms;
+          f << json::dumps(header) << "\n";
+        }
+
+        while (state->active.load() && f.is_open()) {
+          json::Object frame;
+          frame["_type"] = std::string("frame");
+          frame["timestamp_ms"] = (double)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+          frame["frame"] = (double)(++state->frame_count);
+
+          auto cap = backend->capture_screen({0, 0, 1920, 1080});
+          if (cap) {
+            json::Object capObj;
+            capObj["width"] = (double)cap->width;
+            capObj["height"] = (double)cap->height;
+            capObj["data_b64"] = cap->data_b64;
+            frame["capture"] = capObj;
+          }
+          f << json::dumps(frame) << "\n";
+          f.flush(); // Ensure each frame is written to disk immediately
+          if (state->max_frames > 0 && state->frame_count >= state->max_frames)
+            break;
+          std::this_thread::sleep_for(std::chrono::milliseconds(state->interval_ms));
+        }
+
+        // Write footer with summary (even if file was partially written)
+        if (f.is_open()) {
+          json::Object footer;
+          footer["_type"] = std::string("footer");
+          footer["total_frames"] = (double)state->frame_count;
+          f << json::dumps(footer) << "\n";
+        }
+      });
+      // Thread is NOT detached — RecordingState destructor joins on destruction
+      json::Object result;
+      result["path"] = path;
+      result["interval_ms"] = (double)interval_ms;
+      resp.ok = true;
+      resp.result = result;
+      return resp;
+    };
+
+    dispatch_["daemon.session.stopRecording"] = [this](const CoreRequest&, const Snapshot&,
+                                                       const Snapshot*) {
+      CoreResponse resp;
+      if (!recording_.active.load()) {
+        resp.ok = false;
+        resp.error_code = "E_NOT_RECORDING";
+        resp.error_message = "no recording in progress";
+        return resp;
+      }
+      recording_.active = false;
+      if (recording_.worker.joinable())
+        recording_.worker.join();
+      json::Object result;
+      result["frames"] = (double)recording_.frame_count;
+      result["path"] = recording_.path;
+      resp.ok = true;
+      resp.result = result;
+      return resp;
+    };
+
+    dispatch_["daemon.recordingStatus"] = [this](const CoreRequest&, const Snapshot&,
+                                                 const Snapshot*) {
+      CoreResponse resp;
+      json::Object result;
+      result["active"] = recording_.active.load();
+      result["path"] = recording_.path;
+      result["interval_ms"] = (double)recording_.interval_ms;
+      result["frames"] = (double)recording_.frame_count;
+      resp.ok = true;
+      resp.result = result;
+      return resp;
+    };
+  }
+
+  // --- public interface ---
+
+  CoreEngine::CoreEngine(IBackend* backend) : backend_(backend)
+  {
+    build_dispatch_table();
+  }
+
+  CoreResponse CoreEngine::handle(const CoreRequest& req, const Snapshot& snapshot,
+                                  const Snapshot* old_snapshot)
+  {
+    auto start_time = std::chrono::steady_clock::now();
+    LOG_DEBUG("Handling request: " + req.method + " (id=" + req.id + ")");
+
+    CoreResponse resp;
+    resp.id = req.id;
+    resp.ok = true;
+    resp.result = json::Null{};
+
+    // Method policy enforcement
+    auto pit = policy_table().find(req.method);
+    if (pit != policy_table().end()) {
+      // Read-only check: block all mutating methods
+      if (read_only_ && pit->second.mutates) {
+        resp.ok = false;
+        resp.error_code = "E_ACCESS_DENIED";
+        resp.error_message = "method blocked: read-only mode";
+        LOG_DEBUG("Read-only blocked: " + req.method);
+        goto after_dispatch;
+      }
+      // Capability check: block if required runtime capability is missing
+      // Uses live capability probe so Wine detection is reflected immediately
+      if (pit->second.capability) {
+        auto caps = get_backend()->get_capabilities();
+        if (!check_capability(caps, pit->second.capability)) {
+          resp.ok = false;
+          resp.error_code = "E_ACCESS_DENIED";
+          resp.error_message = std::string("method requires capability: ") + pit->second.capability;
+          LOG_DEBUG("Capability blocked: " + req.method + " needs " + pit->second.capability);
+          goto after_dispatch;
+        }
+      }
+      // Check sensitivity against transport type (TODO: auth state)
+      if (pit->second.sensitive && req.id.rfind("http-", 0) == 0) {
+        // HTTP transport for sensitive methods — warn but allow
+        // Future: check auth token here
+      }
+    }
+
+    try {
+      auto it = dispatch_.find(req.method);
+      if (it != dispatch_.end()) [[likely]] {
+        resp = it->second(req, snapshot, old_snapshot);
+      }
+      else [[unlikely]] {
+        resp.ok = false;
+        resp.error_code = "E_BAD_METHOD";
+        resp.error_message = "method not implemented in core";
+        LOG_WARN("Method not implemented: " + req.method);
+      }
+    }
+    catch (const std::exception& e) {
+      resp.ok = false;
+      resp.error_code = "E_BAD_REQUEST";
+      resp.error_message = e.what();
+      LOG_ERROR("Request failed: " + std::string(e.what()));
+    }
+
+  after_dispatch:
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    resp.metrics["duration_ms"] = (double)duration_ms;
+
+    // Record local metrics (zero telemetry — data stays on this machine)
+    metrics_collector_.record(req.method, (double)duration_ms, resp.ok);
+
+    // Fire audit hook if set (logs every RPC call to the audit trail)
+    if (audit_hook_) {
+      audit_hook_(req, resp);
+    }
+
+    return resp;
+  }
+
+  CoreRequest parse_request_json(std::string_view json_utf8)
+  {
+    auto v = json::parse(json_utf8);
+    if (!v.is_obj())
+      throw std::runtime_error("request must be object");
+    const auto& o = v.as_obj();
+
+    auto it_id = o.find("id"), it_m = o.find("method"), it_p = o.find("params");
+    if (it_id == o.end() || it_m == o.end() || it_p == o.end())
+      throw std::runtime_error("missing fields");
+    if (!it_id->second.is_str() || !it_m->second.is_str() || !it_p->second.is_obj())
+      throw std::runtime_error("bad field types");
+
+    CoreRequest r;
+    r.id = it_id->second.as_str();
+    r.method = it_m->second.as_str();
+    r.params = it_p->second.as_obj();
+    return r;
+  }
+
+  std::string serialize_response_json(const CoreResponse& resp, bool canonical)
+  {
+    (void)canonical;
+    return json::dumps(resp.to_json_obj(canonical));
+  }
+
+} // namespace wininspect

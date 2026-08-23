@@ -1,0 +1,887 @@
+{
+  "schemaVersion": 1,
+  "projectionPolicyVersion": 1,
+  "sourceAuthority": "private-development",
+  "sourceCommitSha": "bd72cab3e7e06d4d385c14fb7cdd856aa6b0d729",
+  "authoritativeCandidate": true,
+  "projectionDigestSha256": "18856f0298e73c2471916abb07cf1c6d130ea1b8b5d9abce7dd50509d50ccaaf",
+  "fileCount": 146,
+  "files": [
+    {
+      "path": "assets/brand/ico/strix-agent-cursor.cur",
+      "sha256": "625baf57bd188834ceaa3d36d0b42fe2c6ec8c15bbaf443e187984b4549ca908",
+      "bytes": 230,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/ico/strix.ico",
+      "sha256": "a8de2bf2aabbd1e364b6d039ff8f2effa3acb298d28d5f23d988324a3af9cd2c",
+      "bytes": 659,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/README.md",
+      "sha256": "e55ecc90f42d462073a95dcd81f2f5364b12b24d2755f42e38826bcd803a9540",
+      "bytes": 1402,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/social/social-preview.png",
+      "sha256": "d45552ee10a11b03cdfd4e92f4d65f3bdfb393513917ef8d787af87d455ed988",
+      "bytes": 318184,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/svg/magnifier-icon.svg",
+      "sha256": "8d8fe844d466bd85224c2b05a3725aa131795e547b5a2bf56c76e0297ba9b49d",
+      "bytes": 403,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/svg/strix-icon.svg",
+      "sha256": "342af1cd21db76b6f92071f7542a6e55a8439375899b134a7b06876b87e64219",
+      "bytes": 1815,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/svg/strix-logo.svg",
+      "sha256": "5b18edc55e131c845242a39df7f29776196a0ccac2b8b7037a01e5bb3e7e5a9d",
+      "bytes": 1525,
+      "executable": false
+    },
+    {
+      "path": "assets/license/commercial.txt",
+      "sha256": "f9fd981a7a7d172dc608fab12df4590a824f230a0e4d6b8996f9f96a610ca092",
+      "bytes": 2292,
+      "executable": false
+    },
+    {
+      "path": "assets/license/polyform-nc-1.0.0.txt",
+      "sha256": "1538352b841f06da8bbdb671850748dea610b12aa783c8f9d88abecdf50bcfb3",
+      "bytes": 2225,
+      "executable": false
+    },
+    {
+      "path": "clients/cli/src/cli.cpp",
+      "sha256": "ed98f9b9cc6ef21a15202d830fc1721198a0f3158c267cc847ec233d9254c6e7",
+      "bytes": 73955,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/src/gui_main.cpp",
+      "sha256": "5cc38b4365a2de19f325219baa9d0dc71f529a9513d1e863667ed862422d611e",
+      "bytes": 51699,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/src/gui_stub.cpp",
+      "sha256": "75e6de3f28b503740a72f3e8bc829bfcc5d82f01ee11dd24222eb7d6b5e6733e",
+      "bytes": 701,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/src/theme.cpp",
+      "sha256": "dbcb9b1d38108d8b757daa78e91277d0cd50ff8902d163a901be03d8a51982bd",
+      "bytes": 2015,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/src/theme.hpp",
+      "sha256": "c05ed0ca368de0ec24d2bd9b163cd218d45fa6869bbfe1d96813212e96b6a67b",
+      "bytes": 4253,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/src/transport.hpp",
+      "sha256": "e069a4b62c5f72985269d9d59b1af22f9d5057b9b796fb90b2ab3bf6797ed900",
+      "bytes": 1827,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/tests/main.cpp",
+      "sha256": "460118137404e980f0fa7b82b1b3bcee18e8e02d2821a93973dbd331c753365a",
+      "bytes": 158,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/tests/test_viewmodel.cpp",
+      "sha256": "443bd843be20bb316c1cb0e4a861996ecdb905517887ff239a88d2df9b811266",
+      "bytes": 2754,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/viewmodel/viewmodel.cpp",
+      "sha256": "8e3b72f4999759bf3edf935553d6471c8b81c9fa2b63e1d06224fa5d330a20c2",
+      "bytes": 2782,
+      "executable": false
+    },
+    {
+      "path": "clients/gui/viewmodel/viewmodel.hpp",
+      "sha256": "83dbfed3d082af21f02b3b05c1bd509971ccfd98165975f8d442a25759c7f8cc",
+      "bytes": 951,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/.gitignore",
+      "sha256": "853bdb9e4c430bb46f05289d0d2c37d6b99128f78ab80d4fa929c50af733be90",
+      "bytes": 15,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/package-lock.json",
+      "sha256": "8d4381ac792efca21dffd65affc35fc758d09d198f84bcc392304c8c9bc55dd3",
+      "bytes": 102594,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/package.json",
+      "sha256": "adea6232a4e5e08db208c70ace0cb0ae3725a31aa0e5bf0c3f847fbdace3633b",
+      "bytes": 671,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/daemon-client.test.ts",
+      "sha256": "0ff7737922d4459dbddaff951a0bc83f2d0a7dff6555cd790d771504313bee94",
+      "bytes": 1141,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/daemon-client.ts",
+      "sha256": "d25c2bd2c1ed1be69e6be0a1e75aedc6cfa9d0276aea2505c6125deb08cacd43",
+      "bytes": 3453,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/index.ts",
+      "sha256": "af9dd00fee059b95a5ec34c4bae6c74e088a0a34b04ed56a8a3e280c0450c6d7",
+      "bytes": 4475,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/integration.test.ts",
+      "sha256": "a3e514c91ec2bc60dae7d2a3d21d9fd0babfd067f87a9b4d8fe23c2242fed2b0",
+      "bytes": 8169,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/tools.test.ts",
+      "sha256": "36ff4ec27aea94f9f26570a58c16d555f32865f310a45e47e16c47d3a2a05718",
+      "bytes": 1278,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/src/tools.ts",
+      "sha256": "310f1533d72f8280143bee8c3dd98ab3dbaeca6a6c7c3834f66cfd1397493d92",
+      "bytes": 9137,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/tsconfig.json",
+      "sha256": "37b4ffa16cca8312bd6ea2c42261b7083e8c1a65d62e82b216c751081ca37e42",
+      "bytes": 439,
+      "executable": false
+    },
+    {
+      "path": "clients/mcp/vitest.config.ts",
+      "sha256": "af67939299fba200de3753d37c487c37424cbcc38c386ea0c063e2a0e8cd6115",
+      "bytes": 148,
+      "executable": false
+    },
+    {
+      "path": "clients/portable/go.mod",
+      "sha256": "d3d4a98883fbf481c16191d1c50161b41e2e793dc2b9d8633ad78c7dee1a9b37",
+      "bytes": 39,
+      "executable": false
+    },
+    {
+      "path": "clients/portable/main.go",
+      "sha256": "07b32846354002cd67ff42b4ef0edc79c674fdd7c10e6d0ec488b280be675c15",
+      "bytes": 7782,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/pyproject.toml",
+      "sha256": "23b6b5f05acb4a27c355b66bbd64475a08630d46fa79de5a331d6bd0376c8b4f",
+      "bytes": 1148,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/README.md",
+      "sha256": "2aa560ac35fa263a4fe710d835dadea9955f4576163a085f6bfed606b89dec70",
+      "bytes": 1803,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/setup.py",
+      "sha256": "8faa7fe84273c5aba97499657160314f81ab4c571058daaec869d0052834fa06",
+      "bytes": 1304,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/tests/test_client.py",
+      "sha256": "4935518380bdf9be15538959127cdaf639e5cc19f4546bb4769581f8f1375c22",
+      "bytes": 4396,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/wininspect/__init__.py",
+      "sha256": "b22d3d7838bf3f0eafd2b0f7bfaded56d30061fbe9aede3034126aa705f72332",
+      "bytes": 199,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-python/wininspect/client.py",
+      "sha256": "49234bd731bcc41b5d68f0e58127d5e6ace9546489ca24cf7d4a3b156b811e6b",
+      "bytes": 12884,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/.gitignore",
+      "sha256": "853bdb9e4c430bb46f05289d0d2c37d6b99128f78ab80d4fa929c50af733be90",
+      "bytes": 15,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/package-lock.json",
+      "sha256": "74df43869cd4163ee51ce34cae4061b2da163d81af215a5f888e34c072dd2ae7",
+      "bytes": 46885,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/package.json",
+      "sha256": "6a79f3d89ba6fee7878b61d6321e8a353345c416d44796c38761011f85e9a460",
+      "bytes": 717,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/src/client.ts",
+      "sha256": "de154a4daf47fc009ec65c53c9d79ca23236d7ae665471a1f1c1f63a4d3e2daa",
+      "bytes": 2290,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/src/index.test.ts",
+      "sha256": "00e985ad77d8bbb6c1cbb8c36bc2fb714bda54d1cd7cfefe1be427d132d1741b",
+      "bytes": 762,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/src/index.ts",
+      "sha256": "d898d450454c7c5ee1e484e4a05bbe0022a7a2e55ebe9fcff5a1e08e3b7d29ea",
+      "bytes": 7441,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/tsconfig.json",
+      "sha256": "fc1d42479cf35b8620952e9e6c6b3f842d64d22db52da179852ebd362818615d",
+      "bytes": 365,
+      "executable": false
+    },
+    {
+      "path": "clients/sdk-typescript/vitest.config.ts",
+      "sha256": "af67939299fba200de3753d37c487c37424cbcc38c386ea0c063e2a0e8cd6115",
+      "bytes": 148,
+      "executable": false
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "a66522260afe248356b23f2b756882667aee9854cd2f18cc4c9760108ce2ed71",
+      "bytes": 7089,
+      "executable": false
+    },
+    {
+      "path": "config.default.json",
+      "sha256": "452bf9e00c73fe1ae8b9b7e7ae17039be32abfee6b97d785ad758a7c436ffbe8",
+      "bytes": 470,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/backend.hpp",
+      "sha256": "b22932cdb422d5bdf85b950fadb252857066685b81dcc75a65ff2474cfe4e663",
+      "bytes": 7683,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/base64.hpp",
+      "sha256": "be93ff856a06220805fec8d31dd09807edd9fd13ef4b5f5ed738bf5b9f51c088",
+      "bytes": 1511,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/cert.hpp",
+      "sha256": "9decc5988126d095f3589a8a9004b9b4dcb7a2e4d66cb266ee4609a6436c0096",
+      "bytes": 1694,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/cidr.hpp",
+      "sha256": "dd9e817186106e6e631f384f97855aa437b51e8c08817b648e326de4a68b5ba9",
+      "bytes": 1090,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/compress.hpp",
+      "sha256": "822970de6a4d884ff8e287d20bf9b10c4630cfa8815608fdbf22dfe64b51d2cc",
+      "bytes": 1300,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/core.hpp",
+      "sha256": "9a95027244985854d5890886c166ec0e3efb27c1eadca3dd50d63b232705f3e7",
+      "bytes": 3911,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/credential_manager.hpp",
+      "sha256": "282c01df79e5f256ff9fd2627a2036f295dc866840af76a6617b361b808ae396",
+      "bytes": 3032,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/crypto.hpp",
+      "sha256": "5686d0c0857f2cd62924144e00c6150f081a8d2228dcd03da382939b7c5cc364",
+      "bytes": 1720,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/fake_backend.hpp",
+      "sha256": "31f725e8c4678fb8d8ec41770c0c90e89d953281c62b3d0eaccf35691674fd2d",
+      "bytes": 6440,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/logger.hpp",
+      "sha256": "7694e8aa5dc2f66e1af0c27567a6040768e9e2068208cd530d1c492872d43227",
+      "bytes": 2129,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/mdns.hpp",
+      "sha256": "769c1bc365e33bf8e140e936cbb858e4e991393d5725dccbb7fe414d78a0c68b",
+      "bytes": 2314,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/metrics.hpp",
+      "sha256": "df83bab75dedb296b5df7fcb565539b81e3f61ed064f96de09f0d5a832a1fc49",
+      "bytes": 1797,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/network_config.hpp",
+      "sha256": "9a94735c98fdc2a056b9938b7cfae0e9ecced1a6c8309f7668abb0df48c72fc3",
+      "bytes": 6246,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/tailscale.hpp",
+      "sha256": "686e9465205714d55f17cd64e39fe8c6bce7ce2cf7c8c26eeea95e7bca2e05f3",
+      "bytes": 668,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/tinyjson.hpp",
+      "sha256": "045daecc77b2974d97aeb1d0e0be5a52061eddd427b394f27d7e2eab1cf73d61",
+      "bytes": 10004,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/tls.hpp",
+      "sha256": "338c4954767dc15d9758a69ffcf8f5ae96ae39779e81294c61847272168d9b99",
+      "bytes": 1843,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/types.hpp",
+      "sha256": "048bd970f58d71274df5ea90b490f90b86603bdfd872074d3828a414da09930a",
+      "bytes": 8461,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/update.hpp",
+      "sha256": "354dcbf77e1f5ba60c2e0e3dd8d339dfeb376b07d2d87bab402cfddab61f7aaf",
+      "bytes": 2159,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/util_win32.hpp",
+      "sha256": "050d3c51ef57136c77bfea3a4bfccd907db4360aba086251d931dbe7ac2ed5b4",
+      "bytes": 3727,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/websocket.hpp",
+      "sha256": "e39f0406e6fda24e8f621cfbe66b79e6dc85ad0b2eaead16bffebe31d3f036fd",
+      "bytes": 1712,
+      "executable": false
+    },
+    {
+      "path": "core/include/wininspect/win32_backend.hpp",
+      "sha256": "e45e0e1111348aa95f9140efe8d398451c9a42ee3e3c02f9fbd2281ef51debe6",
+      "bytes": 5932,
+      "executable": false
+    },
+    {
+      "path": "core/src/cert.cpp",
+      "sha256": "b281967a0ce3f97bbdfd56ac925988ee4e91ab4594484bdff6df8c7e9c7a4f16",
+      "bytes": 7462,
+      "executable": false
+    },
+    {
+      "path": "core/src/cidr.cpp",
+      "sha256": "eb3e95956353d9800ad40a7f7b88043a87f3b2a7fffba6b6761d284bbae11e52",
+      "bytes": 3620,
+      "executable": false
+    },
+    {
+      "path": "core/src/compress.cpp",
+      "sha256": "3b099f48f64e4279ed3d48db60503bac0a16ba2cfe8612f92f2f4dd488b9e2ee",
+      "bytes": 4231,
+      "executable": false
+    },
+    {
+      "path": "core/src/core.cpp",
+      "sha256": "4c15aba2f0ca5476bb63c65163825f73f9c940641c401578a963423440a34831",
+      "bytes": 63550,
+      "executable": false
+    },
+    {
+      "path": "core/src/credential_manager.cpp",
+      "sha256": "a55bcb95124f9a8cf90f08bb3a03ebd39140e2c0248e7003fd6803d1ae5d3abe",
+      "bytes": 19048,
+      "executable": false
+    },
+    {
+      "path": "core/src/crypto.cpp",
+      "sha256": "eb0e0ad63339970feecb33e1126819eb8546c98db9b1be7b5e96deea5843d9a7",
+      "bytes": 13056,
+      "executable": false
+    },
+    {
+      "path": "core/src/fake_backend.cpp",
+      "sha256": "ff11c3734f1ecc37f7ab25ce6add556588f71f844f278f38eac6aac72ff1228a",
+      "bytes": 14300,
+      "executable": false
+    },
+    {
+      "path": "core/src/logger.cpp",
+      "sha256": "e41c1c397d1e70048218fde574051725f8832fd19480c5db37b13f2e3ebe27e5",
+      "bytes": 5085,
+      "executable": false
+    },
+    {
+      "path": "core/src/mdns.cpp",
+      "sha256": "d875d5e42903ca0ae6e725b4e9f4f06c399e4ddef1a03e7a2f723c138b22c865",
+      "bytes": 14835,
+      "executable": false
+    },
+    {
+      "path": "core/src/metrics.cpp",
+      "sha256": "682e0b4d394c006164792fded9b96d05c4ed09f9c01932e051b2c2e1c47c1a3b",
+      "bytes": 6285,
+      "executable": false
+    },
+    {
+      "path": "core/src/network_config.cpp",
+      "sha256": "40b77a46f121ecd645354851e0f80bbfe559e49ca62ff90253818e732f5dbc88",
+      "bytes": 21160,
+      "executable": false
+    },
+    {
+      "path": "core/src/tailscale.cpp",
+      "sha256": "0e8164e1725b5f04f94ba6e9dae22339a879757fd0f301f1a1f24c29e5eed6e4",
+      "bytes": 3377,
+      "executable": false
+    },
+    {
+      "path": "core/src/tls.cpp",
+      "sha256": "c70d092c3e949c717dfbedcbc88d09805453d60d3ae4e4d1c3e46ed607a3c987",
+      "bytes": 9654,
+      "executable": false
+    },
+    {
+      "path": "core/src/update.cpp",
+      "sha256": "db74a9a57e4526e41a21699ea0509ed1c9c6ae3c086cb4a741c3242ad5ab30f0",
+      "bytes": 13987,
+      "executable": false
+    },
+    {
+      "path": "core/src/websocket.cpp",
+      "sha256": "c76560ae63857d1f147d392e249f77399f78d155ec058442c3558bdf0864e44e",
+      "bytes": 9198,
+      "executable": false
+    },
+    {
+      "path": "core/src/win32_backend.cpp",
+      "sha256": "8b1e0feee519bcdfb0492ae1e4d1d2ebde76ee12e2c996a06b9b9d01e752916a",
+      "bytes": 75408,
+      "executable": false
+    },
+    {
+      "path": "core/tests/benchmarks.cpp",
+      "sha256": "a6ea5b8f021e41ab69601da89344d8106370b6ed8cdcd78000c226ff4138dfd7",
+      "bytes": 6536,
+      "executable": false
+    },
+    {
+      "path": "core/tests/main.cpp",
+      "sha256": "460118137404e980f0fa7b82b1b3bcee18e8e02d2821a93973dbd331c753365a",
+      "bytes": 158,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_cli_contract.cpp",
+      "sha256": "70cdb8b5b142274986b855906bb092772a3bc35d8b61125c898bec63b8717d8b",
+      "bytes": 7617,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_config.cpp",
+      "sha256": "e27bad6f66eb0819b9b1af2734eed97cdeb59c4b763d302bd5a6452b0262ba8e",
+      "bytes": 6737,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_contract_methods.cpp",
+      "sha256": "5a11a9aa6ae3a6e16b2a87bec9a429e22eb8fd36f3c22ae363ebbb97bfbeea52",
+      "bytes": 24466,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_control.cpp",
+      "sha256": "3fc0f84c9cd494c5b876c7d89a7407ecfa5a1d374af24051c4de8fbcbcc63473",
+      "bytes": 5574,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_core_idempotence.cpp",
+      "sha256": "4410fb2b91f4b7381f327f335127ef173b8b840a05496353d4a3075d4add0e11",
+      "bytes": 1431,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_credential.cpp",
+      "sha256": "5ead376b703125166bb34257261f7f74b28d1ed2d604c89a86b4ca8b355b7b35",
+      "bytes": 4089,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_crypto.cpp",
+      "sha256": "1675a71e359723f703dc46f95867142aff10f6bfc6a5c3c5e75c972315e3fa5d",
+      "bytes": 2624,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_fuzz.cpp",
+      "sha256": "ce1411ba38201a8549e892620aed711fbe30c822f10a20bc50be4e6bef444b5b",
+      "bytes": 8079,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_http.cpp",
+      "sha256": "758b3ae026eae94a1a1e9c7c974d89aab2ce6a8daa62f1d4138ec04edf9785ab",
+      "bytes": 9343,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_injection.cpp",
+      "sha256": "b2d5cd0032a4e25571a2261d6027bf360b5d75041f11d6a4b212924c99ffd2b2",
+      "bytes": 2745,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_mdns.cpp",
+      "sha256": "6fb495dceae0e81cdf6c6fb061b83147a2553c94a75543b5e796785accee78f5",
+      "bytes": 6249,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_metrics.cpp",
+      "sha256": "a4b8aa9e8d2424bf4ab59fc90853909f2b3b9b745b9e606425292d74b8fcb097",
+      "bytes": 5561,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_properties.cpp",
+      "sha256": "a04de653aff46ca930f9e977af9fb06dfa78d8f000b97a65c1ba6bcdd88d0673",
+      "bytes": 7573,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_rendezvous.cpp",
+      "sha256": "53fa3a3f9046a64a3b677bd11a67b95ead0818ee1607d36d3ff28d8466b66c17",
+      "bytes": 5472,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_stress.cpp",
+      "sha256": "2dd079701f5a5244b21677c4e90f05019c696aa79f02284a2d0ce71eb5708ccb",
+      "bytes": 8071,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_tcp_protocol.cpp",
+      "sha256": "0ff6642bb288d05cdaf2a1e3f4bd9b1962a4272fa9500fb6fd7594a0bbd4f65e",
+      "bytes": 6074,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_tls.cpp",
+      "sha256": "a5bddf0fd5a0b7301c7a753285ada5972ca3c78ae7747fbd8a422da62891c076",
+      "bytes": 7377,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_trace_replay.cpp",
+      "sha256": "33637a262f9f8f19c0e8bf3b8e3bc6aa6646f8987e447ae80abbd2c712557791",
+      "bytes": 8049,
+      "executable": false
+    },
+    {
+      "path": "core/tests/test_uia.cpp",
+      "sha256": "929761556f6ecacb29264f379f9a0bc673b4de3c538a252178977b9fc242aa0c",
+      "bytes": 2476,
+      "executable": false
+    },
+    {
+      "path": "daemon/include/control_manager.hpp",
+      "sha256": "c93113feca4a4cb8aeb18d83d55bfc39444508c85742abfd00c3a0900809373f",
+      "bytes": 2412,
+      "executable": false
+    },
+    {
+      "path": "daemon/include/http_server.hpp",
+      "sha256": "298fae9ea6d3ab9c0bf120cdeabfc32436704c2c2c87ce3a3ebbb0a1105aeca5",
+      "bytes": 767,
+      "executable": false
+    },
+    {
+      "path": "daemon/include/network_config.hpp",
+      "sha256": "3b9b22a20f5f6f705983a2a48dfab58f79048bb1153b52efe17dcf8d8455fef6",
+      "bytes": 1276,
+      "executable": false
+    },
+    {
+      "path": "daemon/include/rendezvous_client.hpp",
+      "sha256": "c9da67e843b3dfcc85f313017687502484da91aa8989845ab5ed64518c4d2e2c",
+      "bytes": 1728,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/control_manager.cpp",
+      "sha256": "165dad45d889f9c00b7e6531d38b451efafc29a872d49dbcfdfa320cf1c63976",
+      "bytes": 8091,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/dashboard.html",
+      "sha256": "f6e58852530ff6473a62507421f86af80ed3f9675a9459b34fc74653fe372e75",
+      "bytes": 6691,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/http_server.cpp",
+      "sha256": "3422a4b06f611cda9f3de6dd03caa938395415a6c4435751401cd617190f178b",
+      "bytes": 24157,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/indicator_manager.cpp",
+      "sha256": "8ceb8e48d7aaebd1199a7ae60e6628b15a38b10652c921847289b5269d9270b3",
+      "bytes": 8915,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/indicator_manager.hpp",
+      "sha256": "61d41beb22393bcabcf991ef89980409545e7a368eaa0fda916ea174c8aa75da",
+      "bytes": 2043,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/main.cpp",
+      "sha256": "43fec8aecf8f06815da989d72cfa0ae2466c5ecc1d5434e9325de35001e46473",
+      "bytes": 268,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/network_config.cpp",
+      "sha256": "fba80afda8d998e6c4dce30308dfce83d529e778d0ca04a8ef6e686530756158",
+      "bytes": 6382,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/pipe_win32.cpp",
+      "sha256": "b941d43b3152ee5f6ab7eaeca2a0c3cdb3437c499064d4acfc8421cb2e6e6492",
+      "bytes": 1421,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/pipe.hpp",
+      "sha256": "3674a57415d101ab85f6ff0a7aae27126fd04a608350665ab6634b46308b5ebc",
+      "bytes": 479,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/rendezvous_http.cpp",
+      "sha256": "e0aa282303f8c6dc75330de0d851020bc4fb506697c5386c314713d47994e132",
+      "bytes": 17176,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/rendezvous_server.cpp",
+      "sha256": "74c7edffaf957ab6c8899d3b31a291cf37774e48af6d958460df2ad3e6399448",
+      "bytes": 11473,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/request_handler.hpp",
+      "sha256": "cba75d5f87847d79df882c7be999a024b5770fa3dd5555b85198348cee406e2b",
+      "bytes": 18248,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/server_state.hpp",
+      "sha256": "53d78658f697f25c64ebb1c88837cfefa5979c4875484faeb54ccea601336fe2",
+      "bytes": 5311,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/server.cpp",
+      "sha256": "6e34c5c1161767fe82f556007f4df4637a611520e18162a71d7ee81e87681846",
+      "bytes": 29914,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/tcp_server.cpp",
+      "sha256": "a3c90af99709eee168e9b349010305ca1890cdadccc1359daef5f573a304e05b",
+      "bytes": 20310,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/tcp_server.hpp",
+      "sha256": "e6b5b3e2071e389919eab6e2f4c25eda9e47a7a30eaba35f40baea9ce6f5f085",
+      "bytes": 1417,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/test_discovery.cpp",
+      "sha256": "6541747072388cecfa77a8c73c7650cdc652e7aaa70f0c703c2a598fd5b13e59",
+      "bytes": 2233,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/tray.cpp",
+      "sha256": "73a19be74e11c2e49a3bdf66d659274066ddcb14b929bd320bf3244095e27173",
+      "bytes": 10458,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/tray.hpp",
+      "sha256": "236470c9178cf38cd4309de9af664e99df5815db183075213bcb144a8628e071",
+      "bytes": 3139,
+      "executable": false
+    },
+    {
+      "path": "deploy/portableapps/App/AppInfo/appinfo.ini",
+      "sha256": "76aaac40e67846005460614e0a5f80be7bef51b25d553135e2354bf2164ebb31",
+      "bytes": 477,
+      "executable": false
+    },
+    {
+      "path": "deploy/portableapps/App/AppInfo/launcher.ini",
+      "sha256": "2bc6c0833f62147e90af7e3041b88b3aa5a6509b77557bbe68857f21a30984ed",
+      "bytes": 567,
+      "executable": false
+    },
+    {
+      "path": "deploy/portableapps/README.md",
+      "sha256": "46f0bbf31b81a1258b9703e09fd2e87aa9c86f3868ad62966ba181f0aa5b4f62",
+      "bytes": 1377,
+      "executable": false
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "47f6894f7fcb7c55c66226d69e64feb613d5f5c49f11716938945997d3a569a9",
+      "bytes": 4600,
+      "executable": false
+    },
+    {
+      "path": "resources/generate_ico.py",
+      "sha256": "ae307e44cebc4ef11a0b9775d00bc7cd71bbcc88c04bf30af9f2fb34b395fde7",
+      "bytes": 1576,
+      "executable": false
+    },
+    {
+      "path": "resources/resource.h",
+      "sha256": "248266fd35a4c29031326a10ba4ca652b422f8edf09931943074bf52a5f6ecf2",
+      "bytes": 789,
+      "executable": false
+    },
+    {
+      "path": "resources/wininspect.manifest",
+      "sha256": "cce0ceb647aecba79a2786a637b3e8e4e5d90161d12ba9327f46fa7b2b7b3ee0",
+      "bytes": 1417,
+      "executable": false
+    },
+    {
+      "path": "resources/wininspect.rc",
+      "sha256": "b13b721866cb615ed83184240598645e310bf082fe8f4b534ee7376870fc89dc",
+      "bytes": 1776,
+      "executable": false
+    },
+    {
+      "path": "scripts/build-portableapps.sh",
+      "sha256": "fa4bdd54ae69c1dee87b7fc08a61baee886ec04537d84100cc9f9b08c0ee10c9",
+      "bytes": 4281,
+      "executable": false
+    },
+    {
+      "path": "scripts/Test-InstallerLifecycle.ps1",
+      "sha256": "3ef75940e2774c4085623dd6d653ebceca365cf1cb1000b775ab59a49da874ca",
+      "bytes": 7716,
+      "executable": false
+    },
+    {
+      "path": "third_party/doctest/doctest.h",
+      "sha256": "0fd13be22e0a3ec1a4c8787f393fb1ab69994af61031e95168e784a6ad343972",
+      "bytes": 6301,
+      "executable": false
+    },
+    {
+      "path": "third_party/rapidcheck/rapidcheck.h",
+      "sha256": "353e0fe611f1eb52461a2b109df10ba816e98b9756fc68ff4ae173499ec59820",
+      "bytes": 1073,
+      "executable": false
+    },
+    {
+      "path": "third_party/rapidcheck/rapidcheck.hpp",
+      "sha256": "792deaa0bf95a31b0d930c92f333814a3183d18c031c7a87e43c397fc51d4f8b",
+      "bytes": 1491,
+      "executable": false
+    },
+    {
+      "path": "third_party/tinyjson/CMakeLists.txt",
+      "sha256": "75fbe11e0ca5e93616b4b342953907112c51442ab97512fa69427fd163c5faa4",
+      "bytes": 352,
+      "executable": false
+    },
+    {
+      "path": "third_party/tinyjson/README.md",
+      "sha256": "4bfe747801e0bf387573c73873f5aa8eaba4faded43174c05dad5f099906fdc1",
+      "bytes": 2029,
+      "executable": false
+    },
+    {
+      "path": "third_party/tinyjson/tinyjson.hpp",
+      "sha256": "045daecc77b2974d97aeb1d0e0be5a52061eddd427b394f27d7e2eab1cf73d61",
+      "bytes": 10004,
+      "executable": false
+    },
+    {
+      "path": "tools/wininspect.nsi",
+      "sha256": "9ce076daa83c1bae76bef577e016717e2e5e9a00b3f7d6590b2ed424b355b7d6",
+      "bytes": 22181,
+      "executable": false
+    }
+  ]
+}

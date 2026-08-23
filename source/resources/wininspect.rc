@@ -1,0 +1,47 @@
+// WinInspect Application Resources
+#include <windows.h>
+#include "resource.h"
+
+// App icon — used in EXE, taskbar, title bar, Alt+Tab
+// Generate from assets/brand/svg/strix-icon.svg:
+//   inkscape --export-filename=assets/brand/ico/strix.ico assets/brand/svg/strix-icon.svg
+// Or with ImageMagick:
+//   convert assets/brand/png/strix-icon-256.png -define icon:auto-resize=16,32,48,64,128,256 \
+//     assets/brand/ico/strix.ico
+IDI_WININSPECT           ICON           "..\\assets\\brand\\ico\\strix.ico"
+
+// Version information
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION     VER_FILEVERSION
+ PRODUCTVERSION  VER_PRODUCTVERSION
+ FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+ FILEFLAGS       0
+ FILEOS          VOS_NT_WINDOWS32
+ FILETYPE        VFT_APP
+ FILESUBTYPE     0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0" // US English, Unicode
+        BEGIN
+            VALUE "CompanyName",      VER_COMPANYNAME_STR
+            VALUE "FileDescription",  VER_FILEDESCRIPTION_STR
+            VALUE "FileVersion",      VER_FILEVERSION_STR
+            VALUE "InternalName",     VER_INTERNALNAME_STR
+            VALUE "LegalCopyright",   VER_LEGALCOPYRIGHT_STR
+            VALUE "OriginalFilename", VER_ORIGINALFILENAME_STR
+            VALUE "ProductName",      VER_PRODUCTNAME_STR
+            VALUE "ProductVersion",   VER_PRODUCTVERSION_STR
+            VALUE "Comments",         VER_COMMENTS_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+// Common Controls manifest dependency
+// For DPI awareness and visual styles, see wininspect.manifest
+// The manifest is embedded via #pragma or linked separately
+// to avoid double-manifest issues with MSVC linker.

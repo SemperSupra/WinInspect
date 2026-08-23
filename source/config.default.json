@@ -1,0 +1,22 @@
+{
+  "config_version": 1,
+  "identity": {
+    "name": "",
+    "hostname": ""
+  },
+  "bind": [
+    {"address": "127.0.0.1", "family": "ipv4"},
+    {"address": "::1", "family": "ipv6"}
+  ],
+  "port": 1985,
+  "discovery_port": 1986,
+  "http_port": 0,
+  "rendezvous": [],
+  "request_timeout_ms": 5000,
+  "rate_limit_ms": 0,
+  "include_hostname": false,
+  "enable_mdns": false,
+  "enable_discovery": false,
+  "enable_update_check": true,
+  "update_check_interval_hours": 24
+}
