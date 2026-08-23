@@ -429,13 +429,12 @@ license_type_done:
   ${If} $existing_method != "none"
     ; We found an existing install — decide what to do
     ${If} $existing_method == "chocolatey"
-      ${If} ${Silent}
-        DetailPrint "ABORT: Chocolatey-managed install detected — use 'choco upgrade wininspect' instead"
+      ${IfNot} ${Silent}
+        StrCpy $R0 "This appears to be managed by Chocolatey.$\r$\n$\r$\nPlease use 'choco upgrade wininspect' to update,$\r$\nor uninstall with 'choco uninstall wininspect' first.$\r$\n$\r$\nClick OK to continue or CANCEL to abort."
+        MessageBox MB_OKCANCEL|MB_ICONINFORMATION $R0 /SD IDOK IDOK choco_ok IDCANCEL choco_abort
+choco_abort:
         Abort
-      ${Else}
-        StrCpy $R0 "This appears to be managed by Chocolatey.$\r$\n$\r$\nPlease use 'choco upgrade wininspect' to update,$\r$\nor uninstall with 'choco uninstall wininspect' first."
-        MessageBox MB_OK|MB_ICONSTOP $R0 /SD IDOK
-        Abort
+choco_ok:
       ${EndIf}
 
     ${ElseIf} $existing_method == "portable"

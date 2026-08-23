@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "projectionPolicyVersion": 1,
   "sourceAuthority": "private-development",
-  "sourceCommitSha": "09729436b06c1833cd9d42000989425b1006b9e6",
+  "sourceCommitSha": "e11fb014e7fca5ddc6e450975f4db45913b452d3",
   "authoritativeCandidate": true,
-  "projectionDigestSha256": "99d416b2ac8c5663a9d983a31cc04683a56449e0925b14f0394b647bc3ff246f",
+  "projectionDigestSha256": "4ad5e2c29613c79ebe7f3a46aa6a6b071457d4f93b3b7cb43f86642429118257",
   "fileCount": 146,
   "files": [
     {
@@ -879,8 +879,8 @@
     },
     {
       "path": "tools/wininspect.nsi",
-      "sha256": "9ce076daa83c1bae76bef577e016717e2e5e9a00b3f7d6590b2ed424b355b7d6",
-      "bytes": 22181,
+      "sha256": "2d9ad2c48127b158a662c5d0d3b94d1b5efa3484576830dcf54c0d3ef8517f96",
+      "bytes": 22170,
       "executable": false
     }
   ]
