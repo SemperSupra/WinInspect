@@ -1,0 +1,79 @@
+name: Projected source CI
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - '.projection/**'
+      - 'scripts/Test-ProjectedSource.ps1'
+      - '.github/workflows/projected-source-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'source/**'
+      - '.projection/**'
+      - 'scripts/Test-ProjectedSource.ps1'
+      - '.github/workflows/projected-source-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate source projection receipt
+        shell: pwsh
+        run: ./scripts/Test-ProjectedSource.ps1
+
+      - name: Detect projected source
+        id: projection
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath 'source/CMakeLists.txt' -PathType Leaf) {
+            'present=true' >> $env:GITHUB_OUTPUT
+          } else {
+            'present=false' >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Build projected C++ source
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
+
+      - name: Test projected C++ source
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
+
+      - name: Build projected portable client
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $goMod = Join-Path $env:GITHUB_WORKSPACE 'source/clients/portable/go.mod'
+          if (-not (Test-Path -LiteralPath $goMod -PathType Leaf)) {
+            Write-Host 'No projected Go portable client; skipping.'
+            exit 0
+          }
+          go version
+          go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
+
+      - name: Record public execution boundary
+        shell: pwsh
+        run: |
+          Write-Host 'This workflow validates and builds only sanitized projected source.'
+          Write-Host 'It has no credentials or network path capable of reading the private development repository.'
+          Write-Host 'A successful public build does not imply private promotion approval.'
