@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Normalize-RelativePath([string] $Path) {
-    return $Path.Replace('\\', '/').TrimStart([char[]]@('.', '/'))
+    return $Path.Replace('\', '/').TrimStart([char[]]@('.', '/'))
 }
 
 $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path

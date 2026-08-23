@@ -1,0 +1,4 @@
+# Ensure projected source bytes and line endings are preserved exactly across runners
+* text=auto eol=lf
+source/** -text
+.projection/** -text

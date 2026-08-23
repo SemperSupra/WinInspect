@@ -1,0 +1,71 @@
+PolyForm Noncommercial License 1.0.0
+
+https://polyformproject.org/licenses/noncommercial/1.0.0
+
+Required Notice: Copyright Mark E. DeYoung (https://github.com/SemperSupra)
+
+Acceptance
+
+In order to get any license under these terms, you must agree to them as
+both strict obligations and conditions to all your licenses.
+
+Copyright
+
+Each contributor licenses you to do everything with the software that would
+otherwise infringe that contributor's copyright in it.
+
+Noncommercial
+
+You may not use the software for commercial purposes.
+
+Patent
+
+Each contributor licenses you to do everything with the software that would
+otherwise infringe any patent claims they can license or become able to
+license.
+
+Fair Use
+
+This license is in addition to, and does not replace, any rights you have
+under copyright law, including fair use, first sale, etc.
+
+Freedom
+
+You may use, change, and share the software with others. When you share
+the software, you must provide a copy of this license to recipients, keep
+them intact, and not add any terms that would make the software
+proprietary.
+
+Notices
+
+You must ensure that anyone who gets a copy of any part of the software
+from you also gets a copy of this license, as well as the following notice:
+
+    PolyForm Noncommercial License 1.0.0
+    https://polyformproject.org/licenses/noncommercial/1.0.0
+
+Also ensure each copy of this license and Required Notice are included.
+
+License Compliance
+
+If the applicable law prohibits enforcement of this license for lack of
+consideration, you agree to the following: If you use the software in a way
+that breaches this license, you must cure the breach immediately. The
+licensor may also enforce their rights under this license.
+
+Trademark
+
+This license does not grant any rights to use any licensor's names,
+branding, logos, or trademarks.
+
+Termination
+
+If you violate any term of this license, your rights under it end
+immediately.
+
+Other
+
+This license is governed by the laws of the State of California, U.S.A.,
+excluding its conflict-of-law provisions. To the extent any provision of
+this license is unenforceable, the remaining provisions remain in full
+force and effect.
