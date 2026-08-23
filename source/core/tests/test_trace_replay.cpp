@@ -77,6 +77,59 @@ static const char* kUiaRecursiveTreeTrace = R"json({
   ]
 })json";
 
+static const char* kSystemOrchestrationTrace = R"json({
+  "name": "System Orchestration Challenge",
+  "trace_version": "1",
+  "description": "Canonical trace for Process, Registry, and Clipboard operations.",
+  "steps": [
+    {
+      "request": { "id": "t-1", "method": "process.list", "params": {} },
+      "expected_result": [
+        { "pid": 1234, "name": "fake.exe", "path": "C:\\fake.exe" }
+      ]
+    },
+    {
+      "request": { "id": "t-2", "method": "reg.read", "params": { "path": "HKCU\\Software\\Test" } },
+      "expected_result": {
+        "path": "HKCU\\Software\\Test",
+        "subkeys": ["SubKey1"],
+        "values": [{"name": "TestValue", "type": "SZ", "data": "TestData"}]
+      }
+    },
+    {
+      "request": { "id": "t-3", "method": "clipboard.write", "params": { "text": "TraceData" } },
+      "expected_result": { "ok": true }
+    },
+    {
+      "request": { "id": "t-4", "method": "clipboard.read", "params": {} },
+      "expected_result": { "text": "fake clipboard" }
+    }
+  ]
+})json";
+
+static const char* kEventSubscriptionTrace = R"json({
+  "name": "Event Subscription Lifecycle",
+  "trace_version": "1",
+  "description": "Canonical trace for events.subscribe, events.poll, and events.unsubscribe.",
+  "steps": [
+    {
+      "request": { "id": "e-1", "method": "events.subscribe", "params": {} },
+      "expected_result": {
+        "subscribed": true,
+        "snapshot_id": "<any>"
+      }
+    },
+    {
+      "request": { "id": "e-2", "method": "events.poll", "params": {} },
+      "expected_result": []
+    },
+    {
+      "request": { "id": "e-3", "method": "events.unsubscribe", "params": {} },
+      "expected_result": { "unsubscribed": true }
+    }
+  ]
+})json";
+
 static std::string read_trace(const char* path, const char* fallback_json)
 {
   std::ifstream f(path, std::ios::binary);
@@ -191,6 +244,10 @@ DOCTEST_TEST_CASE("trace replay: uia_recursive_tree")
 
 DOCTEST_TEST_CASE("trace replay: system_orchestration")
 {
+  auto trace = wininspect::json::parse(read_trace("formal/traces/system_orchestration.json",
+                                                  kSystemOrchestrationTrace)).as_obj();
+  require_trace_version("formal/traces/system_orchestration.json", trace);
+
   FakeBackend fb({});
   CoreEngine core(&fb);
   Snapshot s;
@@ -225,6 +282,10 @@ DOCTEST_TEST_CASE("trace replay: system_orchestration")
 
 DOCTEST_TEST_CASE("trace replay: event_subscription")
 {
+  auto trace = wininspect::json::parse(read_trace("formal/traces/event_subscription.json",
+                                                  kEventSubscriptionTrace)).as_obj();
+  require_trace_version("formal/traces/event_subscription.json", trace);
+
   FakeBackend fb({{1, 0, 0, "A", "C1", true}});
   CoreEngine core(&fb);
 
