@@ -29,6 +29,8 @@ static void cleanup_winsock()
   WSACleanup();
 }
 
+#ifdef WININSPECT_HAVE_OPENSSL
+
 // ── Self-signed certificate generation ──────────────────────────────────────
 
 TEST_CASE("TlsSession::generate_self_signed_cert")
@@ -203,15 +205,6 @@ TEST_CASE("TlsSession TLS 1.3 loopback handshake and encrypt/decrypt")
   CHECK(received == "Hello over TLS 1.3!");
 }
 
-// ── Non-OpenSSL stub returns false ──────────────────────────────────────────
-
-TEST_CASE("TlsSession stub without OpenSSL returns is_initialized=false")
-{
-  TlsSession session;
-  // is_initialized is always false for stubs or pre-handshake sessions
-  CHECK(!session.is_initialized());
-}
-
 // ── Multiple independent sessions ───────────────────────────────────────────
 
 TEST_CASE("TlsSession multiple independent instances")
@@ -227,3 +220,20 @@ TEST_CASE("TlsSession multiple independent instances")
   CHECK(!s1.is_initialized());
   CHECK(!s2.is_initialized());
 }
+
+#else // !WININSPECT_HAVE_OPENSSL
+
+// ── Non-OpenSSL stub returns false ──────────────────────────────────────────
+
+TEST_CASE("TlsSession stub without OpenSSL returns false gracefully")
+{
+  TlsSession session;
+  CHECK(!session.is_initialized());
+  std::string cert, key;
+  CHECK(!TlsSession::generate_self_signed_cert("test.local", cert, key));
+  CHECK(!session.init_server("cert", "key"));
+  CHECK(!session.init_client());
+  CHECK(!session.handshake(0));
+}
+
+#endif // WININSPECT_HAVE_OPENSSL
