@@ -84,7 +84,13 @@ try {
 
     $manifest = Get-Content -LiteralPath (Join-Path $repo '.projection/source-manifest.json') -Raw | ConvertFrom-Json
     Write-Host 'Imported WinInspect source projection.'
-    Write-Host "Private source commit: $($manifest.sourceCommitSha)"
+    Write-Host "Receipt schema: $($manifest.schemaVersion)"
+    if ([int]$manifest.schemaVersion -eq 1) {
+        Write-Host "Legacy private source commit: $($manifest.sourceCommitSha)"
+    } else {
+        Write-Host 'Private source identity is intentionally redacted from schema v2 public receipt.'
+        Write-Host "Projection policy SHA-256: $($manifest.projectionPolicySha256)"
+    }
     Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
     Write-Host 'Review the git diff, commit source/ + .projection/ on a projection branch, and push it for public CI.'
     & $git.Source -C $repo status --short -- source .projection | Write-Host
