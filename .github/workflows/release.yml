@@ -1,0 +1,221 @@
+name: Release projected WinInspect
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Immutable release tag to create, for example v0.4.3'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate immutable release identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'release_tag must match vX.Y.Z.'
+          }
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Tag $env:RELEASE_TAG already exists; refusing to move or reuse an immutable release identity."
+          }
+          Write-Host "Release candidate deploy commit: $env:GITHUB_SHA"
+
+      - name: Validate projected source receipt
+        shell: pwsh
+        run: ./scripts/Test-ProjectedSource.ps1
+
+      - name: Require complete release projection
+        shell: pwsh
+        run: |
+          foreach ($path in @(
+            'source/CMakeLists.txt',
+            'source/LICENSE',
+            'source/tools/winspect.nsi',
+            'source/scripts/build-portableapps.sh',
+            'source/scripts/Test-InstallerLifecycle.ps1',
+            '.projection/source-manifest.json'
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Release projection is incomplete: $path"
+            }
+          }
+          $manifest = Get-Content -LiteralPath '.projection/source-manifest.json' -Raw | ConvertFrom-Json
+          if ($manifest.authoritativeCandidate -ne $true) { throw 'Release requires an authoritative clean-tree source projection.' }
+          Write-Host "Private source commit: $($manifest.sourceCommitSha)"
+          Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
+
+      - name: Install OpenSSL
+        shell: pwsh
+        run: |
+          winget install OpenSSL.OpenSSL --accept-source-agreements --accept-package-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL installation failed with exit code $LASTEXITCODE." }
+
+      - name: Build and test projected source
+        shell: pwsh
+        run: |
+          cmake -S source -B source/build -DWININSPECT_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build source/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
+          ctest --test-dir source/build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
+
+      - name: Build portable CLI subjects
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'source/dist' | Out-Null
+          go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-win-x64.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows portable CLI build failed.' }
+          $oldGoOs = $env:GOOS
+          $oldGoArch = $env:GOARCH
+          try {
+            $env:GOOS = 'linux'
+            $env:GOARCH = 'amd64'
+            go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-linux-x64"
+            if ($LASTEXITCODE -ne 0) { throw 'Linux portable CLI build failed.' }
+          } finally {
+            $env:GOOS = $oldGoOs
+            $env:GOARCH = $oldGoArch
+          }
+
+      - name: Install packaging tools
+        shell: pwsh
+        run: |
+          choco install nsis 7zip.install --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "Packaging-tool installation failed with exit code $LASTEXITCODE." }
+
+      - name: Stage product binaries
+        shell: pwsh
+        run: |
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE 'source/build/Release'
+          $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/staging'
+          New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $source = Join-Path $buildRoot $name
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required product binary is absent: $source" }
+            $before = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+            $destination = Join-Path $stageRoot $name
+            Copy-Item -LiteralPath $source -Destination $destination -Force
+            $after = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+            if ($before -ne $after) { throw "Binary changed during staging: $name" }
+          }
+
+      - name: Package NSIS installer
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE 'source/tools/winspect.nsi'
+          $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/staging'
+          $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist'
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) {
+            $resolved = Get-Command makensis.exe -ErrorAction SilentlyContinue
+            if (-not $resolved) { throw 'makensis.exe was not found after NSIS installation.' }
+            $makensis = $resolved.Source
+          }
+          & $makensis "/DVERSION=$env:RELEASE_TAG" "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" $script
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
+          $installer = Join-Path $distRoot "WinInspect-Installer-$env:RELEASE_TAG.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Expected NSIS installer was not produced.' }
+
+      - name: Prove packaged installer lifecycle
+        shell: pwsh
+        run: |
+          ./source/scripts/Test-InstallerLifecycle.ps1 `
+            -InstallerPath "source/dist/WinInspect-Installer-$env:RELEASE_TAG.exe" `
+            -EvidencePath "source/dist/installer-lifecycle-$env:RELEASE_TAG.json"
+
+      - name: Package portable ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/c/Program Files/7-Zip:$PATH"
+          cd source
+          scripts/build-portableapps.sh "$RELEASE_TAG" build/Release
+
+      - name: Stage exact release subjects and projection receipt
+        shell: pwsh
+        run: |
+          $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist'
+          $releaseRoot = Join-Path $distRoot 'release'
+          New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
+
+          foreach ($pattern in @(
+            'WinInspect-Installer-*.exe',
+            'WinInspectPortable-*.zip',
+            'wi-portable-*-win-x64.exe',
+            'wi-portable-*-linux-x64'
+          )) {
+            $matches = @(Get-ChildItem -LiteralPath $distRoot -File -Filter $pattern)
+            if ($matches.Count -eq 0) { throw "Required release subject pattern produced no files: $pattern" }
+            foreach ($match in $matches) { Copy-Item -LiteralPath $match.FullName -Destination (Join-Path $releaseRoot $match.Name) }
+          }
+
+          foreach ($optional in @(Get-ChildItem -LiteralPath $distRoot -File -Filter 'WinInspectPortable-*.paf.exe')) {
+            Copy-Item -LiteralPath $optional.FullName -Destination (Join-Path $releaseRoot $optional.Name)
+          }
+
+          $projectionSubject = Join-Path $releaseRoot "WinInspect-source-projection-$env:RELEASE_TAG.json"
+          Copy-Item -LiteralPath '.projection/source-manifest.json' -Destination $projectionSubject
+
+          $lifecycleSubject = Join-Path $releaseRoot "WinInspect-installer-lifecycle-$env:RELEASE_TAG.json"
+          Copy-Item -LiteralPath "source/dist/installer-lifecycle-$env:RELEASE_TAG.json" -Destination $lifecycleSubject
+
+          Get-ChildItem -LiteralPath $releaseRoot -File | Sort-Object Name | Format-Table Name, Length
+
+      - name: Generate Foundry public release trust envelope
+        uses: SemperSupra/windows-package-foundry/actions/release-trust@7076219cfba8265b29e00e111b153b3114256ce9
+        with:
+          artifact-root: ${{ github.workspace }}/source/dist/release
+          subject-path: ${{ github.workspace }}/source/dist/release/*
+          output-directory: ${{ github.workspace }}/foundry-trust
+          trust-artifact-name: foundry-release-trust-${{ inputs.release_tag }}
+          attest: 'true'
+
+      - name: Create immutable public release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            source/dist/release/*
+            foundry-trust/*
+          generate_release_notes: true
+
+      - name: Verify public release provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/release'
+          foreach ($subject in Get-ChildItem -LiteralPath $releaseRoot -File) {
+            gh attestation verify $subject.FullName -R $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "GitHub provenance verification failed: $($subject.Name)" }
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,url,targetCommitish
+          if ($LASTEXITCODE -ne 0) { throw 'Created release could not be resolved.' }
+
+      - name: Record promotion boundary
+        shell: pwsh
+        run: |
+          Write-Host 'Public build/release/provenance completed from validated projected source.'
+          Write-Host 'Native-client lifecycle and private Foundry promotion remain separate gates.'
