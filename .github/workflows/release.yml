@@ -35,7 +35,9 @@ jobs:
             throw 'release_tag must match vX.Y.Z.'
           }
           gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $tagExists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          if ($tagExists) {
             throw "Tag $env:RELEASE_TAG already exists; refusing to move or reuse an immutable release identity."
           }
           Write-Host "Release candidate deploy commit: $env:GITHUB_SHA"
@@ -150,7 +152,7 @@ jobs:
           set -euo pipefail
           export PATH="/c/Program Files/7-Zip:$PATH"
           cd source
-          scripts/build-portableapps.sh "$RELEASE_TAG" build/Release
+          bash scripts/build-portableapps.sh "$RELEASE_TAG" build/Release
 
       - name: Stage exact release subjects and projection receipt
         shell: pwsh
