@@ -30,6 +30,7 @@ struct StubRvServer
   int port = 0;
   std::string response_body;
   int response_code = 200;
+  std::thread worker;
 
   StubRvServer(const std::string& body, int code = 200)
       : running(std::make_shared<std::atomic<bool>>(true)), response_body(body), response_code(code)
@@ -45,9 +46,12 @@ struct StubRvServer
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     addr.sin_port = 0; // OS assigns port
-    if (bind(listen_sock, (sockaddr*)&addr, sizeof(addr)) != 0)
+    if (bind(listen_sock, (sockaddr*)&addr, sizeof(addr)) != 0) {
+      closesocket(listen_sock);
+      listen_sock = INVALID_SOCKET;
       return;
-    listen(listen_sock, 5);
+    }
+    listen(listen_sock, 10);
 
     // Get assigned port
     sockaddr_in bound = {};
@@ -60,7 +64,7 @@ struct StubRvServer
     auto s = listen_sock;
     auto resp_body = response_body;
     auto resp_code_val = response_code;
-    std::thread([r, s, resp_body, resp_code_val]() {
+    worker = std::thread([r, s, resp_body, resp_code_val]() {
       while (r->load()) {
         SOCKET c = accept(s, nullptr, nullptr);
         if (c == INVALID_SOCKET)
@@ -81,21 +85,37 @@ struct StubRvServer
                                 "Connection: close\r\n\r\n" +
                                 resp_body;
         send(c, http_resp.data(), (int)http_resp.size(), 0);
+        shutdown(c, SD_BOTH);
         closesocket(c);
       }
-      closesocket(s);
-    }).detach();
+    });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 
   ~StubRvServer()
   {
     *running = false;
     if (listen_sock != INVALID_SOCKET) {
-      closesocket(listen_sock);
+      SOCKET s = listen_sock;
       listen_sock = INVALID_SOCKET;
+      closesocket(s);
     }
+    if (port > 0) {
+      SOCKET unblock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if (unblock != INVALID_SOCKET) {
+        sockaddr_in addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        addr.sin_port = htons((u_short)port);
+        connect(unblock, (sockaddr*)&addr, sizeof(addr));
+        closesocket(unblock);
+      }
+    }
+    if (worker.joinable()) {
+      worker.join();
+    }
+    WSACleanup();
   }
 
   std::string url() const
