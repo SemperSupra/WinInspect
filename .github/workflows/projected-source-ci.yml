@@ -6,6 +6,7 @@ on:
       - 'source/**'
       - '.projection/**'
       - 'scripts/Test-ProjectedSource.ps1'
+      - 'scripts/Test-ProjectedSourcePathSafety.ps1'
       - 'scripts/Test-PublicDeployPlane.ps1'
       - '.github/workflows/projected-source-ci.yml'
       - '.github/workflows/release.yml'
@@ -18,6 +19,7 @@ on:
       - 'source/**'
       - '.projection/**'
       - 'scripts/Test-ProjectedSource.ps1'
+      - 'scripts/Test-ProjectedSourcePathSafety.ps1'
       - 'scripts/Test-PublicDeployPlane.ps1'
       - '.github/workflows/projected-source-ci.yml'
       - '.github/workflows/release.yml'
@@ -40,6 +42,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-PublicDeployPlane.ps1
 
+      - name: Regression-test projected path safety
+        shell: pwsh
+        run: ./scripts/Test-ProjectedSourcePathSafety.ps1
+
       - name: Validate source projection receipt
         shell: pwsh
         run: ./scripts/Test-ProjectedSource.ps1
@@ -58,17 +64,10 @@ jobs:
         if: steps.projection.outputs.present == 'true'
         shell: pwsh
         run: |
-          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
           cmake --build build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
-
-      - name: Test projected C++ source
-        if: steps.projection.outputs.present == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir build -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 
       - name: Build projected portable client
         if: steps.projection.outputs.present == 'true'
@@ -87,5 +86,6 @@ jobs:
         shell: pwsh
         run: |
           Write-Host 'This workflow validates and builds only sanitized projected source.'
+          Write-Host 'Comprehensive/private development tests are intentionally not part of the public build graph.'
           Write-Host 'It has no credentials or network path capable of reading the private development repository.'
           Write-Host 'A successful public build does not imply private promotion approval.'
