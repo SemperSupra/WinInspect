@@ -6,7 +6,11 @@ on:
       - 'source/**'
       - '.projection/**'
       - 'scripts/Test-ProjectedSource.ps1'
+      - 'scripts/Test-PublicDeployPlane.ps1'
       - '.github/workflows/projected-source-ci.yml'
+      - '.github/workflows/release.yml'
+      - 'README.md'
+      - 'docs/**'
   push:
     branches:
       - main
@@ -14,7 +18,11 @@ on:
       - 'source/**'
       - '.projection/**'
       - 'scripts/Test-ProjectedSource.ps1'
+      - 'scripts/Test-PublicDeployPlane.ps1'
       - '.github/workflows/projected-source-ci.yml'
+      - '.github/workflows/release.yml'
+      - 'README.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -27,6 +35,10 @@ jobs:
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate public deploy-plane architecture
+        shell: pwsh
+        run: ./scripts/Test-PublicDeployPlane.ps1
 
       - name: Validate source projection receipt
         shell: pwsh
