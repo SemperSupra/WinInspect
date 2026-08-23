@@ -80,6 +80,22 @@ if ([string]$manifest.projectionDigestSha256 -notmatch '^[0-9a-fA-F]{64}$') {
     throw 'Projected-source manifest projection digest is malformed.'
 }
 
+# Schema v1 exists only for historical compatibility and currently reflects the
+# broad Loop 1 mechanics proof. Schema v2 is the corrected disclosure contract:
+# private comprehensive tests/evaluator assets may not cross the airlock.
+$v2PrivateValidationPatterns = @(
+    '^core/tests/',
+    '^tests/',
+    '^clients/gui/tests/',
+    '^clients/mcp/src/[^/]+\.test\.ts$',
+    '^clients/sdk-python/tests/',
+    '^clients/sdk-typescript/src/[^/]+\.test\.ts$',
+    '^third_party/doctest/',
+    '^third_party/rapidcheck/',
+    '^daemon/src/test_discovery\.cpp$',
+    '^cmake/PrivateTests\.cmake$'
+)
+
 $entries = @($manifest.files)
 if ($entries.Count -eq 0 -or [int]$manifest.fileCount -ne $entries.Count) {
     throw 'Projected-source manifest fileCount is empty or inconsistent.'
@@ -97,6 +113,13 @@ foreach ($entry in ($entries | Sort-Object path)) {
     }
     if ($path -in @('AGENTS.md','CLAUDE.md','.github/copilot-instructions.md')) {
         throw "Private agent/control metadata is forbidden in projected source: $path"
+    }
+    if ($schemaVersion -eq 2) {
+        foreach ($pattern in $v2PrivateValidationPatterns) {
+            if ($path -match $pattern) {
+                throw "Schema v2 private validation/evaluator path is forbidden in projected source: $path"
+            }
+        }
     }
     if ([string]$entry.sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw "Malformed SHA-256 for projected path: $path" }
     if ([int64]$entry.bytes -lt 0) { throw "Negative byte count for projected path: $path" }
