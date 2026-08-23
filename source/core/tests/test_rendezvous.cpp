@@ -47,7 +47,7 @@ struct StubRvServer
     addr.sin_port = 0; // OS assigns port
     if (bind(listen_sock, (sockaddr*)&addr, sizeof(addr)) != 0)
       return;
-    listen(listen_sock, 1);
+    listen(listen_sock, 5);
 
     // Get assigned port
     sockaddr_in bound = {};
@@ -61,7 +61,6 @@ struct StubRvServer
     auto resp_body = response_body;
     auto resp_code_val = response_code;
     std::thread([r, s, resp_body, resp_code_val]() {
-      ::Sleep(50);
       while (r->load()) {
         SOCKET c = accept(s, nullptr, nullptr);
         if (c == INVALID_SOCKET)
@@ -86,13 +85,17 @@ struct StubRvServer
       }
       closesocket(s);
     }).detach();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
 
   ~StubRvServer()
   {
     *running = false;
-    if (listen_sock != INVALID_SOCKET)
+    if (listen_sock != INVALID_SOCKET) {
       closesocket(listen_sock);
+      listen_sock = INVALID_SOCKET;
+    }
   }
 
   std::string url() const
