@@ -42,6 +42,10 @@ jobs:
           }
           Write-Host "Release candidate deploy commit: $env:GITHUB_SHA"
 
+      - name: Regression-test projected path safety
+        shell: pwsh
+        run: ./scripts/Test-ProjectedSourcePathSafety.ps1
+
       - name: Validate projected source receipt
         shell: pwsh
         run: ./scripts/Test-ProjectedSource.ps1
@@ -62,19 +66,22 @@ jobs:
             }
           }
           $manifest = Get-Content -LiteralPath '.projection/source-manifest.json' -Raw | ConvertFrom-Json
-          if ($manifest.authoritativeCandidate -ne $true) { throw 'Release requires an authoritative clean-tree source projection.' }
-          Write-Host "Private source commit: $($manifest.sourceCommitSha)"
+          if ($manifest.authoritativeCandidate -ne $true) { throw 'Release requires an authoritative source projection.' }
+          if ([int]$manifest.schemaVersion -eq 1) {
+            Write-Host "Legacy private source commit: $($manifest.sourceCommitSha)"
+          } else {
+            Write-Host 'Private source identity is intentionally redacted from schema v2 public receipt.'
+            Write-Host "Projection policy SHA-256: $($manifest.projectionPolicySha256)"
+          }
           Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
 
-      - name: Build and test projected source
+      - name: Build projected source
         shell: pwsh
         run: |
-          cmake -S source -B source/build -DWININSPECT_BUILD_TESTS=ON
+          cmake -S source -B source/build -DWININSPECT_BUILD_TESTS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
           cmake --build source/build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
-          ctest --test-dir source/build -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 
       - name: Build portable CLI subjects
         shell: pwsh
@@ -214,4 +221,5 @@ jobs:
         shell: pwsh
         run: |
           Write-Host 'Public build/release/provenance completed from validated projected source.'
+          Write-Host 'Comprehensive/private development tests are intentionally excluded from the public build graph.'
           Write-Host 'Native-client lifecycle and private Foundry promotion remain separate gates.'
