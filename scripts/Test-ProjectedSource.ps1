@@ -15,7 +15,7 @@ function Normalize-RelativePath {
         throw 'Projected-source manifest contains an empty path.'
     }
 
-    $relative = $Path.Replace('\\', '/')
+    $relative = $Path.Replace('\', '/')
     if ($relative.StartsWith('/', [StringComparison]::Ordinal) -or
         $relative.StartsWith('//', [StringComparison]::Ordinal) -or
         $relative -match '^[A-Za-z]:/') {
