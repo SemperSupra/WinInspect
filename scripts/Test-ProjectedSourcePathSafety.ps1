@@ -89,4 +89,20 @@ Assert-Rejected -RelativePath '.github\workflows\private.yml' -ExpectedMessage '
 Assert-Rejected -RelativePath '.claude/agent.md' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath 'CMakeLists.txt' -SchemaVersion 2 -LeakPrivateSourceSha -ExpectedMessage 'must not expose the private source commit SHA'
 
-Write-Host 'Projected-source path/schema safety regression tests passed.'
+# The corrected v2 contract must not recreate the broad Loop 1 disclosure under
+# a new receipt schema.
+foreach ($privateTestPath in @(
+    'core/tests/test_trace_replay.cpp',
+    'clients/gui/tests/test_viewmodel.cpp',
+    'clients/mcp/src/tools.test.ts',
+    'clients/sdk-python/tests/test_client.py',
+    'clients/sdk-typescript/src/index.test.ts',
+    'third_party/doctest/doctest.h',
+    'third_party/rapidcheck/rapidcheck.hpp',
+    'daemon/src/test_discovery.cpp',
+    'cmake/PrivateTests.cmake'
+)) {
+    Assert-Rejected -RelativePath $privateTestPath -SchemaVersion 2 -ExpectedMessage 'Schema v2 private validation/evaluator path is forbidden'
+}
+
+Write-Host 'Projected-source path/schema/private-boundary regression tests passed.'
