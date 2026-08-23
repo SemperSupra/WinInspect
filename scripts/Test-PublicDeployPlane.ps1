@@ -11,6 +11,8 @@ $required = @(
     'docs/public-build-deploy-architecture.md',
     'docs/zero-budget-development.md',
     'scripts/Test-ProjectedSource.ps1',
+    'scripts/Import-ProjectedSource.ps1',
+    'scripts/Test-PublicDeployPlane.ps1',
     '.github/workflows/projected-source-ci.yml',
     '.github/workflows/release.yml'
 )
@@ -22,7 +24,9 @@ foreach ($relative in $required) {
 
 $workflowRoot = Join-Path $root '.github/workflows'
 $usesPattern = '(?m)^\s*-?\s*uses:\s*([^\s#]+)'
-foreach ($file in Get-ChildItem -LiteralPath $workflowRoot -File -Include *.yml,*.yaml) {
+$workflowFiles = @(Get-ChildItem -LiteralPath $workflowRoot -File | Where-Object { $_.Extension -in @('.yml','.yaml') })
+if ($workflowFiles.Count -eq 0) { throw 'Public deploy plane contains no workflow files to validate.' }
+foreach ($file in $workflowFiles) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($match in [regex]::Matches($text, $usesPattern)) {
         $reference = $match.Groups[1].Value.Trim('"', "'")
