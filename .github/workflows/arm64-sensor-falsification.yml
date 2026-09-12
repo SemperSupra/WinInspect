@@ -1,0 +1,141 @@
+name: ARM64 sensor falsification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/arm64-sensor-falsification.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-sensor-falsification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-windows-arm64-sensors:
+    name: Native ARM64 raw-vs-CLI sensor A/B
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Build ARM64 daemon and CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          cmake -S source -B build-arm64-sensors -A ARM64 -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-arm64-sensors --config Release --target wininspectd wininspect --parallel 2
+
+      - name: Raw exact-read vs CLI sensor falsification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+
+          # Apply only the already-demonstrated CLI payload send-length correction so
+          # this rep isolates receive/sensor behavior rather than the known send defect.
+          $src='source/clients/cli/src/cli.cpp'
+          $s=Get-Content $src -Raw
+          $old='uint32_t len = htonl((uint32_t)m.size());'
+          if (-not $s.Contains($old)) { throw 'expected shared CLI send defect not found' }
+          $s=$s.Replace($old,"uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);").Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+          Set-Content $src $s -NoNewline
+          cmake --build build-arm64-sensors --config Release --target wininspect --parallel 2
+
+          $p=Start-Process build-arm64-sensors/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput arm64-sensor-daemon.out.log -RedirectStandardError arm64-sensor-daemon.err.log
+          try {
+            $listener=$null
+            for($i=0;$i -lt 20;$i++){
+              Start-Sleep 1
+              if($p.HasExited){throw "daemon exited early with $($p.ExitCode)"}
+              $listener=Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if($listener){break}
+            }
+            if(-not $listener){throw 'daemon did not establish loopback listener'}
+
+            @'
+          import json, socket, struct
+
+          MAX = 64 * 1024 * 1024
+
+          def recvn(s, n):
+              out = bytearray()
+              while len(out) < n:
+                  chunk = s.recv(n - len(out))
+                  if not chunk:
+                      raise RuntimeError(f'EOF after {len(out)}/{n} bytes')
+                  out.extend(chunk)
+              return bytes(out)
+
+          def recv_frame(s):
+              raw = struct.unpack('!I', recvn(s, 4))[0]
+              compressed = bool(raw & 0x80000000)
+              n = raw & 0x7fffffff
+              if n <= 0 or n > MAX:
+                  raise RuntimeError(f'invalid frame length {n}')
+              payload = recvn(s, n)
+              if compressed:
+                  # Do not add a second decompressor implementation here. Report the
+                  # framing fact; a compressed response still proves server-side sensor execution.
+                  return {'_compressed': True, '_payload_bytes': len(payload)}
+              return json.loads(payload)
+
+          def call(method, params=None):
+              with socket.create_connection(('127.0.0.1', 1985), 5) as s:
+                  hello = recv_frame(s)
+                  req = json.dumps({'id': f'raw-{method}', 'method': method, 'params': params or {}}, separators=(',', ':')).encode()
+                  s.sendall(struct.pack('!I', len(req)) + req)
+                  resp = recv_frame(s)
+                  return hello, resp
+
+          for method, params in [
+              ('daemon.health', {}),
+              ('window.listTop', {'canonical': True, 'protocol_version': '1.0'}),
+              ('screen.capture', {'canonical': True, 'protocol_version': '1.0', 'left': 0, 'top': 0, 'right': 64, 'bottom': 64}),
+          ]:
+              hello, resp = call(method, params)
+              print('RAW_RESULT', method, json.dumps(resp, sort_keys=True)[:4000])
+              if isinstance(resp, dict) and not resp.get('_compressed'):
+                  assert resp.get('ok') is True, (method, resp)
+          '@ | Set-Content arm64_sensor_raw_probe.py
+
+            python arm64_sensor_raw_probe.py
+            if($LASTEXITCODE -ne 0){throw 'raw-protocol sensor probe failed'}
+            Write-Host 'QUAL_RESULT raw-exact-read-sensors=pass architecture=arm64'
+
+            $target='127.0.0.1:1985'
+            $cli='build-arm64-sensors/Release/wininspect.exe'
+            $topOk=$true
+            & $cli top --tcp $target
+            if($LASTEXITCODE -ne 0){$topOk=$false}
+            $captureOk=$true
+            & $cli capture 0 0 64 64 --tcp $target
+            if($LASTEXITCODE -ne 0){$captureOk=$false}
+
+            Write-Host "QUAL_RESULT cli-top=$topOk cli-capture=$captureOk architecture=arm64"
+            if(-not $topOk -or -not $captureOk){
+              Write-Host 'QUAL_INTERPRETATION raw_sensor_path_passed=true cli_sensor_path_failed=true candidate_blocker=shared-cli-receive-framing'
+            } else {
+              Write-Host 'QUAL_INTERPRETATION raw_sensor_path_passed=true cli_sensor_path_failed=false candidate_blocker=none-at-this-layer'
+            }
+          }
+          finally {
+            Get-Content arm64-sensor-daemon.out.log -ErrorAction SilentlyContinue
+            Get-Content arm64-sensor-daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  boundary:
+    name: Evidence boundary
+    runs-on: ubuntu-latest
+    needs: [native-windows-arm64-sensors]
+    if: always()
+    steps:
+      - run: |
+          echo 'This lane falsifies ARM64 sensor-vs-client attribution on a hosted native ARM64 runner.'
+          echo 'It is not interactive WinBot/native-Windows acceptance and does not bridge to Hyper-V clone lifecycle or Rep 3.'
