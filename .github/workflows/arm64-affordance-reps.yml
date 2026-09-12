@@ -58,17 +58,26 @@ jobs:
             Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue
             throw "ARM64 wininspectd exited early: $($p.ExitCode)"
           }
+          $log = Get-Content arm64-wininspectd.out.log -Raw
+          $m = [regex]::Match($log, 'TCP Server listening on \[([^\]]+)\]:1985')
+          if (-not $m.Success) { throw 'Could not discover ARM64 WinInspect TCP listen address.' }
+          $target = $m.Groups[1].Value
+          Write-Host "Discovered ARM64 daemon TCP target: $target:1985"
+          "WININSPECT_TARGET=$target" >> $env:GITHUB_ENV
 
       - name: Query actual ARM64 Windows runtime capabilities
         shell: pwsh
         run: |
           $cli = Resolve-Path 'build-arm64/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
           Write-Host '=== HEALTH ==='
-          & $cli health --tcp 127.0.0.1:1985
+          & $cli health --tcp $target
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 health query failed.' }
           Write-Host '=== IDENTITY ==='
-          & $cli identity --tcp 127.0.0.1:1985
+          & $cli identity --tcp $target
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 identity query failed.' }
           Write-Host '=== CAPABILITIES ==='
-          & $cli capabilities --tcp 127.0.0.1:1985
+          & $cli capabilities --tcp $target
           if ($LASTEXITCODE -ne 0) { throw 'ARM64 capability query failed.' }
 
       - name: Probe read-only ARM64 Windows sensors
@@ -76,10 +85,11 @@ jobs:
         continue-on-error: true
         run: |
           $cli = Resolve-Path 'build-arm64/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
           Write-Host '=== WINDOWS ==='
-          & $cli windows --tcp 127.0.0.1:1985
+          & $cli windows --tcp $target
           Write-Host '=== SCREENSHOT SENSOR ATTEMPT ==='
-          & $cli screenshot --tcp 127.0.0.1:1985 --output arm64-windows-screen.bmp
+          & $cli screenshot --tcp $target --output arm64-windows-screen.bmp
 
       - name: Collect ARM64 Windows diagnostics
         if: always()
@@ -127,6 +137,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
           cmake -S source -B build-winarm64 \
             -DCMAKE_SYSTEM_NAME=Windows \
             -DCMAKE_SYSTEM_PROCESSOR=ARM64 \
@@ -151,27 +162,34 @@ jobs:
           WINEDEBUG: -all
         run: |
           xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-winarm64/wininspectd.exe --headless >wine-arm64-daemon.log 2>&1 & echo $! > wine-arm64-daemon.pid; sleep 8; kill -0 $(cat wine-arm64-daemon.pid)'
+          cat wine-arm64-daemon.log || true
+          target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-arm64-daemon.log | tail -1)
+          test -n "$target"
+          echo "WININSPECT_TARGET=$target" >> "$GITHUB_ENV"
+          echo "Discovered Wine ARM64 daemon TCP target: $target:1985"
 
       - name: Query actual Wine ARM64 runtime capabilities
         env:
           WINEDEBUG: -all
         run: |
+          target="$WININSPECT_TARGET:1985"
           echo '=== HEALTH ==='
-          xvfb-run -a wine build-winarm64/wininspect.exe health --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-winarm64/wininspect.exe health --tcp "$target"
           echo '=== IDENTITY ==='
-          xvfb-run -a wine build-winarm64/wininspect.exe identity --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-winarm64/wininspect.exe identity --tcp "$target"
           echo '=== CAPABILITIES ==='
-          xvfb-run -a wine build-winarm64/wininspect.exe capabilities --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-winarm64/wininspect.exe capabilities --tcp "$target"
 
       - name: Probe read-only Wine ARM64 sensors
         env:
           WINEDEBUG: -all
         continue-on-error: true
         run: |
+          target="$WININSPECT_TARGET:1985"
           echo '=== WINDOWS ==='
-          xvfb-run -a wine build-winarm64/wininspect.exe windows --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-winarm64/wininspect.exe windows --tcp "$target"
           echo '=== SCREENSHOT SENSOR ATTEMPT ==='
-          xvfb-run -a wine build-winarm64/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output wine-arm64-screen.bmp
+          xvfb-run -a wine build-winarm64/wininspect.exe screenshot --tcp "$target" --output wine-arm64-screen.bmp
 
       - name: Collect Wine ARM64 diagnostics
         if: always()
