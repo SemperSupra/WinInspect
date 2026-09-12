@@ -26,6 +26,50 @@ jobs:
         run: |
           cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
           cmake --build build --config Release --parallel 2
+      - name: Falsify UIA COM initialization boundary without product changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force uia-probe | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.20)
+          project(uia_com_probe LANGUAGES CXX)
+          add_executable(uia_com_probe probe.cpp)
+          target_link_libraries(uia_com_probe PRIVATE ole32)
+          '@ | Set-Content uia-probe/CMakeLists.txt
+          @'
+          #include <windows.h>
+          #include <uiautomation.h>
+          #include <iostream>
+
+          int main() {
+            IUIAutomation* before = nullptr;
+            HRESULT before_hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                                                  IID_IUIAutomation, reinterpret_cast<void**>(&before));
+            if (before) before->Release();
+
+            HRESULT init_hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            IUIAutomation* after = nullptr;
+            HRESULT after_hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                                                 IID_IUIAutomation, reinterpret_cast<void**>(&after));
+            if (after) after->Release();
+            if (SUCCEEDED(init_hr)) CoUninitialize();
+
+            std::cout << std::hex
+                      << "UIA_PROBE before_hr=0x" << static_cast<unsigned long>(before_hr)
+                      << " init_hr=0x" << static_cast<unsigned long>(init_hr)
+                      << " after_hr=0x" << static_cast<unsigned long>(after_hr) << std::endl;
+            std::cout << "QUAL_UIA before=" << (SUCCEEDED(before_hr) ? "pass" : "fail")
+                      << " after_coinitialize=" << (SUCCEEDED(after_hr) ? "pass" : "fail")
+                      << " reversal=" << ((!SUCCEEDED(before_hr) && SUCCEEDED(after_hr)) ? "true" : "false")
+                      << std::endl;
+            return SUCCEEDED(after_hr) ? 0 : 1;
+          }
+          '@ | Set-Content uia-probe/probe.cpp
+          cmake -S uia-probe -B uia-probe/build
+          cmake --build uia-probe/build --config Release --parallel 2
+          & uia-probe/build/Release/uia_com_probe.exe
+          if ($LASTEXITCODE -ne 0) { throw 'uia-capability: UIAutomation activation still failed after explicit COM initialization' }
       - name: Layered falsification in one process lifetime
         shell: pwsh
         run: |
