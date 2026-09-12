@@ -1,0 +1,193 @@
+name: ARM64 affordance qualification reps
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/arm64-affordance-reps.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-affordance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-windows-arm64:
+    name: Native Windows 11 ARM64 runtime evidence
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record ARM64 Windows executor
+        shell: pwsh
+        run: |
+          Write-Host '=== EXECUTOR ==='
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          Write-Host "PROCESSOR_IDENTIFIER=$env:PROCESSOR_IDENTIFIER"
+          Write-Host "SESSIONNAME=$env:SESSIONNAME"
+
+      - name: Configure and build WinInspect natively on ARM64 Windows
+        shell: pwsh
+        run: |
+          cmake -S source -B build-arm64 -A ARM64 -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 CMake configure failed.' }
+          cmake --build build-arm64 --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 build failed.' }
+
+      - name: Run deterministic tests on native ARM64 Windows
+        shell: pwsh
+        run: |
+          ctest --test-dir build-arm64 -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 CTest failed.' }
+
+      - name: Start actual ARM64 WinInspect daemon
+        shell: pwsh
+        run: |
+          $daemon = Resolve-Path 'build-arm64/Release/wininspectd.exe'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless' -PassThru -RedirectStandardOutput 'arm64-wininspectd.out.log' -RedirectStandardError 'arm64-wininspectd.err.log'
+          "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
+          Start-Sleep -Seconds 4
+          if ($p.HasExited) {
+            Get-Content arm64-wininspectd.out.log -ErrorAction SilentlyContinue
+            Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue
+            throw "ARM64 wininspectd exited early: $($p.ExitCode)"
+          }
+
+      - name: Query actual ARM64 Windows runtime capabilities
+        shell: pwsh
+        run: |
+          $cli = Resolve-Path 'build-arm64/Release/wininspect.exe'
+          Write-Host '=== HEALTH ==='
+          & $cli health --tcp 127.0.0.1:1985
+          Write-Host '=== IDENTITY ==='
+          & $cli identity --tcp 127.0.0.1:1985
+          Write-Host '=== CAPABILITIES ==='
+          & $cli capabilities --tcp 127.0.0.1:1985
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 capability query failed.' }
+
+      - name: Probe read-only ARM64 Windows sensors
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $cli = Resolve-Path 'build-arm64/Release/wininspect.exe'
+          Write-Host '=== WINDOWS ==='
+          & $cli windows --tcp 127.0.0.1:1985
+          Write-Host '=== SCREENSHOT SENSOR ATTEMPT ==='
+          & $cli screenshot --tcp 127.0.0.1:1985 --output arm64-windows-screen.bmp
+
+      - name: Collect ARM64 Windows diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content arm64-wininspectd.out.log -ErrorAction SilentlyContinue
+          Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue
+          if ($env:WININSPECTD_PID) { Stop-Process -Id $env:WININSPECTD_PID -Force -ErrorAction SilentlyContinue }
+
+  wine-arm64:
+    name: Wine on native Ubuntu ARM64 runtime evidence
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record ARM64 Linux executor and install native Wine
+        run: |
+          echo '=== EXECUTOR ==='
+          uname -a
+          dpkg --print-architecture
+          cat /etc/os-release
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wine64 xvfb cmake curl xz-utils
+          echo '=== NATIVE WINE ==='
+          wine --version
+          file "$(command -v wine)" || true
+
+      - name: Install pinned LLVM-MinGW cross toolchain with Windows ARM64 target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=20260908
+          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/$TAG"
+          URL=$(curl -fsSL "$API" | python3 -c 'import json,sys; r=json.load(sys.stdin); xs=[a["browser_download_url"] for a in r["assets"] if "ucrt-ubuntu-22.04-aarch64.tar.xz" in a["name"]]; print(xs[0] if xs else "")')
+          test -n "$URL"
+          curl -fL "$URL" -o llvm-mingw.tar.xz
+          mkdir llvm-mingw
+          tar -xJf llvm-mingw.tar.xz -C llvm-mingw --strip-components=1
+          echo "$GITHUB_WORKSPACE/llvm-mingw/bin" >> "$GITHUB_PATH"
+          ./llvm-mingw/bin/aarch64-w64-mingw32-clang++ --version | head -2
+
+      - name: Cross-build actual Windows ARM64 WinInspect binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S source -B build-winarm64 \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_SYSTEM_PROCESSOR=ARM64 \
+            -DCMAKE_CXX_COMPILER=aarch64-w64-mingw32-clang++ \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-winarm64 -j2
+          file build-winarm64/wininspectd.exe build-winarm64/wininspect.exe
+
+      - name: Initialize isolated native ARM64 Wine prefix
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-arm64
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a wineboot --init
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+          echo '=== WINE ARM64 ENVIRONMENT ==='
+          wine --version
+
+      - name: Start actual Windows ARM64 WinInspect daemon under native ARM64 Wine
+        env:
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-winarm64/wininspectd.exe --headless >wine-arm64-daemon.log 2>&1 & echo $! > wine-arm64-daemon.pid; sleep 8; kill -0 $(cat wine-arm64-daemon.pid)'
+
+      - name: Query actual Wine ARM64 runtime capabilities
+        env:
+          WINEDEBUG: -all
+        run: |
+          echo '=== HEALTH ==='
+          xvfb-run -a wine build-winarm64/wininspect.exe health --tcp 127.0.0.1:1985
+          echo '=== IDENTITY ==='
+          xvfb-run -a wine build-winarm64/wininspect.exe identity --tcp 127.0.0.1:1985
+          echo '=== CAPABILITIES ==='
+          xvfb-run -a wine build-winarm64/wininspect.exe capabilities --tcp 127.0.0.1:1985
+
+      - name: Probe read-only Wine ARM64 sensors
+        env:
+          WINEDEBUG: -all
+        continue-on-error: true
+        run: |
+          echo '=== WINDOWS ==='
+          xvfb-run -a wine build-winarm64/wininspect.exe windows --tcp 127.0.0.1:1985
+          echo '=== SCREENSHOT SENSOR ATTEMPT ==='
+          xvfb-run -a wine build-winarm64/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output wine-arm64-screen.bmp
+
+      - name: Collect Wine ARM64 diagnostics
+        if: always()
+        run: |
+          cat wine-arm64-daemon.log 2>/dev/null || true
+          if test -f wine-arm64-daemon.pid; then kill "$(cat wine-arm64-daemon.pid)" 2>/dev/null || true; fi
+
+  boundary:
+    name: ARM64 evidence boundary
+    runs-on: ubuntu-latest
+    needs: [native-windows-arm64, wine-arm64]
+    if: always()
+    steps:
+      - name: State architecture qualification boundary
+        run: |
+          echo 'ARM64 is an independent environment axis; x64 evidence is not promoted to ARM64 without bridging evidence.'
+          echo 'Native Windows ARM64 and Wine-on-ARM64 are separate substrates and are reported separately.'
+          echo 'Cross-compilation establishes artifact production only; runtime qualification requires the actual ARM64 jobs above.'
+          echo 'ARM64EC/WoW64 compatibility is not inferred by these jobs and requires separate controlled experiments.'
