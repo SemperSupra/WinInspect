@@ -30,21 +30,17 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     steps:
-      - name: Checkout public projected source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install distro Wine, MinGW, Xvfb
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq wine64 mingw-w64 cmake xvfb
-          echo '=== WINE VERSION ==='
           wine --version
-          echo '=== HOST ==='
           cat /etc/os-release
           uname -a
-
       - name: Cross-build actual WinInspect binaries
         run: |
+          grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -52,7 +48,6 @@ jobs:
             -DWININSPECT_BUILD_TESTS=OFF \
             -DWININSPECT_USE_OPENSSL=OFF
           cmake --build build-mingw -j2
-
       - name: Initialize isolated Wine prefix
         env:
           WINEPREFIX: ${{ github.workspace }}/.wine-${{ matrix.expected }}
@@ -60,30 +55,99 @@ jobs:
         run: |
           xvfb-run -a wineboot --init
           echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
-
       - name: Start actual WinInspect daemon
         env:
           WINEDEBUG: -all
         run: |
           xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
-
+          cat wine-daemon.log || true
+          target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
+          test -n "$target"
+          echo "WININSPECT_TARGET=$target" >> "$GITHUB_ENV"
       - name: Qualify runtime surfaces
         env:
           WINEDEBUG: -all
         run: |
-          echo '=== VERSION ==='
+          target="$WININSPECT_TARGET:1985"
           wine --version
-          echo '=== HEALTH ==='
-          xvfb-run -a wine build-mingw/wininspect.exe health --tcp 127.0.0.1:1985
-          echo '=== IDENTITY ==='
-          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp 127.0.0.1:1985
-          echo '=== CAPABILITIES ==='
-          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp 127.0.0.1:1985
-          echo '=== WINDOWS ==='
-          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp 127.0.0.1:1985 || true
-          echo '=== SCREENSHOT ==='
-          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output "wine-${{ matrix.expected }}.bmp" || true
+          xvfb-run -a wine build-mingw/wininspect.exe health --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp "$target" || true
+          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp "$target" --output "wine-${{ matrix.expected }}.bmp" || true
+      - name: Diagnostics
+        if: always()
+        run: |
+          cat wine-daemon.log 2>/dev/null || true
+          if test -f wine-daemon.pid; then kill "$(cat wine-daemon.pid)" 2>/dev/null || true; fi
 
+  winehq-historical-10:
+    name: WineHQ ${{ matrix.label }} on Ubuntu 24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: '10.0-stable'
+            package: winehq-stable
+            version_prefix: '10.0'
+          - label: '10.20-devel'
+            package: winehq-devel
+            version_prefix: '10.20'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Configure WineHQ repository and install exact 10.x package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          wget -qO- https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          sudo wget -q -O /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+          sudo apt-get update -qq
+          candidate=$(apt-cache madison ${{ matrix.package }} | awk '{print $3}' | grep '^${{ matrix.version_prefix }}' | head -1 || true)
+          echo "Selected candidate: $candidate"
+          test -n "$candidate"
+          sudo apt-get install -y -qq --install-recommends "${{ matrix.package }}=$candidate" mingw-w64 cmake xvfb
+          wine --version
+      - name: Cross-build actual WinInspect binaries
+        run: |
+          grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
+          cmake -S source -B build-mingw \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-mingw -j2
+      - name: Initialize isolated Wine prefix
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-${{ matrix.label }}
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a wineboot --init
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+      - name: Start actual WinInspect daemon
+        env:
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+          cat wine-daemon.log || true
+          target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
+          test -n "$target"
+          echo "WININSPECT_TARGET=$target" >> "$GITHUB_ENV"
+      - name: Qualify runtime surfaces
+        env:
+          WINEDEBUG: -all
+        run: |
+          target="$WININSPECT_TARGET:1985"
+          wine --version
+          xvfb-run -a wine build-mingw/wininspect.exe health --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp "$target" || true
+          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp "$target" --output "wine-${{ matrix.label }}.bmp" || true
       - name: Diagnostics
         if: always()
         run: |
@@ -91,26 +155,21 @@ jobs:
           if test -f wine-daemon.pid; then kill "$(cat wine-daemon.pid)" 2>/dev/null || true; fi
 
   winehq-current:
-    name: WineHQ ${{ matrix.track }} on Ubuntu 24.04
+    name: WineHQ current ${{ matrix.track }} on Ubuntu 24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - track: stable
             package: winehq-stable
-            expected-family: '11.0'
           - track: devel
             package: winehq-devel
-            expected-family: '11.17'
           - track: staging
             package: winehq-staging
-            expected-family: '11.17'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
-      - name: Checkout public projected source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Configure WineHQ repository
         run: |
           sudo dpkg --add-architecture i386
@@ -119,11 +178,10 @@ jobs:
           sudo wget -q -O /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
           sudo apt-get update -qq
           sudo apt-get install -y -qq --install-recommends ${{ matrix.package }} mingw-w64 cmake xvfb
-          echo '=== WINEHQ VERSION ==='
           wine --version
-
       - name: Cross-build actual WinInspect binaries
         run: |
+          grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -131,7 +189,6 @@ jobs:
             -DWININSPECT_BUILD_TESTS=OFF \
             -DWININSPECT_USE_OPENSSL=OFF
           cmake --build build-mingw -j2
-
       - name: Initialize isolated Wine prefix
         env:
           WINEPREFIX: ${{ github.workspace }}/.wine-winehq-${{ matrix.track }}
@@ -139,29 +196,26 @@ jobs:
         run: |
           xvfb-run -a wineboot --init
           echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
-
       - name: Start actual WinInspect daemon
         env:
           WINEDEBUG: -all
         run: |
           xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
-
+          cat wine-daemon.log || true
+          target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
+          test -n "$target"
+          echo "WININSPECT_TARGET=$target" >> "$GITHUB_ENV"
       - name: Qualify runtime surfaces
         env:
           WINEDEBUG: -all
         run: |
-          echo '=== TRACK ==='
-          echo '${{ matrix.track }} / expected family ${{ matrix.expected-family }}'
+          target="$WININSPECT_TARGET:1985"
           wine --version
-          echo '=== HEALTH ==='
-          xvfb-run -a wine build-mingw/wininspect.exe health --tcp 127.0.0.1:1985
-          echo '=== CAPABILITIES ==='
-          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp 127.0.0.1:1985
-          echo '=== WINDOWS ==='
-          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp 127.0.0.1:1985 || true
-          echo '=== SCREENSHOT ==='
-          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output "winehq-${{ matrix.track }}.bmp" || true
-
+          xvfb-run -a wine build-mingw/wininspect.exe health --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp "$target"
+          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp "$target" || true
+          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp "$target" --output "winehq-${{ matrix.track }}.bmp" || true
       - name: Diagnostics
         if: always()
         run: |
@@ -171,11 +225,12 @@ jobs:
   boundary:
     name: Version-matrix evidence boundary
     runs-on: ubuntu-latest
-    needs: [distro-wine, winehq-current]
+    needs: [distro-wine, winehq-historical-10, winehq-current]
     if: always()
     steps:
       - name: State scope
         run: |
-          echo 'Each matrix cell is evidence only for the exact Wine version/track, host distribution, Xvfb session, and WinInspect revision exercised.'
-          echo 'Differences across Ubuntu-distribution Wine versions are potentially confounded by host-library differences; WineHQ stable/devel/staging cells share Ubuntu 24.04 to reduce that confound.'
+          echo 'Each matrix cell is evidence only for the exact Wine version/track, host distribution, Xvfb session, architecture, and WinInspect revision exercised.'
+          echo 'Ubuntu-packaged Wine cells may be confounded by host-library differences; WineHQ 10.x/current cells share Ubuntu 24.04 to reduce that confound.'
+          echo 'Historical-package acquisition failures are infrastructure evidence, not WinInspect runtime failures.'
           echo 'No version-family support claim is promoted until repeated mechanism-level probes show a stable boundary.'
