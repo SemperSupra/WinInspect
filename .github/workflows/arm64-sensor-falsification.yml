@@ -95,8 +95,8 @@ jobs:
 
           for method, params in [
               ('daemon.health', {}),
-              ('window.listTop', {'canonical': True, 'protocol_version': '1.0'}),
-              ('screen.capture', {'canonical': True, 'protocol_version': '1.0', 'left': 0, 'top': 0, 'right': 64, 'bottom': 64}),
+              ('window.listTop', {'canonical': True, 'protocol_version': '0.3.0'}),
+              ('screen.capture', {'canonical': True, 'protocol_version': '0.3.0', 'left': 0, 'top': 0, 'right': 64, 'bottom': 64}),
           ]:
               hello, resp = call(method, params)
               print('RAW_RESULT', method, json.dumps(resp, sort_keys=True)[:4000])
