@@ -1,0 +1,173 @@
+name: Affordance substrate qualification reps
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/affordance-substrate-reps.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: affordance-substrate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-windows:
+    name: Native Windows runtime evidence
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record executor environment
+        shell: pwsh
+        run: |
+          Write-Host '=== EXECUTOR ==='
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          Write-Host "SESSIONNAME=$env:SESSIONNAME"
+
+      - name: Build WinInspect and deterministic tests
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+
+      - name: Run projected deterministic tests on native Windows
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
+
+      - name: Start actual WinInspect daemon on Windows
+        shell: pwsh
+        run: |
+          $daemon = Resolve-Path 'build/Release/wininspectd.exe'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless' -PassThru -RedirectStandardOutput 'wininspectd.out.log' -RedirectStandardError 'wininspectd.err.log'
+          "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
+          Start-Sleep -Seconds 4
+          if ($p.HasExited) {
+            Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
+            Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
+            throw "wininspectd exited early: $($p.ExitCode)"
+          }
+
+      - name: Query actual Windows runtime capabilities
+        shell: pwsh
+        run: |
+          $cli = Resolve-Path 'build/Release/wininspect.exe'
+          Write-Host '=== HEALTH ==='
+          & $cli health --tcp 127.0.0.1:1985
+          if ($LASTEXITCODE -ne 0) { throw 'health failed' }
+          Write-Host '=== IDENTITY ==='
+          & $cli identity --tcp 127.0.0.1:1985
+          if ($LASTEXITCODE -ne 0) { throw 'identity failed' }
+          Write-Host '=== CAPABILITIES ==='
+          & $cli capabilities --tcp 127.0.0.1:1985
+          if ($LASTEXITCODE -ne 0) { throw 'capabilities failed' }
+
+      - name: Probe read-only native sensors
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $cli = Resolve-Path 'build/Release/wininspect.exe'
+          Write-Host '=== WINDOWS ==='
+          & $cli windows --tcp 127.0.0.1:1985
+          Write-Host '=== SCREENSHOT SENSOR ATTEMPT ==='
+          & $cli screenshot --tcp 127.0.0.1:1985 --output affordance-screen.bmp
+
+      - name: Collect daemon diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
+          Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
+          if ($env:WININSPECTD_PID) { Stop-Process -Id $env:WININSPECTD_PID -Force -ErrorAction SilentlyContinue }
+
+  wine:
+    name: Wine runtime evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install Wine and MinGW
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake wine64 xvfb
+          wine --version
+          x86_64-w64-mingw32-g++ --version | head -1
+
+      - name: Cross-build actual WinInspect Windows binaries
+        run: |
+          cmake -S source -B build-mingw \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-mingw -j2
+          ls -l build-mingw/wininspectd.exe build-mingw/wininspect.exe
+
+      - name: Initialize real Wine environment
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-affordance
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a wineboot --init
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+          echo '=== WINE EXECUTOR ==='
+          wine --version
+          uname -a
+
+      - name: Start actual WinInspect daemon under Wine
+        env:
+          WINEDEBUG: -all
+        run: |
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+
+      - name: Query actual Wine runtime capabilities
+        env:
+          WINEDEBUG: -all
+        run: |
+          echo '=== HEALTH ==='
+          xvfb-run -a wine build-mingw/wininspect.exe health --tcp 127.0.0.1:1985
+          echo '=== IDENTITY ==='
+          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp 127.0.0.1:1985
+          echo '=== CAPABILITIES ==='
+          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp 127.0.0.1:1985
+
+      - name: Probe read-only Wine sensors
+        env:
+          WINEDEBUG: -all
+        continue-on-error: true
+        run: |
+          echo '=== WINDOWS ==='
+          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp 127.0.0.1:1985
+          echo '=== SCREENSHOT SENSOR ATTEMPT ==='
+          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output affordance-wine-screen.bmp
+
+      - name: Collect Wine daemon diagnostics
+        if: always()
+        run: |
+          cat wine-daemon.log 2>/dev/null || true
+          if test -f wine-daemon.pid; then kill "$(cat wine-daemon.pid)" 2>/dev/null || true; fi
+
+  evidence-boundary:
+    name: Evidence boundary
+    runs-on: ubuntu-latest
+    needs: [native-windows, wine]
+    if: always()
+    steps:
+      - name: State qualification boundary
+        run: |
+          echo 'These jobs execute actual WinInspect binaries on a GitHub-hosted Windows VM and under actual Wine on Linux.'
+          echo 'Windows evidence is scoped to the hosted Windows runner environment; Wine evidence is scoped to the Wine/Xvfb environment.'
+          echo 'Neither result is generalized to other Windows versions, sessions, Wine versions, targets, or mechanisms without bridging evidence.'
