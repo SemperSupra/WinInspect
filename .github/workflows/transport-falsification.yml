@@ -1,0 +1,141 @@
+name: Transport falsification reps
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/transport-falsification.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-windows-transport:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build baseline
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build --config Release --parallel 2
+      - name: Start daemon on loopback
+        shell: pwsh
+        run: |
+          $p = Start-Process build/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.log -RedirectStandardError daemon.err.log
+          "DAEMON_PID=$($p.Id)" >> $env:GITHUB_ENV
+          for ($i=0; $i -lt 20; $i++) { Start-Sleep 1; if (Get-NetTCPConnection -State Listen -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue) { exit 0 } }
+          throw 'daemon did not listen'
+      - name: Raw framed protocol probe
+        shell: pwsh
+        run: |
+          @'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]
+              hello=json.loads(recvn(s,n))
+              print('HELLO',json.dumps(hello,sort_keys=True))
+              req=json.dumps({'id':'raw-1','method':'daemon.health','params':{}},separators=(',',':')).encode()
+              s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]
+              resp=json.loads(recvn(s,n))
+              print('RESPONSE',json.dumps(resp,sort_keys=True))
+              assert resp.get('ok') is True
+          '@ | Set-Content raw_probe.py
+          python raw_probe.py
+      - name: Confirm baseline CLI failure signature
+        shell: pwsh
+        continue-on-error: true
+        run: build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+      - name: Patch only network-order byte-count defect and rebuild CLI
+        shell: pwsh
+        run: |
+          $p='source/clients/cli/src/cli.cpp'
+          $s=Get-Content $p -Raw
+          $old='uint32_t len = htonl((uint32_t)m.size());'
+          $new="uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);"
+          if (-not $s.Contains($old)) { throw 'expected transport defect not found' }
+          $s=$s.Replace($old,$new).Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+          Set-Content $p $s -NoNewline
+          cmake --build build --config Release --target wininspect --parallel 2
+          build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+      - if: always()
+        shell: pwsh
+        run: |
+          Get-Content daemon.log -ErrorAction SilentlyContinue
+          Get-Content daemon.err.log -ErrorAction SilentlyContinue
+          if ($env:DAEMON_PID) { Stop-Process -Id $env:DAEMON_PID -Force -ErrorAction SilentlyContinue }
+
+  wine-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake wine64 xvfb
+      - name: Apply already-qualified build portability hypotheses and build
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/core/src/core.cpp'); s=p.read_text(); s=s.replace('#include <cctype>\n','#include <cctype>\n#include <cstring>\n',1) if '#include <cstring>' not in s else s; s=s.replace('dispatch_["daemon.notify"] = [this]','dispatch_["daemon.notify"] = []'); p.write_text(s)
+          p=Path('source/core/src/compress.cpp'); s=p.read_text().replace('Compress(compressor, data.data(), data.size()','Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()').replace('Decompress(decompressor, data.data(), data.size()','Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()'); p.write_text(s)
+          p=Path('source/core/src/network_config.cpp'); s=p.read_text(); old='''    char* appdata = nullptr;\n    size_t sz = 0;\n    if (_dupenv_s(&appdata, &sz, "APPDATA") == 0 && appdata) {\n      std::string dir = std::string(appdata) + "\\\\WinInspect";\n      free(appdata);\n      return dir;\n    }\n    return std::string(getenv("USERPROFILE")) + "\\\\.config\\\\wininspect";'''; new='''    const char* appdata = getenv("APPDATA");\n    if (appdata && appdata[0]) return std::string(appdata) + "\\\\WinInspect";\n    const char* profile = getenv("USERPROFILE");\n    if (profile && profile[0]) return std::string(profile) + "\\\\.config\\\\wininspect";\n    return ".\\\\.config\\\\wininspect";'''; s=s.replace(old,new); p.write_text(s)
+          p=Path('source/CMakeLists.txt'); s=p.read_text().replace('advapi32 crypt32)','advapi32 crypt32 cabinet)',1).replace('    resources/wininspect.rc\n',''); p.write_text(s)
+          PY
+          cmake -S source -B build -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build -j2
+      - name: Start persistent display, Wine prefix, and daemon
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-transport
+          WINEDEBUG: -all
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 & echo $! > xvfb.pid
+          echo DISPLAY=:99 >> "$GITHUB_ENV"; export DISPLAY=:99
+          echo WINEPREFIX="$WINEPREFIX" >> "$GITHUB_ENV"
+          sleep 2; wineboot --init
+          wine build/wininspectd.exe --headless --bind 127.0.0.1 >daemon.log 2>&1 & echo $! > daemon.pid
+          sleep 8; kill -0 "$(cat daemon.pid)"
+          grep -F 'TCP Server listening on [127.0.0.1]:1985' daemon.log
+      - name: Raw framed protocol probe
+        run: |
+          python3 - <<'PY'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]; hello=json.loads(recvn(s,n)); print('HELLO',json.dumps(hello,sort_keys=True))
+              req=json.dumps({'id':'raw-1','method':'daemon.health','params':{}},separators=(',',':')).encode(); s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]; resp=json.loads(recvn(s,n)); print('RESPONSE',json.dumps(resp,sort_keys=True)); assert resp.get('ok') is True
+          PY
+      - name: Confirm baseline CLI failure signature
+        continue-on-error: true
+        run: wine build/wininspect.exe health --tcp 127.0.0.1:1985
+      - name: Patch only network-order byte-count defect and rebuild CLI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/clients/cli/src/cli.cpp'); s=p.read_text(); old='uint32_t len = htonl((uint32_t)m.size());'; assert old in s; s=s.replace(old,'uint32_t payload_len = (uint32_t)m.size();\n      uint32_t len = htonl(payload_len);',1).replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)',1); p.write_text(s)
+          PY
+          cmake --build build --target wininspect -j2
+          wine build/wininspect.exe health --tcp 127.0.0.1:1985
+      - if: always()
+        run: |
+          cat daemon.log 2>/dev/null || true
+          if test -f daemon.pid; then kill "$(cat daemon.pid)" 2>/dev/null || true; fi
+          if test -f xvfb.pid; then kill "$(cat xvfb.pid)" 2>/dev/null || true; fi
