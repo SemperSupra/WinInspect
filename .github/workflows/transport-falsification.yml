@@ -86,6 +86,13 @@ jobs:
             if (-not $listener) { throw 'transport: daemon did not establish loopback listener' }
             Write-Host 'QUAL_LAYER environment=pass process-session=pass transport-listener=pass bind=loopback firewall_modified=false'
 
+            # Differential control: named-pipe handler already initializes COM via CoInitGuard.
+            # Keep this diagnostic non-gating; it compares capability truth with the TCP path.
+            $pipeCaps = & build/Release/wininspect.exe capabilities 2>&1
+            $pipeRc = $LASTEXITCODE
+            Write-Host "QUAL_UIA_PIPE cli_exit=$pipeRc"
+            $pipeCaps | ForEach-Object { Write-Host $_ }
+
             # Layer 3/4: raw transport + framing/protocol, independent of CLI.
             @'
           import json,socket,struct
