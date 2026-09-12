@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Qualification rule: environment -> process/session -> transport -> protocol/client
+# -> capability mechanism -> semantic behavior. A failure at an earlier layer is
+# not evidence against a later layer. Keep local qualification on loopback with
+# host firewall policy untouched.
+
 jobs:
   native-windows-transport:
     runs-on: windows-latest
@@ -21,17 +26,24 @@ jobs:
         run: |
           cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
           cmake --build build --config Release --parallel 2
-      - name: Start daemon on loopback
+      - name: Layered falsification in one process lifetime
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $p = Start-Process build/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.log -RedirectStandardError daemon.err.log
-          "DAEMON_PID=$($p.Id)" >> $env:GITHUB_ENV
-          for ($i=0; $i -lt 20; $i++) { Start-Sleep 1; if (Get-NetTCPConnection -State Listen -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue) { exit 0 } }
-          throw 'daemon did not listen'
-      - name: Raw framed protocol probe
-        shell: pwsh
-        run: |
-          @'
+          try {
+            # Layer 1/2: environment and process/session viability.
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep 1
+              if ($p.HasExited) { throw "process-session: daemon exited early with $($p.ExitCode)" }
+              $listener = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if ($listener) { break }
+            }
+            if (-not $listener) { throw 'transport: daemon did not establish loopback listener' }
+            Write-Host 'QUAL_LAYER environment=pass process-session=pass transport-listener=pass bind=loopback firewall_modified=false'
+
+            # Layer 3/4: raw transport + framing/protocol, independent of CLI.
+            @'
           import json,socket,struct
           def recvn(s,n):
               b=b''
@@ -50,30 +62,38 @@ jobs:
               resp=json.loads(recvn(s,n))
               print('RESPONSE',json.dumps(resp,sort_keys=True))
               assert resp.get('ok') is True
+          print('QUAL_LAYER raw-protocol=pass deepest_layer=protocol-client')
           '@ | Set-Content raw_probe.py
-          python raw_probe.py
-      - name: Confirm baseline CLI failure signature
-        shell: pwsh
-        continue-on-error: true
-        run: build/Release/wininspect.exe health --tcp 127.0.0.1:1985
-      - name: Patch only network-order byte-count defect and rebuild CLI
-        shell: pwsh
-        run: |
-          $p='source/clients/cli/src/cli.cpp'
-          $s=Get-Content $p -Raw
-          $old='uint32_t len = htonl((uint32_t)m.size());'
-          $new="uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);"
-          if (-not $s.Contains($old)) { throw 'expected transport defect not found' }
-          $s=$s.Replace($old,$new).Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
-          Set-Content $p $s -NoNewline
-          cmake --build build --config Release --target wininspect --parallel 2
-          build/Release/wininspect.exe health --tcp 127.0.0.1:1985
-      - if: always()
-        shell: pwsh
-        run: |
-          Get-Content daemon.log -ErrorAction SilentlyContinue
-          Get-Content daemon.err.log -ErrorAction SilentlyContinue
-          if ($env:DAEMON_PID) { Stop-Process -Id $env:DAEMON_PID -Force -ErrorAction SilentlyContinue }
+            python raw_probe.py
+
+            # Baseline client: expected to expose the shared send-length defect.
+            $baselineOk = $true
+            & build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+            if ($LASTEXITCODE -ne 0) { $baselineOk = $false }
+            Write-Host "QUAL_LAYER baseline-cli=$baselineOk"
+
+            # Single-delta A/B correction: do not weaken compiler or alter server/environment.
+            $src='source/clients/cli/src/cli.cpp'
+            $s=Get-Content $src -Raw
+            $old='uint32_t len = htonl((uint32_t)m.size());'
+            if (-not $s.Contains($old)) { throw 'protocol-client: expected transport defect not found' }
+            $new="uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);"
+            $s=$s.Replace($old,$new).Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+            Set-Content $src $s -NoNewline
+            cmake --build build --config Release --target wininspect --parallel 2
+            & build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+            if ($LASTEXITCODE -ne 0) { throw 'protocol-client: corrected CLI still failed' }
+            if ($baselineOk) {
+              Write-Host 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=unknown causal_status=unresolved ab_reversal=false'
+            } else {
+              Write-Host 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=protocol-client causal_status=demonstrated ab_reversal=true'
+            }
+          }
+          finally {
+            Get-Content daemon.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
 
   wine-transport:
     runs-on: ubuntu-latest
@@ -95,20 +115,32 @@ jobs:
           PY
           cmake -S source -B build -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
           cmake --build build -j2
-      - name: Start persistent display, Wine prefix, and daemon
+      - name: Layered falsification in persistent Wine session
         env:
           WINEPREFIX: ${{ github.workspace }}/.wine-transport
           WINEDEBUG: -all
         run: |
-          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 & echo $! > xvfb.pid
-          echo DISPLAY=:99 >> "$GITHUB_ENV"; export DISPLAY=:99
-          echo WINEPREFIX="$WINEPREFIX" >> "$GITHUB_ENV"
-          sleep 2; wineboot --init
-          wine build/wininspectd.exe --headless --bind 127.0.0.1 >daemon.log 2>&1 & echo $! > daemon.pid
-          sleep 8; kill -0 "$(cat daemon.pid)"
+          set -euo pipefail
+          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 & XVFB_PID=$!
+          export DISPLAY=:99
+          DAEMON_PID=''
+          cleanup() {
+            cat daemon.log 2>/dev/null || true
+            if test -n "$DAEMON_PID"; then kill "$DAEMON_PID" 2>/dev/null || true; fi
+            kill "$XVFB_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Layer 1/2: environment and process/session viability.
+          sleep 2
+          wineboot --init
+          wine build/wininspectd.exe --headless --bind 127.0.0.1 >daemon.log 2>&1 & DAEMON_PID=$!
+          sleep 8
+          kill -0 "$DAEMON_PID"
           grep -F 'TCP Server listening on [127.0.0.1]:1985' daemon.log
-      - name: Raw framed protocol probe
-        run: |
+          echo 'QUAL_LAYER environment=pass process-session=pass transport-listener=pass bind=loopback firewall_modified=false'
+
+          # Layer 3/4: raw transport + framed protocol.
           python3 - <<'PY'
           import json,socket,struct
           def recvn(s,n):
@@ -122,20 +154,23 @@ jobs:
               n=struct.unpack('!I',recvn(s,4))[0]; hello=json.loads(recvn(s,n)); print('HELLO',json.dumps(hello,sort_keys=True))
               req=json.dumps({'id':'raw-1','method':'daemon.health','params':{}},separators=(',',':')).encode(); s.sendall(struct.pack('!I',len(req))+req)
               n=struct.unpack('!I',recvn(s,4))[0]; resp=json.loads(recvn(s,n)); print('RESPONSE',json.dumps(resp,sort_keys=True)); assert resp.get('ok') is True
+          print('QUAL_LAYER raw-protocol=pass deepest_layer=protocol-client')
           PY
-      - name: Confirm baseline CLI failure signature
-        continue-on-error: true
-        run: wine build/wininspect.exe health --tcp 127.0.0.1:1985
-      - name: Patch only network-order byte-count defect and rebuild CLI
-        run: |
+
+          # Baseline client and one-variable A/B correction.
+          set +e
+          wine build/wininspect.exe health --tcp 127.0.0.1:1985
+          BASELINE_RC=$?
+          set -e
+          echo "QUAL_LAYER baseline-cli-rc=$BASELINE_RC"
           python3 - <<'PY'
           from pathlib import Path
           p=Path('source/clients/cli/src/cli.cpp'); s=p.read_text(); old='uint32_t len = htonl((uint32_t)m.size());'; assert old in s; s=s.replace(old,'uint32_t payload_len = (uint32_t)m.size();\n      uint32_t len = htonl(payload_len);',1).replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)',1); p.write_text(s)
           PY
           cmake --build build --target wininspect -j2
           wine build/wininspect.exe health --tcp 127.0.0.1:1985
-      - if: always()
-        run: |
-          cat daemon.log 2>/dev/null || true
-          if test -f daemon.pid; then kill "$(cat daemon.pid)" 2>/dev/null || true; fi
-          if test -f xvfb.pid; then kill "$(cat xvfb.pid)" 2>/dev/null || true; fi
+          if test "$BASELINE_RC" -ne 0; then
+            echo 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=protocol-client causal_status=demonstrated ab_reversal=true'
+          else
+            echo 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=unknown causal_status=unresolved ab_reversal=false'
+          fi
