@@ -52,17 +52,26 @@ jobs:
           $daemon = Resolve-Path 'build-arm64/Release/wininspectd.exe'
           $p = Start-Process -FilePath $daemon -ArgumentList '--headless' -PassThru -RedirectStandardOutput 'arm64-wininspectd.out.log' -RedirectStandardError 'arm64-wininspectd.err.log'
           "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
-          Start-Sleep -Seconds 4
-          if ($p.HasExited) {
+          $target = $null
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            if ($p.HasExited) {
+              Get-Content arm64-wininspectd.out.log -ErrorAction SilentlyContinue
+              Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue
+              throw "ARM64 wininspectd exited early: $($p.ExitCode)"
+            }
+            $log = if (Test-Path arm64-wininspectd.out.log) { Get-Content arm64-wininspectd.out.log -Raw -ErrorAction SilentlyContinue } else { '' }
+            if ($log) {
+              $m = [regex]::Match($log, 'TCP Server listening on \[([^\]]+)\]:1985')
+              if ($m.Success) { $target = $m.Groups[1].Value; break }
+            }
+          }
+          if (-not $target) {
             Get-Content arm64-wininspectd.out.log -ErrorAction SilentlyContinue
             Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue
-            throw "ARM64 wininspectd exited early: $($p.ExitCode)"
+            throw 'Could not discover ARM64 WinInspect TCP listen address.'
           }
-          $log = Get-Content arm64-wininspectd.out.log -Raw
-          $m = [regex]::Match($log, 'TCP Server listening on \[([^\]]+)\]:1985')
-          if (-not $m.Success) { throw 'Could not discover ARM64 WinInspect TCP listen address.' }
-          $target = $m.Groups[1].Value
-          Write-Host "Discovered ARM64 daemon TCP target: $target:1985"
+          Write-Host "Discovered ARM64 daemon TCP target: $target`:1985"
           "WININSPECT_TARGET=$target" >> $env:GITHUB_ENV
 
       - name: Query actual ARM64 Windows runtime capabilities
@@ -137,7 +146,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Experiment-only repairs for source/toolchain portability defects isolated by this lane.
           grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          core = Path('source/core/src/core.cpp')
+          s = core.read_text()
+          s = s.replace('dispatch_["daemon.notify"] = [this]', 'dispatch_["daemon.notify"] = []')
+          core.write_text(s)
+          comp = Path('source/core/src/compress.cpp')
+          s = comp.read_text()
+          s = s.replace('Compress(compressor, data.data(), data.size()', 'Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()')
+          s = s.replace('Decompress(decompressor, data.data(), data.size()', 'Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()')
+          comp.write_text(s)
+          PY
           cmake -S source -B build-winarm64 \
             -DCMAKE_SYSTEM_NAME=Windows \
             -DCMAKE_SYSTEM_PROCESSOR=ARM64 \
