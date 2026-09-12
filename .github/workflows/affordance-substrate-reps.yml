@@ -45,11 +45,11 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 
-      - name: Start actual WinInspect daemon on Windows
+      - name: Start actual WinInspect daemon on Windows loopback
         shell: pwsh
         run: |
           $daemon = Resolve-Path 'build/Release/wininspectd.exe'
-          $p = Start-Process -FilePath $daemon -ArgumentList '--headless' -PassThru -RedirectStandardOutput 'wininspectd.out.log' -RedirectStandardError 'wininspectd.err.log'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput 'wininspectd.out.log' -RedirectStandardError 'wininspectd.err.log'
           "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
           $listener = $null
           for ($i = 0; $i -lt 20; $i++) {
@@ -68,10 +68,9 @@ jobs:
             Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
             throw 'Could not discover WinInspect TCP listener from the daemon process.'
           }
-          $target = $listener.LocalAddress
-          if ($target -eq '0.0.0.0' -or $target -eq '::') { $target = '127.0.0.1' }
-          Write-Host "Discovered daemon TCP target: $target`:1985"
-          "WININSPECT_TARGET=$target" >> $env:GITHUB_ENV
+          Write-Host "Listener: $($listener.LocalAddress):$($listener.LocalPort)"
+          Test-NetConnection 127.0.0.1 -Port 1985 -InformationLevel Detailed | Format-List
+          "WININSPECT_TARGET=127.0.0.1" >> $env:GITHUB_ENV
 
       - name: Query actual Windows runtime capabilities
         shell: pwsh
@@ -153,8 +152,6 @@ jobs:
           cm = Path('source/CMakeLists.txt')
           s = cm.read_text()
           s = s.replace('advapi32 crypt32)', 'advapi32 crypt32 cabinet)', 1)
-          # Resource compilation is not relevant to runtime affordance qualification and
-          # currently has an MSVC-layout-specific icon path. Omit only in this cross-build rep.
           s = s.replace('    resources/wininspect.rc\n', '')
           cm.write_text(s)
           PY
@@ -183,18 +180,17 @@ jobs:
           wine --version
           uname -a
 
-      - name: Start actual WinInspect daemon under Wine
+      - name: Start actual WinInspect daemon under Wine on loopback
         env:
           WINEDEBUG: -all
         run: |
-          wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 &
+          wine build-mingw/wininspectd.exe --headless --bind 127.0.0.1 >wine-daemon.log 2>&1 &
           echo $! > wine-daemon.pid
           sleep 8
           kill -0 "$(cat wine-daemon.pid)"
-          TARGET=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
-          test -n "$TARGET"
-          echo "WININSPECT_TARGET=$TARGET" >> "$GITHUB_ENV"
-          echo "Discovered daemon TCP target: $TARGET:1985"
+          grep -F 'TCP Server listening on [127.0.0.1]:1985' wine-daemon.log
+          echo "WININSPECT_TARGET=127.0.0.1" >> "$GITHUB_ENV"
+          (echo > /dev/tcp/127.0.0.1/1985) 2>/dev/null && echo 'Host TCP reachability: PASS'
 
       - name: Query actual Wine runtime capabilities
         env:
