@@ -51,7 +51,7 @@ jobs:
           $daemon = Resolve-Path 'build/Release/wininspectd.exe'
           $p = Start-Process -FilePath $daemon -ArgumentList '--headless' -PassThru -RedirectStandardOutput 'wininspectd.out.log' -RedirectStandardError 'wininspectd.err.log'
           "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
-          $target = $null
+          $listener = $null
           for ($i = 0; $i -lt 20; $i++) {
             Start-Sleep -Seconds 1
             if ($p.HasExited) {
@@ -59,17 +59,17 @@ jobs:
               Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
               throw "wininspectd exited early: $($p.ExitCode)"
             }
-            $log = if (Test-Path wininspectd.out.log) { Get-Content wininspectd.out.log -Raw -ErrorAction SilentlyContinue } else { '' }
-            if ($log) {
-              $m = [regex]::Match($log, 'TCP Server listening on \[([^\]]+)\]:1985')
-              if ($m.Success) { $target = $m.Groups[1].Value; break }
-            }
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($listener) { break }
           }
-          if (-not $target) {
+          if (-not $listener) {
+            Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $p.Id | Format-Table -AutoSize
             Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
             Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
-            throw 'Could not discover WinInspect TCP listen address from daemon log.'
+            throw 'Could not discover WinInspect TCP listener from the daemon process.'
           }
+          $target = $listener.LocalAddress
+          if ($target -eq '0.0.0.0' -or $target -eq '::') { $target = '127.0.0.1' }
           Write-Host "Discovered daemon TCP target: $target`:1985"
           "WININSPECT_TARGET=$target" >> $env:GITHUB_ENV
 
@@ -167,13 +167,18 @@ jobs:
           cmake --build build-mingw -j2
           ls -l build-mingw/wininspectd.exe build-mingw/wininspect.exe
 
-      - name: Initialize real Wine environment
+      - name: Initialize persistent Wine display and prefix
         env:
           WINEPREFIX: ${{ github.workspace }}/.wine-affordance
           WINEDEBUG: -all
         run: |
-          xvfb-run -a wineboot --init
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 &
+          echo $! > xvfb.pid
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
           echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+          sleep 2
+          wineboot --init
           echo '=== WINE EXECUTOR ==='
           wine --version
           uname -a
@@ -182,7 +187,10 @@ jobs:
         env:
           WINEDEBUG: -all
         run: |
-          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 8; kill -0 $(cat wine-daemon.pid)'
+          wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 &
+          echo $! > wine-daemon.pid
+          sleep 8
+          kill -0 "$(cat wine-daemon.pid)"
           TARGET=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
           test -n "$TARGET"
           echo "WININSPECT_TARGET=$TARGET" >> "$GITHUB_ENV"
@@ -194,11 +202,11 @@ jobs:
         run: |
           TARGET="${WININSPECT_TARGET}:1985"
           echo '=== HEALTH ==='
-          xvfb-run -a wine build-mingw/wininspect.exe health --tcp "$TARGET"
+          wine build-mingw/wininspect.exe health --tcp "$TARGET"
           echo '=== IDENTITY ==='
-          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp "$TARGET"
+          wine build-mingw/wininspect.exe identity --tcp "$TARGET"
           echo '=== CAPABILITIES ==='
-          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp "$TARGET"
+          wine build-mingw/wininspect.exe capabilities --tcp "$TARGET"
 
       - name: Probe read-only Wine sensors
         env:
@@ -207,15 +215,17 @@ jobs:
         run: |
           TARGET="${WININSPECT_TARGET}:1985"
           echo '=== WINDOWS ==='
-          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp "$TARGET"
+          wine build-mingw/wininspect.exe windows --tcp "$TARGET"
           echo '=== SCREENSHOT SENSOR ATTEMPT ==='
-          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp "$TARGET" --output affordance-wine-screen.bmp
+          wine build-mingw/wininspect.exe screenshot --tcp "$TARGET" --output affordance-wine-screen.bmp
 
       - name: Collect Wine daemon diagnostics
         if: always()
         run: |
           cat wine-daemon.log 2>/dev/null || true
+          cat xvfb.log 2>/dev/null || true
           if test -f wine-daemon.pid; then kill "$(cat wine-daemon.pid)" 2>/dev/null || true; fi
+          if test -f xvfb.pid; then kill "$(cat xvfb.pid)" 2>/dev/null || true; fi
 
   evidence-boundary:
     name: Evidence boundary
