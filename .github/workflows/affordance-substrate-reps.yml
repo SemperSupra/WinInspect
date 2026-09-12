@@ -45,6 +45,16 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 
+      - name: Apply demonstrated CLI framing correction for deeper qualification
+        shell: pwsh
+        run: |
+          $src='source/clients/cli/src/cli.cpp'; $s=Get-Content $src -Raw
+          $old='uint32_t len = htonl((uint32_t)m.size());'
+          if (-not $s.Contains($old)) { throw 'expected shared CLI defect not found' }
+          $s=$s.Replace($old,"uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);").Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+          Set-Content $src $s -NoNewline
+          cmake --build build --config Release --target wininspect --parallel 2
+
       - name: Start actual WinInspect daemon on Windows loopback
         shell: pwsh
         run: |
@@ -93,10 +103,12 @@ jobs:
         run: |
           $cli = Resolve-Path 'build/Release/wininspect.exe'
           $target = "$env:WININSPECT_TARGET`:1985"
-          Write-Host '=== WINDOWS ==='
-          & $cli windows --tcp $target
-          Write-Host '=== SCREENSHOT SENSOR ATTEMPT ==='
-          & $cli screenshot --tcp $target --output affordance-screen.bmp
+          Write-Host '=== TOP WINDOWS ==='
+          & $cli top --tcp $target
+          Write-Host "QUAL_SENSOR top_exit=$LASTEXITCODE"
+          Write-Host '=== BOUNDED CAPTURE SENSOR ATTEMPT ==='
+          & $cli capture 0 0 64 64 --tcp $target
+          Write-Host "QUAL_SENSOR capture_exit=$LASTEXITCODE"
 
       - name: Collect daemon diagnostics
         if: always()
@@ -154,6 +166,15 @@ jobs:
           s = s.replace('advapi32 crypt32)', 'advapi32 crypt32 cabinet)', 1)
           s = s.replace('    resources/wininspect.rc\n', '')
           cm.write_text(s)
+
+          cli = Path('source/clients/cli/src/cli.cpp')
+          s = cli.read_text()
+          old = 'uint32_t len = htonl((uint32_t)m.size());'
+          if old not in s:
+              raise SystemExit('expected shared CLI framing defect not found')
+          s = s.replace(old, 'uint32_t payload_len = (uint32_t)m.size();\n      uint32_t len = htonl(payload_len);', 1)
+          s = s.replace('if (::send(s, m.data(), (int)len, 0) <= 0)', 'if (::send(s, m.data(), (int)payload_len, 0) <= 0)', 1)
+          cli.write_text(s)
           PY
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
@@ -210,10 +231,12 @@ jobs:
         continue-on-error: true
         run: |
           TARGET="${WININSPECT_TARGET}:1985"
-          echo '=== WINDOWS ==='
-          wine build-mingw/wininspect.exe windows --tcp "$TARGET"
-          echo '=== SCREENSHOT SENSOR ATTEMPT ==='
-          wine build-mingw/wininspect.exe screenshot --tcp "$TARGET" --output affordance-wine-screen.bmp
+          echo '=== TOP WINDOWS ==='
+          wine build-mingw/wininspect.exe top --tcp "$TARGET"
+          echo "QUAL_SENSOR top_exit=$?"
+          echo '=== BOUNDED CAPTURE SENSOR ATTEMPT ==='
+          wine build-mingw/wininspect.exe capture 0 0 64 64 --tcp "$TARGET"
+          echo "QUAL_SENSOR capture_exit=$?"
 
       - name: Collect Wine daemon diagnostics
         if: always()
