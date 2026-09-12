@@ -57,19 +57,26 @@ jobs:
             Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
             throw "wininspectd exited early: $($p.ExitCode)"
           }
+          $log = Get-Content wininspectd.out.log -Raw
+          $m = [regex]::Match($log, 'TCP Server listening on \[([^\]]+)\]:1985')
+          if (-not $m.Success) { throw 'Could not discover WinInspect TCP listen address from daemon log.' }
+          $target = $m.Groups[1].Value
+          Write-Host "Discovered daemon TCP target: $target:1985"
+          "WININSPECT_TARGET=$target" >> $env:GITHUB_ENV
 
       - name: Query actual Windows runtime capabilities
         shell: pwsh
         run: |
           $cli = Resolve-Path 'build/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
           Write-Host '=== HEALTH ==='
-          & $cli health --tcp 127.0.0.1:1985
+          & $cli health --tcp $target
           if ($LASTEXITCODE -ne 0) { throw 'health failed' }
           Write-Host '=== IDENTITY ==='
-          & $cli identity --tcp 127.0.0.1:1985
+          & $cli identity --tcp $target
           if ($LASTEXITCODE -ne 0) { throw 'identity failed' }
           Write-Host '=== CAPABILITIES ==='
-          & $cli capabilities --tcp 127.0.0.1:1985
+          & $cli capabilities --tcp $target
           if ($LASTEXITCODE -ne 0) { throw 'capabilities failed' }
 
       - name: Probe read-only native sensors
@@ -77,10 +84,11 @@ jobs:
         continue-on-error: true
         run: |
           $cli = Resolve-Path 'build/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
           Write-Host '=== WINDOWS ==='
-          & $cli windows --tcp 127.0.0.1:1985
+          & $cli windows --tcp $target
           Write-Host '=== SCREENSHOT SENSOR ATTEMPT ==='
-          & $cli screenshot --tcp 127.0.0.1:1985 --output affordance-screen.bmp
+          & $cli screenshot --tcp $target --output affordance-screen.bmp
 
       - name: Collect daemon diagnostics
         if: always()
@@ -107,6 +115,8 @@ jobs:
 
       - name: Cross-build actual WinInspect Windows binaries
         run: |
+          # Temporary experiment-only repair for a source portability defect discovered by this lane.
+          grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -132,27 +142,34 @@ jobs:
           WINEDEBUG: -all
         run: |
           xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+          cat wine-daemon.log || true
+          target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
+          test -n "$target"
+          echo "WININSPECT_TARGET=$target" >> "$GITHUB_ENV"
+          echo "Discovered Wine daemon TCP target: $target:1985"
 
       - name: Query actual Wine runtime capabilities
         env:
           WINEDEBUG: -all
         run: |
+          target="$WININSPECT_TARGET:1985"
           echo '=== HEALTH ==='
-          xvfb-run -a wine build-mingw/wininspect.exe health --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-mingw/wininspect.exe health --tcp "$target"
           echo '=== IDENTITY ==='
-          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-mingw/wininspect.exe identity --tcp "$target"
           echo '=== CAPABILITIES ==='
-          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-mingw/wininspect.exe capabilities --tcp "$target"
 
       - name: Probe read-only Wine sensors
         env:
           WINEDEBUG: -all
         continue-on-error: true
         run: |
+          target="$WININSPECT_TARGET:1985"
           echo '=== WINDOWS ==='
-          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp 127.0.0.1:1985
+          xvfb-run -a wine build-mingw/wininspect.exe windows --tcp "$target"
           echo '=== SCREENSHOT SENSOR ATTEMPT ==='
-          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output affordance-wine-screen.bmp
+          xvfb-run -a wine build-mingw/wininspect.exe screenshot --tcp "$target" --output affordance-wine-screen.bmp
 
       - name: Collect Wine daemon diagnostics
         if: always()
