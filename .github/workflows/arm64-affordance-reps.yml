@@ -67,10 +67,10 @@ jobs:
             & $cli identity --tcp $target; if($LASTEXITCODE){throw 'semantic: identity failed'}
             & $cli capabilities --tcp $target; if($LASTEXITCODE){throw 'semantic: capabilities failed'}
             Write-Host 'QUAL_LAYER protocol-client=pass semantic-health-identity-capabilities=pass deepest_layer=semantic-behavior architecture=arm64'
-            & $cli windows --tcp $target
-            Write-Host "QUAL_SENSOR windows_exit=$LASTEXITCODE architecture=arm64"
-            & $cli screenshot --tcp $target --output arm64-windows-screen.bmp
-            Write-Host "QUAL_SENSOR screenshot_exit=$LASTEXITCODE architecture=arm64"
+            & $cli top --tcp $target
+            Write-Host "QUAL_SENSOR top_exit=$LASTEXITCODE architecture=arm64"
+            & $cli capture 0 0 64 64 --tcp $target
+            Write-Host "QUAL_SENSOR capture_exit=$LASTEXITCODE architecture=arm64"
           } finally { Get-Content arm64-wininspectd.out.log -ErrorAction SilentlyContinue; Get-Content arm64-wininspectd.err.log -ErrorAction SilentlyContinue; Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
   wine-arm64:
@@ -136,8 +136,8 @@ jobs:
           wine build-winarm64/wininspect.exe identity --tcp 127.0.0.1:1985
           wine build-winarm64/wininspect.exe capabilities --tcp 127.0.0.1:1985
           echo 'QUAL_LAYER protocol-client=pass semantic-health-identity-capabilities=pass deepest_layer=semantic-behavior architecture=arm64 substrate=wine'
-          wine build-winarm64/wininspect.exe windows --tcp 127.0.0.1:1985 || true
-          wine build-winarm64/wininspect.exe screenshot --tcp 127.0.0.1:1985 --output wine-arm64-screen.bmp || true
+          wine build-winarm64/wininspect.exe top --tcp 127.0.0.1:1985 || true
+          wine build-winarm64/wininspect.exe capture 0 0 64 64 --tcp 127.0.0.1:1985 || true
           cat wine-arm64-daemon.log
 
   boundary:
