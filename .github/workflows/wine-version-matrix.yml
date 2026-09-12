@@ -41,6 +41,14 @@ jobs:
       - name: Cross-build actual WinInspect binaries
         run: |
           grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/core/src/compress.cpp')
+          s = p.read_text()
+          s = s.replace('Compress(compressor, data.data(), data.size()', 'Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()')
+          s = s.replace('Decompress(decompressor, data.data(), data.size()', 'Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()')
+          p.write_text(s)
+          PY
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -59,7 +67,7 @@ jobs:
         env:
           WINEDEBUG: -all
         run: |
-          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 8; kill -0 $(cat wine-daemon.pid)'
           cat wine-daemon.log || true
           target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
           test -n "$target"
@@ -114,6 +122,14 @@ jobs:
       - name: Cross-build actual WinInspect binaries
         run: |
           grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/core/src/compress.cpp')
+          s = p.read_text()
+          s = s.replace('Compress(compressor, data.data(), data.size()', 'Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()')
+          s = s.replace('Decompress(decompressor, data.data(), data.size()', 'Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()')
+          p.write_text(s)
+          PY
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -132,7 +148,7 @@ jobs:
         env:
           WINEDEBUG: -all
         run: |
-          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 8; kill -0 $(cat wine-daemon.pid)'
           cat wine-daemon.log || true
           target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
           test -n "$target"
@@ -182,6 +198,14 @@ jobs:
       - name: Cross-build actual WinInspect binaries
         run: |
           grep -q '^#include <cstring>$' source/core/src/core.cpp || sed -i '/#include <cctype>/a #include <cstring>' source/core/src/core.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/core/src/compress.cpp')
+          s = p.read_text()
+          s = s.replace('Compress(compressor, data.data(), data.size()', 'Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()')
+          s = s.replace('Decompress(decompressor, data.data(), data.size()', 'Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()')
+          p.write_text(s)
+          PY
           cmake -S source -B build-mingw \
             -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
             -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
@@ -200,7 +224,7 @@ jobs:
         env:
           WINEDEBUG: -all
         run: |
-          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 6; kill -0 $(cat wine-daemon.pid)'
+          xvfb-run -a -s '-screen 0 1280x800x24' sh -c 'wine build-mingw/wininspectd.exe --headless >wine-daemon.log 2>&1 & echo $! > wine-daemon.pid; sleep 8; kill -0 $(cat wine-daemon.pid)'
           cat wine-daemon.log || true
           target=$(sed -n 's/.*TCP Server listening on \[\([^]]*\)\]:1985.*/\1/p' wine-daemon.log | tail -1)
           test -n "$target"
