@@ -1,0 +1,48 @@
+{
+  "schema": "wininspect.concept-sweep.fixture.v1",
+  "purpose": "Public-safe fixed semantic seeds for the WinInspect dual-track concept-mining rep.",
+  "authority_effect": "none",
+  "queries": [
+    {"id":"affordance.en","cluster":"affordance","language":"en","query":"affordance action possibilities actor environment ecological psychology"},
+    {"id":"affordance.ja","cluster":"affordance","language":"ja","query":"アフォーダンス 行為の可能性 環境 行為者 生態心理学"},
+    {"id":"affordance.zh","cluster":"affordance","language":"zh","query":"可供性 行动可能性 环境 行动者 生态心理学"},
+    {"id":"affordance.de","cluster":"affordance","language":"de","query":"Affordanz Handlungsmöglichkeiten Umwelt Akteur ökologische Psychologie"},
+    {"id":"affordance.es","cluster":"affordance","language":"es","query":"affordance oportunidades para la acción organismo entorno psicología ecológica"},
+    {"id":"affordance.ru","cluster":"affordance","language":"ru","query":"аффорданс возможности действия среда организм экологическая психология"},
+
+    {"id":"reconciliation.en","cluster":"reconciliation","language":"en","query":"desired state current state reconciliation control loop idempotent controller"},
+    {"id":"reconciliation.ja","cluster":"reconciliation","language":"ja","query":"目的の状態 現在の状態 制御ループ コントローラー 冪等"},
+    {"id":"reconciliation.zh","cluster":"reconciliation","language":"zh","query":"期望状态 当前状态 控制循环 控制器 幂等"},
+    {"id":"reconciliation.de","cluster":"reconciliation","language":"de","query":"Wunschzustand Istzustand Kontrollschleife Controller idempotent"},
+    {"id":"reconciliation.es","cluster":"reconciliation","language":"es","query":"estado deseado estado actual bucle de control reconciliación idempotente"},
+    {"id":"reconciliation.ru","cluster":"reconciliation","language":"ru","query":"желаемое состояние текущее состояние управляющий цикл контроллер идемпотентность"},
+
+    {"id":"authority.en","cluster":"capability-authority","language":"en","query":"object capability authority delegation attenuation least authority"},
+    {"id":"authority.ja","cluster":"capability-authority","language":"ja","query":"オブジェクトケイパビリティ 権限 委譲 最小権限"},
+    {"id":"authority.zh","cluster":"capability-authority","language":"zh","query":"对象能力 权限 委托 最小权限"},
+    {"id":"authority.de","cluster":"capability-authority","language":"de","query":"Object Capability Berechtigung Autorität Delegation Abschwächung geringste Autorität"},
+    {"id":"authority.es","cluster":"capability-authority","language":"es","query":"capacidad de objeto autoridad delegación atenuación mínimo privilegio"},
+    {"id":"authority.ru","cluster":"capability-authority","language":"ru","query":"объектная capability полномочия делегирование принцип наименьших полномочий"},
+
+    {"id":"diagnosis.en","cluster":"falsification-diagnosis","language":"en","query":"model based diagnosis fault localization first blocking layer causal diagnosis"},
+    {"id":"diagnosis.ja","cluster":"falsification-diagnosis","language":"ja","query":"モデルベース診断 故障診断 故障箇所 特定 因果"},
+    {"id":"diagnosis.zh","cluster":"falsification-diagnosis","language":"zh","query":"基于模型的诊断 故障定位 因果诊断"},
+    {"id":"diagnosis.de","cluster":"falsification-diagnosis","language":"de","query":"modellbasierte Diagnose Fehlerlokalisierung Ursachenanalyse"},
+    {"id":"diagnosis.es","cluster":"falsification-diagnosis","language":"es","query":"diagnóstico basado en modelos localización de fallos causal"},
+    {"id":"diagnosis.ru","cluster":"falsification-diagnosis","language":"ru","query":"модельная диагностика локализация неисправностей причинный анализ"},
+
+    {"id":"qualification.en","cluster":"evidence-qualification","language":"en","query":"verification validation qualification evidence test evaluation software"},
+    {"id":"qualification.ja","cluster":"evidence-qualification","language":"ja","query":"検証 妥当性確認 適格性評価 証拠 ソフトウェア"},
+    {"id":"qualification.zh","cluster":"evidence-qualification","language":"zh","query":"验证 确认 资格鉴定 证据 软件 测试 评估"},
+    {"id":"qualification.de","cluster":"evidence-qualification","language":"de","query":"Verifikation Validierung Qualifikation Nachweis Software Test"},
+    {"id":"qualification.es","cluster":"evidence-qualification","language":"es","query":"verificación validación cualificación evidencia software prueba evaluación"},
+    {"id":"qualification.ru","cluster":"evidence-qualification","language":"ru","query":"верификация валидация квалификация доказательства программное обеспечение испытания"},
+
+    {"id":"noninterference.en","cluster":"noninterference-isolation","language":"en","query":"noninterference information flow isolation multi client concurrency"},
+    {"id":"noninterference.ja","cluster":"noninterference-isolation","language":"ja","query":"非干渉性 情報流 隔離 複数クライアント 並行"},
+    {"id":"noninterference.zh","cluster":"noninterference-isolation","language":"zh","query":"非干扰 信息流 隔离 多客户端 并发"},
+    {"id":"noninterference.de","cluster":"noninterference-isolation","language":"de","query":"Nichtinterferenz Informationsfluss Isolation Mehrclient Nebenläufigkeit"},
+    {"id":"noninterference.es","cluster":"noninterference-isolation","language":"es","query":"no interferencia flujo de información aislamiento múltiples clientes concurrencia"},
+    {"id":"noninterference.ru","cluster":"noninterference-isolation","language":"ru","query":"невмешательство информационные потоки изоляция несколько клиентов параллелизм"}
+  ]
+}
