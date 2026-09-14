@@ -1,0 +1,198 @@
+name: Repair candidate replay
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/repair-candidate-replay.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64-uia-com:
+    name: Windows x64 TCP UIA COM repair candidate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply only TCP/TLS COM lifecycle candidate
+        shell: pwsh
+        run: |
+          $path = 'source/daemon/src/tcp_server.cpp'
+          $s = Get-Content $path -Raw
+          $include = '#include "wininspect/compress.hpp"' + "`n"
+          if (-not $s.Contains($include)) { throw 'expected include anchor not found' }
+          if (-not $s.Contains('#include "wininspect/util_win32.hpp"')) {
+            $s = $s.Replace($include, $include + '#include "wininspect/util_win32.hpp"' + "`n")
+          }
+          $needle = @('  {','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          $replacement = @('  {','    wininspect::CoInitGuard coinit;','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          if (-not $s.Contains($needle)) { throw 'expected socket-handler anchor not found' }
+          $s = $s.Replace($needle, $replacement)
+          Set-Content $path $s -NoNewline
+      - name: Build candidate
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build --config Release --parallel 2
+          ctest --test-dir build -C Release --output-on-failure
+      - name: Prove TCP capability truth after thread-local COM init
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Read-Exact([System.IO.Stream]$stream, [int]$count) {
+            $buffer = New-Object byte[] $count
+            $offset = 0
+            while ($offset -lt $count) {
+              $n = $stream.Read($buffer, $offset, $count - $offset)
+              if ($n -le 0) { throw 'unexpected EOF' }
+              $offset += $n
+            }
+            return ,$buffer
+          }
+          function Read-Frame([System.IO.Stream]$stream) {
+            $hdr = Read-Exact $stream 4
+            if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($hdr) }
+            $len = [BitConverter]::ToUInt32($hdr, 0)
+            if ($len -eq 0 -or $len -gt 10485760) { throw "invalid frame length $len" }
+            $payload = Read-Exact $stream ([int]$len)
+            return [Text.Encoding]::UTF8.GetString($payload)
+          }
+          function Write-Frame([System.IO.Stream]$stream, [string]$text) {
+            $payload = [Text.Encoding]::UTF8.GetBytes($text)
+            $hdr = [BitConverter]::GetBytes([uint32]$payload.Length)
+            if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($hdr) }
+            $stream.Write($hdr, 0, 4)
+            $stream.Write($payload, 0, $payload.Length)
+            $stream.Flush()
+          }
+          $p = Start-Process build/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.out.log -RedirectStandardError daemon.err.log
+          try {
+            $listener = $null
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep 1
+              if ($p.HasExited) { throw "daemon exited $($p.ExitCode)" }
+              $listener = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if ($listener) { break }
+            }
+            if (-not $listener) { throw 'no loopback listener' }
+            $client = [Net.Sockets.TcpClient]::new('127.0.0.1',1985)
+            try {
+              $stream = $client.GetStream()
+              $hello = Read-Frame $stream
+              Write-Host "HELLO $hello"
+              Write-Frame $stream '{"id":"uia-candidate","method":"daemon.capabilities","params":{}}'
+              $responseText = Read-Frame $stream
+              Write-Host "CAPABILITIES $responseText"
+              $response = $responseText | ConvertFrom-Json
+              if (-not $response.ok) { throw 'capabilities request failed' }
+              if (-not $response.result.features.uia) { throw 'TCP UIA capability remained false' }
+              Write-Host 'QUAL_REPAIR candidate=tcp-tls-com-init substrate=windows-x64 result=pass'
+            } finally { $client.Dispose() }
+          } finally {
+            Get-Content daemon.out.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  windows-arm64-reporting-uia:
+    name: Windows 11 ARM64 architecture + TCP UIA candidates
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Record executor identity
+        shell: pwsh
+        run: |
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+      - name: Apply only demonstrated COM and architecture-reporting candidates
+        shell: pwsh
+        run: |
+          $tcp = 'source/daemon/src/tcp_server.cpp'
+          $s = Get-Content $tcp -Raw
+          $include = '#include "wininspect/compress.hpp"' + "`n"
+          if (-not $s.Contains($include)) { throw 'expected include anchor not found' }
+          if (-not $s.Contains('#include "wininspect/util_win32.hpp"')) {
+            $s = $s.Replace($include, $include + '#include "wininspect/util_win32.hpp"' + "`n")
+          }
+          $needle = @('  {','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          $replacement = @('  {','    wininspect::CoInitGuard coinit;','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          if (-not $s.Contains($needle)) { throw 'expected socket-handler anchor not found' }
+          $s = $s.Replace($needle, $replacement)
+          Set-Content $tcp $s -NoNewline
+
+          $backend = 'source/core/src/win32_backend.cpp'
+          $b = Get-Content $backend -Raw
+          $old = @('#ifdef _WIN64','    caps.arch = "x64";','#else','    caps.arch = "x86";','#endif') -join "`n"
+          $new = @('#if defined(_M_ARM64EC)','    caps.arch = "arm64ec";','#elif defined(_M_ARM64) || defined(__aarch64__)','    caps.arch = "arm64";','#elif defined(_M_X64) || defined(__x86_64__)','    caps.arch = "x64";','#elif defined(_M_IX86) || defined(__i386__)','    caps.arch = "x86";','#else','    caps.arch = "unknown";','#endif') -join "`n"
+          if (-not $b.Contains($old)) { throw 'expected architecture discriminator not found' }
+          $b = $b.Replace($old, $new)
+          Set-Content $backend $b -NoNewline
+      - name: Build and test native ARM64 candidate
+        shell: pwsh
+        run: |
+          cmake -S source -B build-arm64 -A ARM64 -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-arm64 --config Release --parallel 2
+          ctest --test-dir build-arm64 -C Release --output-on-failure
+      - name: Prove architecture and TCP UIA capability truth
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Read-Exact([System.IO.Stream]$stream, [int]$count) {
+            $buffer = New-Object byte[] $count
+            $offset = 0
+            while ($offset -lt $count) {
+              $n = $stream.Read($buffer, $offset, $count - $offset)
+              if ($n -le 0) { throw 'unexpected EOF' }
+              $offset += $n
+            }
+            return ,$buffer
+          }
+          function Read-Frame([System.IO.Stream]$stream) {
+            $hdr = Read-Exact $stream 4
+            if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($hdr) }
+            $len = [BitConverter]::ToUInt32($hdr, 0)
+            if ($len -eq 0 -or $len -gt 10485760) { throw "invalid frame length $len" }
+            $payload = Read-Exact $stream ([int]$len)
+            return [Text.Encoding]::UTF8.GetString($payload)
+          }
+          function Write-Frame([System.IO.Stream]$stream, [string]$text) {
+            $payload = [Text.Encoding]::UTF8.GetBytes($text)
+            $hdr = [BitConverter]::GetBytes([uint32]$payload.Length)
+            if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($hdr) }
+            $stream.Write($hdr, 0, 4)
+            $stream.Write($payload, 0, $payload.Length)
+            $stream.Flush()
+          }
+          $p = Start-Process build-arm64/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.out.log -RedirectStandardError daemon.err.log
+          try {
+            $listener = $null
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep 1
+              if ($p.HasExited) { throw "daemon exited $($p.ExitCode)" }
+              $listener = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if ($listener) { break }
+            }
+            if (-not $listener) { throw 'no loopback listener' }
+            $client = [Net.Sockets.TcpClient]::new('127.0.0.1',1985)
+            try {
+              $stream = $client.GetStream()
+              $hello = Read-Frame $stream
+              Write-Host "HELLO $hello"
+              Write-Frame $stream '{"id":"arm64-candidate","method":"daemon.capabilities","params":{}}'
+              $responseText = Read-Frame $stream
+              Write-Host "CAPABILITIES $responseText"
+              $response = $responseText | ConvertFrom-Json
+              if (-not $response.ok) { throw 'capabilities request failed' }
+              if ($response.result.arch -ne 'arm64') { throw "wrong architecture $($response.result.arch)" }
+              if (-not $response.result.features.uia) { throw 'TCP UIA capability remained false on ARM64' }
+              Write-Host 'QUAL_REPAIR candidate=arch-reporting+tcp-tls-com-init substrate=windows-arm64 result=pass'
+            } finally { $client.Dispose() }
+          } finally {
+            Get-Content daemon.out.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
