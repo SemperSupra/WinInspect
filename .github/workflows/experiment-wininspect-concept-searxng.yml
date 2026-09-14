@@ -75,33 +75,48 @@ jobs:
             --output out/wininspect-concept-searxng-result.json \
             | tee out/summary.json
 
-      - name: Validate privacy-safe result shape
+      - name: Run bounded negative-space reformulations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/run_wininspect_concept_searxng.py \
+            --base-url http://127.0.0.1:8888 \
+            --queries experiments/wininspect-concept-sweep-negative-space.json \
+            --output out/wininspect-concept-searxng-negative-space.json \
+            | tee out/negative-space-summary.json
+
+      - name: Validate privacy-safe result shapes
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
-          p = Path('out/wininspect-concept-searxng-result.json')
-          x = json.loads(p.read_text(encoding='utf-8'))
-          assert x['schema'] == 'wininspect.concept-sweep.searxng-result.v1'
-          assert x['authority_effect'] == 'none'
-          assert x['evidence_semantics']['search_membership_is_semantic_truth'] is False
-          assert x['evidence_semantics']['negative_result_is_concept_absence'] is False
-          assert x['privacy']['raw_result_urls_persisted'] is False
-          assert x['privacy']['raw_result_titles_persisted'] is False
-          assert x['privacy']['raw_result_snippets_persisted'] is False
-          serialized = p.read_text(encoding='utf-8').lower()
-          for forbidden in ('private_revision', 'private_path', 'access_token', 'authorization: bearer'):
-              assert forbidden not in serialized, forbidden
-          print(json.dumps({
-              'planned': x['request_counts']['planned'],
-              'succeeded': x['request_counts']['succeeded'],
-              'failed': x['request_counts']['failed'],
-              'engines': x['coverage']['engines'],
-              'by_cluster_result_count': x['coverage']['by_cluster_result_count'],
-              'by_language_result_count': x['coverage']['by_language_result_count'],
-          }, ensure_ascii=False, indent=2))
+          paths = [
+              Path('out/wininspect-concept-searxng-result.json'),
+              Path('out/wininspect-concept-searxng-negative-space.json'),
+          ]
+          for p in paths:
+              x = json.loads(p.read_text(encoding='utf-8'))
+              assert x['schema'] == 'wininspect.concept-sweep.searxng-result.v1'
+              assert x['authority_effect'] == 'none'
+              assert x['evidence_semantics']['search_membership_is_semantic_truth'] is False
+              assert x['evidence_semantics']['negative_result_is_concept_absence'] is False
+              assert x['privacy']['raw_result_urls_persisted'] is False
+              assert x['privacy']['raw_result_titles_persisted'] is False
+              assert x['privacy']['raw_result_snippets_persisted'] is False
+              serialized = p.read_text(encoding='utf-8').lower()
+              for forbidden in ('private_revision', 'private_path', 'access_token', 'authorization: bearer'):
+                  assert forbidden not in serialized, (p, forbidden)
+              print(json.dumps({
+                  'file': p.name,
+                  'planned': x['request_counts']['planned'],
+                  'succeeded': x['request_counts']['succeeded'],
+                  'failed': x['request_counts']['failed'],
+                  'engines': x['coverage']['engines'],
+                  'by_cluster_result_count': x['coverage']['by_cluster_result_count'],
+                  'by_language_result_count': x['coverage']['by_language_result_count'],
+              }, ensure_ascii=False, indent=2))
           PY
 
       - name: Upload aggregate evidence
@@ -111,6 +126,8 @@ jobs:
           path: |
             out/wininspect-concept-searxng-result.json
             out/summary.json
+            out/wininspect-concept-searxng-negative-space.json
+            out/negative-space-summary.json
           if-no-files-found: error
           retention-days: 30
 
