@@ -1,0 +1,20 @@
+{
+  "schema": "wininspect.concept-sweep.fixture.v1",
+  "purpose": "Bounded query-reformulation test for weak retrieval cells from the ten-language WinInspect concept sweep.",
+  "authority_effect": "none",
+  "query_forms_status": "exploratory retrieval alternatives; not accepted lexical authority",
+  "queries": [
+    {"id":"reconciliation.de.alt1","cluster":"reconciliation","language":"de","query":"Kubernetes Controller gewünschter Zustand aktueller Zustand"},
+    {"id":"reconciliation.de.alt2","cluster":"reconciliation","language":"de","query":"Sollzustand Istzustand Regelkreis Kubernetes"},
+    {"id":"reconciliation.es.alt1","cluster":"reconciliation","language":"es","query":"Kubernetes controlador estado deseado estado actual"},
+    {"id":"reconciliation.es.alt2","cluster":"reconciliation","language":"es","query":"reconciliación Kubernetes estado deseado actual controlador"},
+    {"id":"reconciliation.pt.alt1","cluster":"reconciliation","language":"pt","query":"Kubernetes controlador estado desejado estado atual"},
+    {"id":"reconciliation.pt.alt2","cluster":"reconciliation","language":"pt","query":"reconciliação Kubernetes estado desejado atual controlador"},
+    {"id":"reconciliation.ko.alt1","cluster":"reconciliation","language":"ko","query":"쿠버네티스 원하는 상태 현재 상태 컨트롤러"},
+    {"id":"reconciliation.ko.alt2","cluster":"reconciliation","language":"ko","query":"Kubernetes 조정 루프 원하는 상태 현재 상태"},
+    {"id":"reconciliation.th.alt1","cluster":"reconciliation","language":"th","query":"Kubernetes สถานะที่ต้องการ สถานะปัจจุบัน controller"},
+    {"id":"reconciliation.th.alt2","cluster":"reconciliation","language":"th","query":"วงรอบควบคุม Kubernetes สถานะปัจจุบัน สถานะที่ต้องการ"},
+    {"id":"noninterference.de.alt1","cluster":"noninterference-isolation","language":"de","query":"Nichtinterferenz Informationsfluss Sicherheit"},
+    {"id":"noninterference.de.alt2","cluster":"noninterference-isolation","language":"de","query":"Informationsflusssicherheit Nichtinterferenz"}
+  ]
+}
