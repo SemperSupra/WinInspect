@@ -2,6 +2,7 @@
   "schema": "wininspect.concept-sweep.fixture.v1",
   "purpose": "Public-safe fixed semantic seeds for the WinInspect dual-track concept-mining rep.",
   "authority_effect": "none",
+  "query_forms_status": "exploratory retrieval forms; not accepted lexical authority",
   "queries": [
     {"id":"affordance.en","cluster":"affordance","language":"en","query":"affordance action possibilities actor environment ecological psychology"},
     {"id":"affordance.ja","cluster":"affordance","language":"ja","query":"アフォーダンス 行為の可能性 環境 行為者 生態心理学"},
@@ -9,6 +10,10 @@
     {"id":"affordance.de","cluster":"affordance","language":"de","query":"Affordanz Handlungsmöglichkeiten Umwelt Akteur ökologische Psychologie"},
     {"id":"affordance.es","cluster":"affordance","language":"es","query":"affordance oportunidades para la acción organismo entorno psicología ecológica"},
     {"id":"affordance.ru","cluster":"affordance","language":"ru","query":"аффорданс возможности действия среда организм экологическая психология"},
+    {"id":"affordance.pt","cluster":"affordance","language":"pt","query":"affordance possibilidades de ação ambiente agente psicologia ecológica"},
+    {"id":"affordance.ar","cluster":"affordance","language":"ar","query":"affordance إمكانيات الفعل البيئة الفاعل علم النفس البيئي"},
+    {"id":"affordance.ko","cluster":"affordance","language":"ko","query":"어포던스 행동 가능성 환경 행위자 생태심리학"},
+    {"id":"affordance.th","cluster":"affordance","language":"th","query":"affordance ความเป็นไปได้ของการกระทำ สิ่งแวดล้อม ผู้กระทำ จิตวิทยานิเวศ"},
 
     {"id":"reconciliation.en","cluster":"reconciliation","language":"en","query":"desired state current state reconciliation control loop idempotent controller"},
     {"id":"reconciliation.ja","cluster":"reconciliation","language":"ja","query":"目的の状態 現在の状態 制御ループ コントローラー 冪等"},
@@ -16,6 +21,10 @@
     {"id":"reconciliation.de","cluster":"reconciliation","language":"de","query":"Wunschzustand Istzustand Kontrollschleife Controller idempotent"},
     {"id":"reconciliation.es","cluster":"reconciliation","language":"es","query":"estado deseado estado actual bucle de control reconciliación idempotente"},
     {"id":"reconciliation.ru","cluster":"reconciliation","language":"ru","query":"желаемое состояние текущее состояние управляющий цикл контроллер идемпотентность"},
+    {"id":"reconciliation.pt","cluster":"reconciliation","language":"pt","query":"estado desejado estado atual loop de controle controlador reconciliação idempotente"},
+    {"id":"reconciliation.ar","cluster":"reconciliation","language":"ar","query":"الحالة المرغوبة الحالة الحالية حلقة التحكم المتحكم المصالحة البرمجية"},
+    {"id":"reconciliation.ko","cluster":"reconciliation","language":"ko","query":"원하는 상태 현재 상태 제어 루프 컨트롤러 조정 멱등"},
+    {"id":"reconciliation.th","cluster":"reconciliation","language":"th","query":"สถานะที่ต้องการ สถานะปัจจุบัน วงรอบควบคุม คอนโทรลเลอร์ การปรับสถานะ idempotent"},
 
     {"id":"authority.en","cluster":"capability-authority","language":"en","query":"object capability authority delegation attenuation least authority"},
     {"id":"authority.ja","cluster":"capability-authority","language":"ja","query":"オブジェクトケイパビリティ 権限 委譲 最小権限"},
@@ -23,6 +32,10 @@
     {"id":"authority.de","cluster":"capability-authority","language":"de","query":"Object Capability Berechtigung Autorität Delegation Abschwächung geringste Autorität"},
     {"id":"authority.es","cluster":"capability-authority","language":"es","query":"capacidad de objeto autoridad delegación atenuación mínimo privilegio"},
     {"id":"authority.ru","cluster":"capability-authority","language":"ru","query":"объектная capability полномочия делегирование принцип наименьших полномочий"},
+    {"id":"authority.pt","cluster":"capability-authority","language":"pt","query":"object capability autoridade delegação atenuação princípio da menor autoridade"},
+    {"id":"authority.ar","cluster":"capability-authority","language":"ar","query":"object capability السلطة الصلاحية التفويض التقييد أقل سلطة"},
+    {"id":"authority.ko","cluster":"capability-authority","language":"ko","query":"객체 capability 권한 위임 감쇠 최소 권한 보안"},
+    {"id":"authority.th","cluster":"capability-authority","language":"th","query":"object capability อำนาจ สิทธิ์ การมอบอำนาจ การลดทอน สิทธิ์น้อยที่สุด"},
 
     {"id":"diagnosis.en","cluster":"falsification-diagnosis","language":"en","query":"model based diagnosis fault localization first blocking layer causal diagnosis"},
     {"id":"diagnosis.ja","cluster":"falsification-diagnosis","language":"ja","query":"モデルベース診断 故障診断 故障箇所 特定 因果"},
@@ -30,6 +43,10 @@
     {"id":"diagnosis.de","cluster":"falsification-diagnosis","language":"de","query":"modellbasierte Diagnose Fehlerlokalisierung Ursachenanalyse"},
     {"id":"diagnosis.es","cluster":"falsification-diagnosis","language":"es","query":"diagnóstico basado en modelos localización de fallos causal"},
     {"id":"diagnosis.ru","cluster":"falsification-diagnosis","language":"ru","query":"модельная диагностика локализация неисправностей причинный анализ"},
+    {"id":"diagnosis.pt","cluster":"falsification-diagnosis","language":"pt","query":"diagnóstico baseado em modelo localização de falhas análise causal"},
+    {"id":"diagnosis.ar","cluster":"falsification-diagnosis","language":"ar","query":"التشخيص القائم على النموذج تحديد موقع الأعطال التحليل السببي"},
+    {"id":"diagnosis.ko","cluster":"falsification-diagnosis","language":"ko","query":"모델 기반 진단 고장 위치 추정 인과 진단"},
+    {"id":"diagnosis.th","cluster":"falsification-diagnosis","language":"th","query":"การวินิจฉัยตามแบบจำลอง การหาตำแหน่งข้อผิดพลาด การวิเคราะห์เชิงสาเหตุ"},
 
     {"id":"qualification.en","cluster":"evidence-qualification","language":"en","query":"verification validation qualification evidence test evaluation software"},
     {"id":"qualification.ja","cluster":"evidence-qualification","language":"ja","query":"検証 妥当性確認 適格性評価 証拠 ソフトウェア"},
@@ -37,12 +54,20 @@
     {"id":"qualification.de","cluster":"evidence-qualification","language":"de","query":"Verifikation Validierung Qualifikation Nachweis Software Test"},
     {"id":"qualification.es","cluster":"evidence-qualification","language":"es","query":"verificación validación cualificación evidencia software prueba evaluación"},
     {"id":"qualification.ru","cluster":"evidence-qualification","language":"ru","query":"верификация валидация квалификация доказательства программное обеспечение испытания"},
+    {"id":"qualification.pt","cluster":"evidence-qualification","language":"pt","query":"verificação validação qualificação evidência software teste avaliação"},
+    {"id":"qualification.ar","cluster":"evidence-qualification","language":"ar","query":"التحقق التحقق من الصحة التأهيل الأدلة البرمجيات الاختبار التقييم"},
+    {"id":"qualification.ko","cluster":"evidence-qualification","language":"ko","query":"검증 유효성 확인 적격성 평가 증거 소프트웨어 테스트"},
+    {"id":"qualification.th","cluster":"evidence-qualification","language":"th","query":"การทวนสอบ การตรวจสอบความใช้ได้ การรับรองคุณสมบัติ หลักฐาน ซอฟต์แวร์ การทดสอบ"},
 
     {"id":"noninterference.en","cluster":"noninterference-isolation","language":"en","query":"noninterference information flow isolation multi client concurrency"},
     {"id":"noninterference.ja","cluster":"noninterference-isolation","language":"ja","query":"非干渉性 情報流 隔離 複数クライアント 並行"},
     {"id":"noninterference.zh","cluster":"noninterference-isolation","language":"zh","query":"非干扰 信息流 隔离 多客户端 并发"},
     {"id":"noninterference.de","cluster":"noninterference-isolation","language":"de","query":"Nichtinterferenz Informationsfluss Isolation Mehrclient Nebenläufigkeit"},
     {"id":"noninterference.es","cluster":"noninterference-isolation","language":"es","query":"no interferencia flujo de información aislamiento múltiples clientes concurrencia"},
-    {"id":"noninterference.ru","cluster":"noninterference-isolation","language":"ru","query":"невмешательство информационные потоки изоляция несколько клиентов параллелизм"}
+    {"id":"noninterference.ru","cluster":"noninterference-isolation","language":"ru","query":"невмешательство информационные потоки изоляция несколько клиентов параллелизм"},
+    {"id":"noninterference.pt","cluster":"noninterference-isolation","language":"pt","query":"não interferência fluxo de informação isolamento múltiplos clientes concorrência"},
+    {"id":"noninterference.ar","cluster":"noninterference-isolation","language":"ar","query":"عدم التداخل تدفق المعلومات العزل تعدد العملاء التزامن"},
+    {"id":"noninterference.ko","cluster":"noninterference-isolation","language":"ko","query":"비간섭 정보 흐름 격리 다중 클라이언트 동시성"},
+    {"id":"noninterference.th","cluster":"noninterference-isolation","language":"th","query":"การไม่แทรกแซง การไหลของข้อมูล การแยก หลายไคลเอนต์ การทำงานพร้อมกัน"}
   ]
 }
