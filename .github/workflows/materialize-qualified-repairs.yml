@@ -1,0 +1,65 @@
+name: Materialize qualified repair blobs
+
+on:
+  push:
+    branches:
+      - experiment/materialize-qualified-repairs
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: ${{ !contains(github.event.head_commit.message, '[materialized]') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: experiment/materialize-qualified-repairs
+          fetch-depth: 0
+      - name: Apply exactly the already-qualified source deltas
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tcp = 'source/daemon/src/tcp_server.cpp'
+          $s = Get-Content $tcp -Raw
+          $include = '#include "wininspect/compress.hpp"' + "`n"
+          if (-not $s.Contains($include)) { throw 'expected TCP include anchor not found' }
+          if (-not $s.Contains('#include "wininspect/util_win32.hpp"')) {
+            $s = $s.Replace($include, $include + '#include "wininspect/util_win32.hpp"' + "`n")
+          }
+          $needle = @('  {','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          $replacement = @('  {','    wininspect::CoInitGuard coinit;','    wininspect::CoreEngine core(backend);','    core.set_admin_logs_enabled(admin_logs);') -join "`n"
+          if ($s.Contains($needle)) {
+            $s = $s.Replace($needle, $replacement)
+          } elseif (-not $s.Contains('    wininspect::CoInitGuard coinit;')) {
+            throw 'expected TCP handler anchor not found'
+          }
+          Set-Content $tcp $s -NoNewline
+
+          $backend = 'source/core/src/win32_backend.cpp'
+          $b = Get-Content $backend -Raw
+          $old = @('#ifdef _WIN64','    caps.arch = "x64";','#else','    caps.arch = "x86";','#endif') -join "`n"
+          $new = @('#if defined(_M_ARM64EC)','    caps.arch = "arm64ec";','#elif defined(_M_ARM64) || defined(__aarch64__)','    caps.arch = "arm64";','#elif defined(_M_X64) || defined(__x86_64__)','    caps.arch = "x64";','#elif defined(_M_IX86) || defined(__i386__)','    caps.arch = "x86";','#else','    caps.arch = "unknown";','#endif') -join "`n"
+          if ($b.Contains($old)) {
+            $b = $b.Replace($old, $new)
+          } elseif (-not $b.Contains('caps.arch = "arm64";')) {
+            throw 'expected architecture discriminator not found'
+          }
+          Set-Content $backend $b -NoNewline
+
+          git diff --check
+          git diff -- source/daemon/src/tcp_server.cpp source/core/src/win32_backend.cpp
+      - name: Commit materialized evidence blobs
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain)) {
+            Write-Host 'No materialization changes required.'
+            exit 0
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add source/daemon/src/tcp_server.cpp source/core/src/win32_backend.cpp
+          git commit -m 'experiment: materialize qualified repair blobs [materialized]'
+          git push origin HEAD:experiment/materialize-qualified-repairs
