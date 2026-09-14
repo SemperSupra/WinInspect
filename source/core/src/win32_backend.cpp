@@ -2139,10 +2139,16 @@ namespace wininspect {
         caps.os = "windows";
     }
 
-#ifdef _WIN64
+#if defined(_M_ARM64EC)
+    caps.arch = "arm64ec";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    caps.arch = "arm64";
+#elif defined(_M_X64) || defined(__x86_64__)
     caps.arch = "x64";
-#else
+#elif defined(_M_IX86) || defined(__i386__)
     caps.arch = "x86";
+#else
+    caps.arch = "unknown";
 #endif
 
     // Live capability probes (non-destructive, test-and-cleanup)
