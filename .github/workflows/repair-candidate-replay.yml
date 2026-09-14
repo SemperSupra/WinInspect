@@ -1,0 +1,195 @@
+name: Repair candidate replay
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/repair-candidate-replay.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Evidence-only candidate validation. Product authority remains WinInspect-private.
+# Each job changes only the source lines implicated by already-demonstrated failures,
+# then exercises the real daemon on the substrate that exposed the defect.
+
+jobs:
+  windows-x64-uia-com:
+    name: Windows x64 TCP UIA COM repair candidate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply only TCP/TLS COM lifecycle candidate
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path('source/daemon/src/tcp_server.cpp')
+          s = p.read_text()
+          include = '#include "wininspect/compress.hpp"\n'
+          assert include in s
+          if '#include "wininspect/util_win32.hpp"\n' not in s:
+              s = s.replace(include, include + '#include "wininspect/util_win32.hpp"\n', 1)
+          needle = '  {\n    wininspect::CoreEngine core(backend);\n    core.set_admin_logs_enabled(admin_logs);'
+          assert s.count(needle) == 1, s.count(needle)
+          s = s.replace(needle, '  {\n    wininspect::CoInitGuard coinit;\n    wininspect::CoreEngine core(backend);\n    core.set_admin_logs_enabled(admin_logs);', 1)
+          p.write_text(s)
+          '@ | Set-Content apply_candidate.py
+          python apply_candidate.py
+      - name: Build candidate
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build --config Release --parallel 2
+          ctest --test-dir build -C Release --output-on-failure
+      - name: Prove TCP capability truth after thread-local COM init
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=Start-Process build/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.out.log -RedirectStandardError daemon.err.log
+          try {
+            $listener=$null
+            for($i=0;$i -lt 20;$i++){
+              Start-Sleep 1
+              if($p.HasExited){throw "daemon exited $($p.ExitCode)"}
+              $listener=Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if($listener){break}
+            }
+            if(-not $listener){throw 'no loopback listener'}
+            @'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          def frame(s,obj):
+              req=json.dumps(obj,separators=(',',':')).encode()
+              s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]
+              return json.loads(recvn(s,n))
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]
+              hello=json.loads(recvn(s,n))
+              print('HELLO',json.dumps(hello,sort_keys=True))
+              resp=frame(s,{'id':'uia-candidate','method':'daemon.capabilities','params':{}})
+              print('CAPABILITIES',json.dumps(resp,sort_keys=True))
+              assert resp.get('ok') is True
+              result=resp.get('result',{})
+              features=result.get('features',{})
+              assert features.get('uia') is True, result
+          print('QUAL_REPAIR candidate=tcp-tls-com-init substrate=windows-x64 result=pass')
+          '@ | Set-Content probe.py
+            python probe.py
+          } finally {
+            Get-Content daemon.out.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  windows-arm64-reporting-uia:
+    name: Windows 11 ARM64 architecture + TCP UIA candidates
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Record executor identity
+        shell: pwsh
+        run: |
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+      - name: Apply only demonstrated COM and architecture-reporting candidates
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path('source/daemon/src/tcp_server.cpp')
+          s = p.read_text()
+          include = '#include "wininspect/compress.hpp"\n'
+          assert include in s
+          if '#include "wininspect/util_win32.hpp"\n' not in s:
+              s = s.replace(include, include + '#include "wininspect/util_win32.hpp"\n', 1)
+          needle = '  {\n    wininspect::CoreEngine core(backend);\n    core.set_admin_logs_enabled(admin_logs);'
+          assert s.count(needle) == 1, s.count(needle)
+          s = s.replace(needle, '  {\n    wininspect::CoInitGuard coinit;\n    wininspect::CoreEngine core(backend);\n    core.set_admin_logs_enabled(admin_logs);', 1)
+          p.write_text(s)
+
+          p = Path('source/core/src/win32_backend.cpp')
+          s = p.read_text()
+          old = '''#ifdef _WIN64
+    caps.arch = "x64";
+#else
+    caps.arch = "x86";
+#endif'''
+          new = '''#if defined(_M_ARM64EC)
+    caps.arch = "arm64ec";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    caps.arch = "arm64";
+#elif defined(_M_X64) || defined(__x86_64__)
+    caps.arch = "x64";
+#elif defined(_M_IX86) || defined(__i386__)
+    caps.arch = "x86";
+#else
+    caps.arch = "unknown";
+#endif'''
+          assert s.count(old) >= 1, s.count(old)
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          '@ | Set-Content apply_candidates.py
+          python apply_candidates.py
+      - name: Build and test native ARM64 candidate
+        shell: pwsh
+        run: |
+          cmake -S source -B build-arm64 -A ARM64 -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-arm64 --config Release --parallel 2
+          ctest --test-dir build-arm64 -C Release --output-on-failure
+      - name: Prove architecture and TCP UIA capability truth
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=Start-Process build-arm64/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.out.log -RedirectStandardError daemon.err.log
+          try {
+            $listener=$null
+            for($i=0;$i -lt 20;$i++){
+              Start-Sleep 1
+              if($p.HasExited){throw "daemon exited $($p.ExitCode)"}
+              $listener=Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if($listener){break}
+            }
+            if(-not $listener){throw 'no loopback listener'}
+            @'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          def frame(s,obj):
+              req=json.dumps(obj,separators=(',',':')).encode()
+              s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]
+              return json.loads(recvn(s,n))
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]
+              hello=json.loads(recvn(s,n))
+              print('HELLO',json.dumps(hello,sort_keys=True))
+              resp=frame(s,{'id':'arm64-candidate','method':'daemon.capabilities','params':{}})
+              print('CAPABILITIES',json.dumps(resp,sort_keys=True))
+              assert resp.get('ok') is True
+              result=resp.get('result',{})
+              assert result.get('arch') == 'arm64', result
+              assert result.get('features',{}).get('uia') is True, result
+          print('QUAL_REPAIR candidate=arch-reporting+tcp-tls-com-init substrate=windows-arm64 result=pass')
+          '@ | Set-Content probe.py
+            python probe.py
+          } finally {
+            Get-Content daemon.out.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
