@@ -1,0 +1,170 @@
+name: Qualify V2-B1 daemon shutdown lifecycle
+
+on:
+  push:
+    branches:
+      - experiment/375-daemon-shutdown-lifecycle-mvp
+    paths:
+      - '.github/workflows/qualify-v2-b1-daemon-shutdown.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact public candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Build projected runtime
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
+
+      - name: Exercise shutdown lifecycle over real TCP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:GITHUB_WORKSPACE 'build/Release/wininspectd.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw "Missing daemon: $exe" }
+
+          function Read-Exact([System.IO.Stream]$stream, [int]$count) {
+            $buf = [byte[]]::new($count)
+            $offset = 0
+            while ($offset -lt $count) {
+              $n = $stream.Read($buf, $offset, $count - $offset)
+              if ($n -le 0) { throw "Unexpected EOF while reading $count bytes" }
+              $offset += $n
+            }
+            return $buf
+          }
+
+          function Read-Frame([System.IO.Stream]$stream) {
+            $hdr = Read-Exact $stream 4
+            [Array]::Reverse($hdr)
+            $len = [BitConverter]::ToUInt32($hdr, 0)
+            if ($len -eq 0 -or $len -gt 10485760) { throw "Bad frame length: $len" }
+            $payload = Read-Exact $stream ([int]$len)
+            return [Text.Encoding]::UTF8.GetString($payload)
+          }
+
+          function Write-Frame([System.IO.Stream]$stream, [string]$text) {
+            $payload = [Text.Encoding]::UTF8.GetBytes($text)
+            $hdr = [BitConverter]::GetBytes([uint32]$payload.Length)
+            [Array]::Reverse($hdr)
+            $stream.Write($hdr, 0, $hdr.Length)
+            $stream.Write($payload, 0, $payload.Length)
+            $stream.Flush()
+          }
+
+          function Connect-Daemon([int]$port, [int]$timeoutSec = 10) {
+            $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
+            while ([DateTime]::UtcNow -lt $deadline) {
+              $client = [System.Net.Sockets.TcpClient]::new()
+              try {
+                $client.Connect('127.0.0.1', $port)
+                $client.ReceiveTimeout = 5000
+                $client.SendTimeout = 5000
+                return $client
+              } catch {
+                $client.Dispose()
+                Start-Sleep -Milliseconds 150
+              }
+            }
+            throw "Daemon did not listen on port $port within ${timeoutSec}s"
+          }
+
+          function Start-TestDaemon([int]$port, [bool]$readOnly, [string]$tag) {
+            $cfg = Join-Path $env:RUNNER_TEMP "$tag-config.json"
+            @{
+              config_version = 1
+              bind = @(@{address='127.0.0.1'; family='ipv4'})
+              port = $port
+              discovery_port = 0
+              http_port = 0
+              https_port = 0
+              rendezvous = @()
+              enable_update_check = $false
+              update_check_interval_hours = 24
+            } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $cfg -Encoding utf8NoBOM
+            $log = Join-Path $env:RUNNER_TEMP "$tag-daemon.log"
+            $args = @('--headless','--config',$cfg,'--bind','127.0.0.1','--ipv4','--port',"$port",'--no-discovery','--no-mdns','--cleanup-interval','60000','--log-file',$log)
+            if ($readOnly) { $args += '--read-only' }
+            $proc = Start-Process -FilePath $exe -ArgumentList $args -PassThru
+            return @{ Process=$proc; Log=$log }
+          }
+
+          function Send-Shutdown([System.Net.Sockets.TcpClient]$client) {
+            $stream = $client.GetStream()
+            $helloText = Read-Frame $stream
+            $hello = $helloText | ConvertFrom-Json
+            if ($hello.type -ne 'hello') { throw "Unexpected hello: $helloText" }
+            $request = @{id='v2-b1-shutdown'; method='daemon.shutdown'; params=@{}} | ConvertTo-Json -Compress -Depth 4
+            Write-Frame $stream $request
+            $responseText = Read-Frame $stream
+            return ($responseText | ConvertFrom-Json)
+          }
+
+          # Positive path: cleanup sleeps for 60s, but shutdown must interrupt it and exit <10s.
+          $positive = Start-TestDaemon 31985 $false 'positive'
+          try {
+            $client = Connect-Daemon 31985
+            try {
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              $resp = Send-Shutdown $client
+              if (-not $resp.ok) { throw "Shutdown rejected: $($resp | ConvertTo-Json -Compress)" }
+              if ($resp.result.state -ne 'draining') { throw "Expected draining response: $($resp | ConvertTo-Json -Compress)" }
+              $client.Dispose()
+              $client = $null
+              $deadline = [DateTime]::UtcNow.AddSeconds(10)
+              do {
+                Start-Sleep -Milliseconds 100
+                $positive.Process.Refresh()
+              } until ($positive.Process.HasExited -or [DateTime]::UtcNow -ge $deadline)
+              $sw.Stop()
+              if (-not $positive.Process.HasExited) { throw 'Daemon did not exit within 10s after accepted shutdown.' }
+              if ($positive.Process.ExitCode -ne 0) { throw "Daemon exit code was $($positive.Process.ExitCode), expected 0." }
+              Write-Host "Accepted shutdown completed in $($sw.ElapsedMilliseconds) ms with exit code 0."
+            } finally {
+              if ($client) { $client.Dispose() }
+            }
+          } finally {
+            $positive.Process.Refresh()
+            if (-not $positive.Process.HasExited) { Stop-Process -Id $positive.Process.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $positive.Log) { Get-Content -LiteralPath $positive.Log }
+          }
+
+          # Negative path: read-only policy must deny shutdown and process must remain alive.
+          $negative = Start-TestDaemon 31986 $true 'readonly'
+          try {
+            $client = Connect-Daemon 31986
+            try {
+              $resp = Send-Shutdown $client
+              if ($resp.ok) { throw "Read-only daemon accepted shutdown unexpectedly: $($resp | ConvertTo-Json -Compress)" }
+              if ($resp.error.code -ne 'E_ACCESS_DENIED') { throw "Expected E_ACCESS_DENIED: $($resp | ConvertTo-Json -Compress)" }
+              Start-Sleep -Milliseconds 750
+              $negative.Process.Refresh()
+              if ($negative.Process.HasExited) { throw "Read-only daemon exited after denied shutdown (code $($negative.Process.ExitCode))." }
+              Write-Host 'Read-only shutdown denial preserved process liveness.'
+            } finally {
+              $client.Dispose()
+            }
+          } finally {
+            $negative.Process.Refresh()
+            if (-not $negative.Process.HasExited) { Stop-Process -Id $negative.Process.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $negative.Log) { Get-Content -LiteralPath $negative.Log }
+          }
+
+      - name: Record qualification boundary
+        shell: pwsh
+        run: |
+          Write-Host 'This is a public falsification/qualification rep over exact projected runtime source.'
+          Write-Host 'No private repository credential is present on this runner.'
+          Write-Host 'Success validates externally reachable TCP lifecycle behavior, not private promotion authority.'
