@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check .qualification/v2-b1.patch
-          git apply .qualification/v2-b1.patch
+          git apply --check --recount .qualification/v2-b1.patch
+          git apply --recount .qualification/v2-b1.patch
           git diff --check
 
       - name: Remove temporary applicator
