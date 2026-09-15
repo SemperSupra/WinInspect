@@ -1,0 +1,125 @@
+diff --git a/source/daemon/src/server.cpp b/source/daemon/src/server.cpp
+index 3ff316b..a90df9c 100644
+--- a/source/daemon/src/server.cpp
++++ b/source/daemon/src/server.cpp
+@@ -516,12 +516,17 @@ int main(int argc, char** argv)
+ 
+   auto running = std::make_shared<std::atomic<bool>>(true);
+   auto tray_hwnd = std::make_shared<std::atomic<HWND>>(nullptr);
++  HANDLE shutdown_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
++  if (!shutdown_event) {
++    LOG_ERROR("Failed to create daemon shutdown event: " + std::to_string(GetLastError()));
++    return 1;
++  }
+ 
+   // The lifecycle owner is the only authority allowed to stop the daemon.
+   // RPC handlers request this transition through ServerState and then return
+   // their response; normal main-thread cleanup persists audit state and joins
+   // background work. Wake both blocking UI/pipe surfaces so drain can finish.
+-  st->request_shutdown = [running, st = st.get(), tray_hwnd]() -> bool {
++  st->request_shutdown = [running, st = st.get(), tray_hwnd, shutdown_event]() -> bool {
+     {
+       std::lock_guard<std::mutex> lk(st->daemon_state_mu);
+       if (st->daemon_state == ServerState::State::Stopped ||
+@@ -531,6 +536,7 @@ int main(int argc, char** argv)
+     }
+ 
+     running->store(false);
++    SetEvent(shutdown_event);
+ 
+     HANDLE wake_pipe = CreateFileW(g_pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+@@ -589,9 +595,10 @@ int main(int argc, char** argv)
+   LOG_INFO("Starting Cleanup thread (every " + std::to_string(net_cfg.cleanup_interval_ms / 1000) +
+            "s)...");
+   auto health_ok = std::make_shared<std::atomic<bool>>(true);
+-  bg_threads.emplace_back([running, st = st.get(), health_ok, &net_cfg]() {
++  bg_threads.emplace_back([running, st = st.get(), health_ok, &net_cfg, shutdown_event]() {
+     while (running->load()) {
+-      Sleep(net_cfg.cleanup_interval_ms);
++      if (WaitForSingleObject(shutdown_event, (DWORD)net_cfg.cleanup_interval_ms) == WAIT_OBJECT_0)
++        break;
+       cleanup_sessions(st);
+       *health_ok = running->load();
+     }
+@@ -623,7 +630,7 @@ int main(int argc, char** argv)
+     LOG_INFO("Auto-update checker enabled (every " +
+              std::to_string(net_cfg.update_check_interval_hours) + "h)");
+     bg_threads.emplace_back(
+-        [running, backend = backend.get(), &net_cfg, update_state, tray_hwnd]() {
++        [running, backend = backend.get(), &net_cfg, update_state, tray_hwnd, shutdown_event]() {
+           while (running->load()) {
+             auto info = backend->check_for_update();
+             if (info.update_available && !update_state->available) {
+@@ -638,7 +645,13 @@ int main(int argc, char** argv)
+                 PostMessageW(hwnd, wininspectd::TrayManager::WM_UPDATE_AVAILABLE, 0, 0);
+               }
+             }
+-            Sleep(net_cfg.update_check_interval_hours * 3600 * 1000);
++            const unsigned long long wait_ms64 =
++                static_cast<unsigned long long>(net_cfg.update_check_interval_hours) * 3600ULL *
++                1000ULL;
++            const DWORD wait_ms =
++                wait_ms64 >= MAXDWORD ? MAXDWORD - 1 : static_cast<DWORD>(wait_ms64);
++            if (WaitForSingleObject(shutdown_event, wait_ms) == WAIT_OBJECT_0)
++              break;
+           }
+         });
+   }
+@@ -652,7 +665,7 @@ int main(int argc, char** argv)
+     }
+     if (rv_client->register_instance(net_cfg.identity, "", net_cfg.port)) {
+       LOG_INFO("Registered with rendezvous: " + rv_cfg.url);
+-      bg_threads.emplace_back([running, c = std::move(rv_client)]() {
++      bg_threads.emplace_back([running, c = std::move(rv_client), shutdown_event]() {
+         int heartbeat_fails = 0;
+         constexpr int MAX_HEARTBEAT_FAILS = 10;
+         while (running->load()) {
+@@ -663,11 +676,13 @@ int main(int argc, char** argv)
+                        " times — giving up");
+               break;
+             }
+-            Sleep(10000);
++            if (WaitForSingleObject(shutdown_event, 10000) == WAIT_OBJECT_0)
++              break;
+           }
+           else {
+             heartbeat_fails = 0;
+-            Sleep(30000);
++            if (WaitForSingleObject(shutdown_event, 30000) == WAIT_OBJECT_0)
++              break;
+           }
+         }
+         c->deregister();
+@@ -784,7 +799,10 @@ int main(int argc, char** argv)
+         });
+     wininspectd::TrayManager tray([running = running, st = st.get(), tcp = tcp]() {
+       LOG_INFO("Shutdown requested via tray.");
+-      *running = false;
++      if (st && st->request_shutdown)
++        (void)st->request_shutdown();
++      else
++        *running = false;
+       tcp->stop();
+     });
+     if (tray.init(GetModuleHandle(nullptr))) {
+@@ -829,6 +847,7 @@ int main(int argc, char** argv)
+   // Signal shutdown and wait for background threads to finish
+   st->daemon_state = ServerState::State::Draining;
+   *running = false;
++  SetEvent(shutdown_event);
+   // Persist audit log to disk
+   st->control->save_audit_log(audit_log_path);
+   LOG_INFO("Shutting down background threads...");
+@@ -836,6 +855,11 @@ int main(int argc, char** argv)
+     if (t.joinable())
+       t.join();
+   }
++  {
++    std::lock_guard<std::mutex> lk(st->daemon_state_mu);
++    st->daemon_state = ServerState::State::Stopped;
++  }
++  CloseHandle(shutdown_event);
+   LOG_INFO("Daemon shutdown complete.");
+   return 0;
+ }
