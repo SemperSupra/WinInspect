@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "projectionPolicyVersion": 1,
   "sourceAuthority": "private-development",
-  "sourceCommitSha": "e11fb014e7fca5ddc6e450975f4db45913b452d3",
+  "sourceCommitSha": "1c980c385094c32ebb2f9efa8869b3814a3bee48",
   "authoritativeCandidate": true,
-  "projectionDigestSha256": "4ad5e2c29613c79ebe7f3a46aa6a6b071457d4f93b3b7cb43f86642429118257",
-  "fileCount": 146,
+  "projectionDigestSha256": "f4ceeb95e63f4eea0d403dafead2e39f6dad5e7061d721b3a3f5a18d0988f63e",
+  "fileCount": 147,
   "files": [
     {
       "path": "assets/brand/ico/strix-agent-cursor.cur",
@@ -735,8 +735,8 @@
     },
     {
       "path": "daemon/src/request_handler.hpp",
-      "sha256": "cba75d5f87847d79df882c7be999a024b5770fa3dd5555b85198348cee406e2b",
-      "bytes": 18248,
+      "sha256": "cd5ebb856d26043706febbc5730e2ca9760f882d67220f47712befc893b36e02",
+      "bytes": 18085,
       "executable": false
     },
     {
@@ -749,6 +749,12 @@
       "path": "daemon/src/server.cpp",
       "sha256": "6e34c5c1161767fe82f556007f4df4637a611520e18162a71d7ee81e87681846",
       "bytes": 29914,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/snapshot_store.hpp",
+      "sha256": "f76c12ef43ccabde8fd38abd394d91c507949bf385ffa61ba9c5ae9a37ff022a",
+      "bytes": 1990,
       "executable": false
     },
     {
