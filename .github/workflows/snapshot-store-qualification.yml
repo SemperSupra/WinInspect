@@ -107,13 +107,16 @@ jobs:
           #include "snapshot_store.hpp"
           #include <iostream>
 
+          // ServerState owns a unique_ptr<ControlManager>. The snapshot-store harness
+          // never constructs a ControlManager, but MSVC still needs its destructor for
+          // constructor-unwind code. Define only that destructor locally so the harness
+          // remains isolated from unrelated daemon implementation.
+          namespace wininspectd { ControlManager::~ControlManager() {} }
+
           int main() {
             using namespace wininspect;
             using namespace wininspectd;
 
-            // Heap fixtures are intentionally not deleted. This keeps the public-safe
-            // harness isolated to the header-only snapshot-store primitive instead of
-            // linking unrelated ControlManager implementation solely for ServerState teardown.
             auto* st = new ServerState();
             st->max_snapshots = 2;
             auto s1 = store_snapshot_bounded_locked(st, Snapshot{});
