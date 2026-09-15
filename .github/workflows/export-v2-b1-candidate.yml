@@ -1,0 +1,50 @@
+name: Export V2-B1 candidate bytes
+
+on:
+  push:
+    branches:
+      - experiment/375-daemon-shutdown-lifecycle-handoff
+    paths:
+      - .github/workflows/export-v2-b1-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Record Git blob identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            source/core/src/core.cpp
+            source/core/tests/test_contract_methods.cpp
+            source/daemon/src/request_handler.hpp
+            source/daemon/src/server.cpp
+            source/daemon/src/server_state.hpp
+            source/daemon/src/tcp_server.cpp
+          )
+          : > v2-b1-blob-identities.txt
+          for f in "${files[@]}"; do
+            printf '%s  %s\n' "$(git hash-object "$f")" "$f" | tee -a v2-b1-blob-identities.txt
+          done
+
+      - name: Export exact candidate bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-b1-candidate-bytes
+          path: |
+            source/core/src/core.cpp
+            source/core/tests/test_contract_methods.cpp
+            source/daemon/src/request_handler.hpp
+            source/daemon/src/server.cpp
+            source/daemon/src/server_state.hpp
+            source/daemon/src/tcp_server.cpp
+            v2-b1-blob-identities.txt
+          if-no-files-found: error
+          retention-days: 1
