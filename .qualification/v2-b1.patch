@@ -1,5 +1,4 @@
 diff --git a/source/daemon/src/server_state.hpp b/source/daemon/src/server_state.hpp
-index cbe442a..0000000 100644
 --- a/source/daemon/src/server_state.hpp
 +++ b/source/daemon/src/server_state.hpp
 @@ -9,6 +9,7 @@
@@ -21,7 +20,6 @@ index cbe442a..0000000 100644
      static const char* state_str(State s) {
        switch (s) {
 diff --git a/source/daemon/src/request_handler.hpp b/source/daemon/src/request_handler.hpp
-index 3fad13a..0000000 100644
 --- a/source/daemon/src/request_handler.hpp
 +++ b/source/daemon/src/request_handler.hpp
 @@ -278,6 +278,37 @@ namespace wininspectd {
@@ -69,7 +67,6 @@ index 3fad13a..0000000 100644
        if (req.method == "session.terminate") {
          if (!session.id.empty()) {
 diff --git a/source/daemon/src/server.cpp b/source/daemon/src/server.cpp
-index bb2f540..0000000 100644
 --- a/source/daemon/src/server.cpp
 +++ b/source/daemon/src/server.cpp
 @@ -159,6 +159,8 @@ namespace {
@@ -145,7 +142,6 @@ index bb2f540..0000000 100644
        tray.set_status_callbacks(
            [st = st.get()]() -> std::string {
 diff --git a/source/daemon/src/tcp_server.cpp b/source/daemon/src/tcp_server.cpp
-index b1dffe7..0000000 100644
 --- a/source/daemon/src/tcp_server.cpp
 +++ b/source/daemon/src/tcp_server.cpp
 @@ -326,8 +326,6 @@ namespace wininspectd {
@@ -167,7 +163,6 @@ index b1dffe7..0000000 100644
      }
      closesocket(s);
 diff --git a/source/core/src/core.cpp b/source/core/src/core.cpp
-index 67d3fb7..0000000 100644
 --- a/source/core/src/core.cpp
 +++ b/source/core/src/core.cpp
 @@ -1262,16 +1262,13 @@ namespace wininspect {
@@ -193,7 +188,6 @@ index 67d3fb7..0000000 100644
      };
  
 diff --git a/source/core/tests/test_contract_methods.cpp b/source/core/tests/test_contract_methods.cpp
-index fa8e54e..0000000 100644
 --- a/source/core/tests/test_contract_methods.cpp
 +++ b/source/core/tests/test_contract_methods.cpp
 @@ -642,6 +642,17 @@ DOCTEST_TEST_CASE("contract: daemon.notify")
