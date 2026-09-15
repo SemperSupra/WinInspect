@@ -65,13 +65,18 @@ jobs:
 
           Write-Host "Qualification projection files: $($files.Count)"
           Write-Host "Qualification projection digest: $projectionDigest"
-          Write-Host 'QUALIFICATION_MANIFEST_BASE64_BEGIN'
-          Write-Host ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $manifestPath))))
-          Write-Host 'QUALIFICATION_MANIFEST_BASE64_END'
 
       - name: Validate generated projection receipt
         shell: pwsh
         run: ./scripts/Test-ProjectedSource.ps1
+
+      - name: Persist generated projection receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: snapshot-qualification-projection-receipt
+          path: .projection/source-manifest.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Build exact projected runtime source
         shell: pwsh
@@ -106,33 +111,36 @@ jobs:
             using namespace wininspect;
             using namespace wininspectd;
 
-            ServerState st;
-            st.max_snapshots = 2;
-            auto s1 = store_snapshot_bounded_locked(&st, Snapshot{});
-            auto s2 = store_snapshot_bounded_locked(&st, Snapshot{});
-            if (!s1 || !s2 || st.snaps.size() != 2) return 10;
+            // Heap fixtures are intentionally not deleted. This keeps the public-safe
+            // harness isolated to the header-only snapshot-store primitive instead of
+            // linking unrelated ControlManager implementation solely for ServerState teardown.
+            auto* st = new ServerState();
+            st->max_snapshots = 2;
+            auto s1 = store_snapshot_bounded_locked(st, Snapshot{});
+            auto s2 = store_snapshot_bounded_locked(st, Snapshot{});
+            if (!s1 || !s2 || st->snaps.size() != 2) return 10;
 
-            auto s3 = store_snapshot_bounded_locked(&st, Snapshot{});
-            if (!s3 || st.snaps.size() != 2 || st.snaps.count(*s1) != 0 ||
-                st.snaps.count(*s2) != 1 || st.snaps.count(*s3) != 1 ||
-                st.evicted_snaps.count(*s1) != 1) return 20;
+            auto s3 = store_snapshot_bounded_locked(st, Snapshot{});
+            if (!s3 || st->snaps.size() != 2 || st->snaps.count(*s1) != 0 ||
+                st->snaps.count(*s2) != 1 || st->snaps.count(*s3) != 1 ||
+                st->evicted_snaps.count(*s1) != 1) return 20;
 
-            st.pinned_counts[*s2] = 1;
-            st.pinned_counts[*s3] = 1;
-            const auto counterBeforeBlocked = st.snap_counter;
-            auto blocked = store_snapshot_bounded_locked(&st, Snapshot{});
-            if (blocked || st.snap_counter != counterBeforeBlocked || st.snaps.size() != 2) return 30;
+            st->pinned_counts[*s2] = 1;
+            st->pinned_counts[*s3] = 1;
+            const auto counterBeforeBlocked = st->snap_counter;
+            auto blocked = store_snapshot_bounded_locked(st, Snapshot{});
+            if (blocked || st->snap_counter != counterBeforeBlocked || st->snaps.size() != 2) return 30;
 
-            st.pinned_counts[*s3] = 0;
-            auto s4 = store_snapshot_bounded_locked(&st, Snapshot{});
-            if (!s4 || st.snaps.size() != 2 || st.snaps.count(*s2) != 1 ||
-                st.snaps.count(*s3) != 0 || st.snaps.count(*s4) != 1) return 40;
+            st->pinned_counts[*s3] = 0;
+            auto s4 = store_snapshot_bounded_locked(st, Snapshot{});
+            if (!s4 || st->snaps.size() != 2 || st->snaps.count(*s2) != 1 ||
+                st->snaps.count(*s3) != 0 || st->snaps.count(*s4) != 1) return 40;
 
-            ServerState zero;
-            zero.max_snapshots = 0;
-            const auto zeroCounter = zero.snap_counter;
-            if (store_snapshot_bounded_locked(&zero, Snapshot{}) || zero.snap_counter != zeroCounter ||
-                !zero.snaps.empty()) return 50;
+            auto* zero = new ServerState();
+            zero->max_snapshots = 0;
+            const auto zeroCounter = zero->snap_counter;
+            if (store_snapshot_bounded_locked(zero, Snapshot{}) || zero->snap_counter != zeroCounter ||
+                !zero->snaps.empty()) return 50;
 
             std::cout << "snapshot-store qualification PASS\n";
             return 0;
