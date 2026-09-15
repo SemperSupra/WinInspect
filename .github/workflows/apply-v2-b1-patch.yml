@@ -6,6 +6,7 @@ on:
       - experiment/375-daemon-shutdown-lifecycle-handoff
     paths:
       - .qualification/v2-b1.patch
+      - .github/workflows/apply-v2-b1-patch.yml
 
 permissions:
   contents: write
@@ -23,6 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf '\n' >> .qualification/v2-b1.patch
           git apply --check --recount .qualification/v2-b1.patch
           git apply --recount .qualification/v2-b1.patch
           git diff --check
