@@ -164,6 +164,8 @@ namespace {
         out = serialize_response_json(resp, canonical);
       }
       wininspectd::pipe_write_message(hPipe, out);
+      if (close_connection)
+        break;
       // PinGuard handles unpin automatically at end of scope
     }
 
@@ -513,6 +515,36 @@ int main(int argc, char** argv)
   backend->set_config(bcfg);
 
   auto running = std::make_shared<std::atomic<bool>>(true);
+  auto tray_hwnd = std::make_shared<std::atomic<HWND>>(nullptr);
+
+  // The lifecycle owner is the only authority allowed to stop the daemon.
+  // RPC handlers request this transition through ServerState and then return
+  // their response; normal main-thread cleanup persists audit state and joins
+  // background work. Wake both blocking UI/pipe surfaces so drain can finish.
+  st->request_shutdown = [running, st = st.get(), tray_hwnd]() -> bool {
+    {
+      std::lock_guard<std::mutex> lk(st->daemon_state_mu);
+      if (st->daemon_state == ServerState::State::Stopped ||
+          st->daemon_state == ServerState::State::Failed)
+        return false;
+      st->daemon_state = ServerState::State::Draining;
+    }
+
+    running->store(false);
+
+    HANDLE wake_pipe = CreateFileW(g_pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (wake_pipe != INVALID_HANDLE_VALUE)
+      CloseHandle(wake_pipe);
+
+    HWND hwnd = tray_hwnd->load();
+    if (hwnd) {
+      DWORD tray_thread_id = GetWindowThreadProcessId(hwnd, nullptr);
+      if (tray_thread_id != 0)
+        PostThreadMessageW(tray_thread_id, WM_QUIT, 0, 0);
+    }
+    return true;
+  };
 
   LOG_INFO("WinInspect Daemon " + std::string(wininspect::WININSPECT_VERSION) +
            " starting up — window inspection for Windows and Wine");
@@ -585,7 +617,6 @@ int main(int argc, char** argv)
 
   // Shared update state (set by update thread, read by tray)
   auto update_state = std::make_shared<wininspectd::TrayManager::UpdateState>();
-  std::shared_ptr<HWND> tray_hwnd = std::make_shared<HWND>(nullptr);
 
   // 4. Auto-update checker (background)
   if (net_cfg.enable_update_check) {
@@ -602,7 +633,7 @@ int main(int argc, char** argv)
               LOG_INFO("Update available: " + info.latest_version +
                        " (current: " + info.current_version + ")");
               // Post message to tray window if it exists
-              HWND hwnd = *tray_hwnd;
+              HWND hwnd = tray_hwnd->load();
               if (hwnd) {
                 PostMessageW(hwnd, wininspectd::TrayManager::WM_UPDATE_AVAILABLE, 0, 0);
               }
@@ -757,7 +788,7 @@ int main(int argc, char** argv)
       tcp->stop();
     });
     if (tray.init(GetModuleHandle(nullptr))) {
-      *tray_hwnd = tray.get_hwnd();
+      tray_hwnd->store(tray.get_hwnd());
       tray.set_health_flag(health_ok);
       tray.set_status_callbacks(
           [st = st.get()]() -> std::string {

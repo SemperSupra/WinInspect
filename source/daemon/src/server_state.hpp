@@ -9,6 +9,7 @@
 #include <string>
 #include <chrono>
 #include <atomic>
+#include <functional>
 #include <thread>
 #include <vector>
 #include <set>
@@ -86,6 +87,10 @@ namespace wininspect {
     enum class State : uint8_t { Init, Starting, Running, Draining, Stopped, Failed };
     State daemon_state = State::Init;
     std::mutex daemon_state_mu; // protects daemon_state
+
+    // Owned by daemon main; protocol handlers may request, but never perform, shutdown.
+    using ShutdownRequest = std::function<bool()>;
+    ShutdownRequest request_shutdown;
 
     /// Convert DaemonState to string for API responses (daemon.status)
     static const char* state_str(State s) {
