@@ -290,6 +290,43 @@ namespace wininspectd {
         return true;
       }
 
+      // ── daemon.shutdown lifecycle handoff ────────────────────────────────
+      // Shutdown is owned by daemon main. The protocol layer may request the
+      // transition, but must never terminate the process directly.
+      if (req.method == "daemon.shutdown") {
+        if (read_only) {
+          resp.ok = false;
+          resp.error_code = "E_ACCESS_DENIED";
+          resp.error_message = "method blocked: read-only mode";
+          return true;
+        }
+        if (!st->request_shutdown) {
+          resp.ok = false;
+          resp.error_code = "E_SHUTDOWN_UNAVAILABLE";
+          resp.error_message = "daemon lifecycle owner is unavailable";
+          return true;
+        }
+
+        bool accepted = false;
+        try {
+          accepted = st->request_shutdown();
+        }
+        catch (...) {
+          accepted = false;
+        }
+        if (!accepted) {
+          resp.ok = false;
+          resp.error_code = "E_SHUTDOWN_UNAVAILABLE";
+          resp.error_message = "daemon lifecycle owner rejected shutdown";
+          return true;
+        }
+
+        resp.ok = true;
+        resp.result = json::Object{{"ok", true}, {"state", std::string("draining")}};
+        close_connection = true; // honored by transports only after the response is written
+        return true;
+      }
+
       // ── session.terminate ────────────────────────────────────────────────
       if (req.method == "session.terminate") {
         if (!session.id.empty()) {

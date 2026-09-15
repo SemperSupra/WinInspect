@@ -1265,15 +1265,12 @@ namespace wininspect {
     };
 
     dispatch_["daemon.shutdown"] = [](const CoreRequest&, const Snapshot&, const Snapshot*) {
-      // Signal the daemon to shut down gracefully.
-      // We schedule exit on a thread so the RPC response is sent first.
+      // Process lifecycle is owned by the daemon layer. Direct CoreEngine use
+      // must fail closed rather than terminating the host process.
       CoreResponse resp;
-      resp.ok = true;
-      resp.result = json::Object{{"ok", true}};
-      std::thread([]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        std::exit(0);
-      }).detach();
+      resp.ok = false;
+      resp.error_code = "E_SHUTDOWN_UNAVAILABLE";
+      resp.error_message = "daemon.shutdown requires daemon lifecycle owner";
       return resp;
     };
 

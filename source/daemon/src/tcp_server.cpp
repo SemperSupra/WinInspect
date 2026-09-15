@@ -326,8 +326,6 @@ namespace wininspectd {
                            pin_guard, close_connection)) {
         break; // Parse error � close connection
       }
-      if (close_connection)
-        break;
 
       // -- Prepare and send response ----------------------------------
       std::string raw_out;
@@ -351,6 +349,8 @@ namespace wininspectd {
             !socket_write_all(s, raw_out.data(), out_len, tls))
           break;
       }
+      if (close_connection)
+        break;
       // PinGuard RAII handles unpin automatically at end of iteration
     }
     closesocket(s);

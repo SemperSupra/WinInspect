@@ -643,6 +643,16 @@ DOCTEST_TEST_CASE("contract: daemon.notify")
   DOCTEST_REQUIRE(r.ok);
 }
 
+DOCTEST_TEST_CASE("contract: daemon.shutdown fails closed without lifecycle owner")
+{
+  auto fb = make_fake();
+  CoreEngine core(&fb);
+  CoreRequest req{"t43-shutdown", "daemon.shutdown", {}};
+  auto r = core.handle(req, fb.capture_snapshot());
+  DOCTEST_REQUIRE(!r.ok);
+  DOCTEST_REQUIRE_EQ(r.error_code, "E_SHUTDOWN_UNAVAILABLE");
+}
+
 // --- ui automation ---
 
 DOCTEST_TEST_CASE("contract: ui.inspect")
