@@ -7,6 +7,7 @@
 // only framing/encryption; all protocol logic lives here.
 
 #include "server_state.hpp"
+#include "snapshot_store.hpp"
 #include "wininspect/core.hpp"
 #include "wininspect/compress.hpp"
 #include "wininspect/logger.hpp"
@@ -14,12 +15,6 @@
 using namespace wininspect;
 
 namespace wininspectd {
-
-  // Generate snapshot ID string from counter
-  inline std::string make_snap_id(std::uint64_t n)
-  {
-    return "s-" + std::to_string(n);
-  }
 
   // ── Helper: parameter extraction ────────────────────────────────────────────
   static std::optional<std::string> rh_get_str(const json::Object& o, const std::string& k)
@@ -174,13 +169,18 @@ namespace wininspectd {
 
       // ── events.subscribe ─────────────────────────────────────────────────
       if (req.method == "events.subscribe") {
+        auto snap = backend->capture_snapshot();
         std::string sid;
         {
-          auto snap = backend->capture_snapshot();
           std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(snap)));
-          st->lru_order.push_back(sid);
+          auto stored = store_snapshot_bounded_locked(st, std::move(snap));
+          if (!stored) {
+            resp.ok = false;
+            resp.error_code = "E_SNAPSHOT_LIMIT";
+            resp.error_message = "snapshot limit reached; all retained snapshots are pinned";
+            return true;
+          }
+          sid = *stored;
           session.subscribed = true;
           session.last_snap_id = sid;
           if (!session.id.empty()) {
@@ -311,25 +311,18 @@ namespace wininspectd {
 
       // ── snapshot.capture ─────────────────────────────────────────────────
       if (req.method == "snapshot.capture") {
-        auto s = backend->capture_snapshot();
+        auto snap = backend->capture_snapshot();
         std::string sid;
         {
           std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(s)));
-          st->lru_order.push_back(sid);
-          while (st->lru_order.size() > st->max_snapshots) {
-            std::string oldest = st->lru_order.front();
-            if (st->pinned_counts[oldest] > 0) {
-              st->lru_order.pop_front();
-              st->lru_order.push_back(oldest);
-              continue;
-            }
-            st->lru_order.pop_front();
-            st->snaps.erase(oldest);
-            st->pinned_counts.erase(oldest);
-            st->evicted_snaps.insert(oldest);
+          auto stored = store_snapshot_bounded_locked(st, std::move(snap));
+          if (!stored) {
+            resp.ok = false;
+            resp.error_code = "E_SNAPSHOT_LIMIT";
+            resp.error_message = "snapshot limit reached; all retained snapshots are pinned";
+            return true;
           }
+          sid = *stored;
         }
         json::Object o;
         o["snapshot_id"] = sid;
@@ -399,16 +392,17 @@ namespace wininspectd {
       // ── events.poll post-handle snapshot ─────────────────────────────────
       if (req.method == "events.poll" && resp.ok) {
         auto fresh = backend->capture_snapshot();
-        std::string sid;
-        {
-          std::lock_guard<std::mutex> lk(st->snapshots_mu);
-          sid = make_snap_id(st->snap_counter++);
-          st->snaps.emplace(sid, std::make_shared<Snapshot>(std::move(fresh)));
-          st->lru_order.push_back(sid);
-          session.last_snap_id = sid;
-          if (!session.id.empty())
-            st->sessions[session.id.val].last_snap_id = sid;
+        std::lock_guard<std::mutex> lk(st->snapshots_mu);
+        auto stored = store_snapshot_bounded_locked(st, std::move(fresh));
+        if (!stored) {
+          resp.ok = false;
+          resp.error_code = "E_SNAPSHOT_LIMIT";
+          resp.error_message = "snapshot limit reached; all retained snapshots are pinned";
+          return true;
         }
+        session.last_snap_id = *stored;
+        if (!session.id.empty())
+          st->sessions[session.id.val].last_snap_id = *stored;
       }
     }
     catch (const std::exception& e) {

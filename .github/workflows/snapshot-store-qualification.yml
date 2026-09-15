@@ -1,0 +1,154 @@
+name: Snapshot store qualification
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - '.projection/**'
+      - '.github/workflows/snapshot-store-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout public qualification branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Materialize qualification projection receipt
+        shell: pwsh
+        run: |
+          $manifestPath = '.projection/source-manifest.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 32
+          $execByPath = @{}
+          foreach ($entry in @($manifest.files)) {
+            $execByPath[[string]$entry.path] = [bool]$entry.executable
+          }
+
+          $sourceRoot = (Resolve-Path -LiteralPath 'source').Path
+          $files = @(
+            Get-ChildItem -LiteralPath $sourceRoot -File -Recurse -Force |
+              ForEach-Object {
+                $path = [IO.Path]::GetRelativePath($sourceRoot, $_.FullName).Replace('\', '/')
+                $exec = if ($execByPath.ContainsKey($path)) { [bool]$execByPath[$path] } else { $false }
+                [pscustomobject][ordered]@{
+                  path = $path
+                  sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                  bytes = [int64]$_.Length
+                  executable = $exec
+                }
+              } |
+              Sort-Object path
+          )
+
+          $canonicalLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($entry in $files) {
+            $canonicalLines.Add("$($entry.path)`t$($entry.bytes)`t$($entry.sha256)`t$($entry.executable.ToString().ToLowerInvariant())")
+          }
+          $canonicalText = (($canonicalLines | Sort-Object) -join "`n") + "`n"
+          $digestBytes = [Text.Encoding]::UTF8.GetBytes($canonicalText)
+          $projectionDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($digestBytes)).ToLowerInvariant()
+
+          $manifest.schemaVersion = 1
+          $manifest.projectionPolicyVersion = 1
+          $manifest.sourceAuthority = 'private-development'
+          $manifest.sourceCommitSha = '1c980c385094c32ebb2f9efa8869b3814a3bee48'
+          $manifest.authoritativeCandidate = $true
+          $manifest.fileCount = $files.Count
+          $manifest.files = $files
+          $manifest.projectionDigestSha256 = $projectionDigest
+          $manifest | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+
+          Write-Host "Qualification projection files: $($files.Count)"
+          Write-Host "Qualification projection digest: $projectionDigest"
+          Write-Host 'QUALIFICATION_MANIFEST_BASE64_BEGIN'
+          Write-Host ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $manifestPath))))
+          Write-Host 'QUALIFICATION_MANIFEST_BASE64_END'
+
+      - name: Validate generated projection receipt
+        shell: pwsh
+        run: ./scripts/Test-ProjectedSource.ps1
+
+      - name: Build exact projected runtime source
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
+
+      - name: Run public-safe bounded snapshot harness
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path qualification-harness -Force | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.22)
+          project(snapshot_store_qualification LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          add_executable(snapshot_store_qualification main.cpp)
+          target_include_directories(snapshot_store_qualification PRIVATE
+            ../source/core/include
+            ../source/daemon/src
+            ../source/daemon/include
+            ../source/third_party)
+          '@ | Set-Content -LiteralPath qualification-harness/CMakeLists.txt -Encoding utf8NoBOM
+
+          @'
+          #include "snapshot_store.hpp"
+          #include <iostream>
+
+          int main() {
+            using namespace wininspect;
+            using namespace wininspectd;
+
+            ServerState st;
+            st.max_snapshots = 2;
+            auto s1 = store_snapshot_bounded_locked(&st, Snapshot{});
+            auto s2 = store_snapshot_bounded_locked(&st, Snapshot{});
+            if (!s1 || !s2 || st.snaps.size() != 2) return 10;
+
+            auto s3 = store_snapshot_bounded_locked(&st, Snapshot{});
+            if (!s3 || st.snaps.size() != 2 || st.snaps.count(*s1) != 0 ||
+                st.snaps.count(*s2) != 1 || st.snaps.count(*s3) != 1 ||
+                st.evicted_snaps.count(*s1) != 1) return 20;
+
+            st.pinned_counts[*s2] = 1;
+            st.pinned_counts[*s3] = 1;
+            const auto counterBeforeBlocked = st.snap_counter;
+            auto blocked = store_snapshot_bounded_locked(&st, Snapshot{});
+            if (blocked || st.snap_counter != counterBeforeBlocked || st.snaps.size() != 2) return 30;
+
+            st.pinned_counts[*s3] = 0;
+            auto s4 = store_snapshot_bounded_locked(&st, Snapshot{});
+            if (!s4 || st.snaps.size() != 2 || st.snaps.count(*s2) != 1 ||
+                st.snaps.count(*s3) != 0 || st.snaps.count(*s4) != 1) return 40;
+
+            ServerState zero;
+            zero.max_snapshots = 0;
+            const auto zeroCounter = zero.snap_counter;
+            if (store_snapshot_bounded_locked(&zero, Snapshot{}) || zero.snap_counter != zeroCounter ||
+                !zero.snaps.empty()) return 50;
+
+            std::cout << "snapshot-store qualification PASS\n";
+            return 0;
+          }
+          '@ | Set-Content -LiteralPath qualification-harness/main.cpp -Encoding utf8NoBOM
+
+          cmake -S qualification-harness -B qualification-harness/build
+          if ($LASTEXITCODE -ne 0) { throw 'Harness configure failed.' }
+          cmake --build qualification-harness/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Harness build failed.' }
+          & qualification-harness/build/Release/snapshot_store_qualification.exe
+          if ($LASTEXITCODE -ne 0) { throw "Snapshot-store harness failed with exit code $LASTEXITCODE" }
+
+      - name: Record qualification boundary
+        shell: pwsh
+        run: |
+          Write-Host 'This run qualifies exact public-safe runtime blobs projected from private qualification commit 1c980c385094c32ebb2f9efa8869b3814a3bee48.'
+          Write-Host 'Private regression/formal assets are not present in this repository or workflow.'
+          Write-Host 'A successful run is build/runtime evidence only and grants no merge, release, or promotion authority.'
