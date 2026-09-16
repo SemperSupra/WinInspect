@@ -16,9 +16,15 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class KeyboardNative {
+    public const int GWL_STYLE = -16;
+    public const long WS_TABSTOP = 0x00010000L;
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
 }
 '@
 
@@ -35,6 +41,7 @@ function Get-FocusRecord {
         control_type = $c.ControlType.ProgrammaticName
         enabled = $c.IsEnabled
         offscreen = $c.IsOffscreen
+        is_keyboard_focusable = $c.IsKeyboardFocusable
         native_window_handle = $c.NativeWindowHandle
     }
 }
@@ -59,7 +66,12 @@ try {
         [System.Windows.Automation.AutomationElement]::NameProperty, 'Connect')
     $connect = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $connectCondition)
     if ($null -eq $connect) { throw 'Connect control not found through UI Automation.' }
-    if (-not $connect.Current.IsKeyboardFocusable) { throw 'Connect is not keyboard-focusable after keyboard-access normalization.' }
+
+    $connectHwnd = [IntPtr]::new([int64]$connect.Current.NativeWindowHandle)
+    if ($connectHwnd -eq [IntPtr]::Zero) { throw 'Connect UIA element did not expose a native window handle.' }
+    $connectStyle = [KeyboardNative]::GetWindowLongPtr($connectHwnd, [KeyboardNative]::GWL_STYLE).ToInt64()
+    $nativeTabStop = (($connectStyle -band [KeyboardNative]::WS_TABSTOP) -ne 0)
+    if (-not $nativeTabStop) { throw 'Connect does not carry the native WS_TABSTOP style after keyboard-access normalization.' }
 
     [KeyboardNative]::SetForegroundWindow($hwnd) | Out-Null
     $connect.SetFocus()
@@ -91,6 +103,9 @@ try {
         gui_path = $gui
         process_id = $process.Id
         main_window_handle = ('0x{0:X}' -f $hwnd.ToInt64())
+        connect_native_style = ('0x{0:X}' -f $connectStyle)
+        connect_native_tabstop = $nativeTabStop
+        connect_uia_keyboard_focusable = $connect.Current.IsKeyboardFocusable
         initial_focus = $initial
         after_tab = $forward
         after_shift_tab = $reverse
