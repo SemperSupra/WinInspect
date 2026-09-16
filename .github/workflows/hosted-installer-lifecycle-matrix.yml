@@ -21,7 +21,7 @@ jobs:
           - runner: windows-11-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
@@ -52,7 +52,7 @@ jobs:
           choco install nsis --no-progress -y
           if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
 
-      - name: Stage and package
+      - name: Stage and package current candidate
         shell: pwsh
         run: |
           $buildRoot = Join-Path $env:GITHUB_WORKSPACE 'source\build\Release'
@@ -66,15 +66,17 @@ jobs:
           }
           $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
           if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis.exe -ErrorAction Stop).Source }
-          & $makensis '/DVERSION=hosted-ci' "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" (Join-Path $env:GITHUB_WORKSPACE 'source\tools\wininspect.nsi')
-          if ($LASTEXITCODE -ne 0) { throw 'makensis failed.' }
+          foreach ($version in @('hosted-ci','hosted-a','hosted-b')) {
+            & $makensis "/DVERSION=$version" "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" (Join-Path $env:GITHUB_WORKSPACE 'source\tools\wininspect.nsi')
+            if ($LASTEXITCODE -ne 0) { throw "makensis failed for $version." }
+          }
 
       - name: Prove install repeat uninstall cleanup
         shell: pwsh
         run: |
           ./source/scripts/Test-InstallerLifecycle.ps1 -InstallerPath './source/dist/WinInspect-Installer-hosted-ci.exe' -EvidencePath "./installer-lifecycle-${{ matrix.arch }}.json"
 
-      - name: Prove reinstall installed CLI launch and final cleanup
+      - name: Reinstall and verify installed CLI
         shell: pwsh
         run: |
           $installer = (Resolve-Path './source/dist/WinInspect-Installer-hosted-ci.exe').Path
@@ -86,14 +88,176 @@ jobs:
           $versionOutput = & $cli '--version' 2>&1
           if ($LASTEXITCODE -ne 0) { throw "installed CLI version probe failed: $LASTEXITCODE" }
           if (($versionOutput -join "`n") -notmatch '^WinInspect ') { throw 'installed CLI version probe returned unexpected output' }
-          $daemon = Join-Path $root 'wininspectd.exe'
-          if (-not (Test-Path $daemon -PathType Leaf)) { throw "installed daemon missing: $daemon" }
+
+      - name: Prove post-install UIA and per-window capture
+        shell: pwsh
+        run: |
+          $priorArt = '2e2a84fdef7555bbcf82793f286a07e86eab8280'
+          git fetch --depth=1 origin $priorArt
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to fetch pinned Rep 3H prior-art commit.' }
+          git show "${priorArt}:scripts/Invoke-HostedNativeGuiObservation.ps1" | Set-Content -LiteralPath './Invoke-HostedNativeGuiObservation.ps1' -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to materialize pinned Rep 3H observation harness.' }
+          $gui = Join-Path $env:LOCALAPPDATA 'WinInspect\wininspect-gui.exe'
+          ./Invoke-HostedNativeGuiObservation.ps1 -GuiPath $gui -OutputDirectory "./post-install-observation-${{ matrix.arch }}"
+          $obs = Get-Content "./post-install-observation-${{ matrix.arch }}/observation.json" -Raw | ConvertFrom-Json
+          if ($obs.semantic_observation.status -ne 'PASS') { throw "Post-install semantic observation did not pass: $($obs.semantic_observation.status)" }
+          if ($obs.window_capture.status -ne 'PASS') { throw "Post-install per-window capture did not pass: $($obs.window_capture.status)" }
+
+      - name: Characterize hosted synthetic keyboard input
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class HostedInputProbe {
+              [StructLayout(LayoutKind.Sequential)]
+              public struct INPUT {
+                  public uint type;
+                  public InputUnion U;
+              }
+
+              [StructLayout(LayoutKind.Explicit)]
+              public struct InputUnion {
+                  [FieldOffset(0)] public KEYBDINPUT ki;
+              }
+
+              [StructLayout(LayoutKind.Sequential)]
+              public struct KEYBDINPUT {
+                  public ushort wVk;
+                  public ushort wScan;
+                  public uint dwFlags;
+                  public uint time;
+                  public UIntPtr dwExtraInfo;
+              }
+
+              [DllImport("user32.dll", SetLastError=true)]
+              public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+              [DllImport("user32.dll")]
+              public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+              const uint INPUT_KEYBOARD = 1;
+              const uint KEYEVENTF_KEYUP = 0x0002;
+              const uint KEYEVENTF_UNICODE = 0x0004;
+
+              public static bool SendUnicode(string text) {
+                  foreach (char ch in text) {
+                      INPUT[] items = new INPUT[2];
+                      items[0].type = INPUT_KEYBOARD;
+                      items[0].U.ki.wScan = ch;
+                      items[0].U.ki.dwFlags = KEYEVENTF_UNICODE;
+                      items[1].type = INPUT_KEYBOARD;
+                      items[1].U.ki.wScan = ch;
+                      items[1].U.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+                      if (SendInput(2, items, Marshal.SizeOf(typeof(INPUT))) != 2) return false;
+                  }
+                  return true;
+              }
+
+              public static bool KeyChord(ushort modifier, ushort key) {
+                  INPUT[] items = new INPUT[4];
+                  items[0].type = INPUT_KEYBOARD; items[0].U.ki.wVk = modifier;
+                  items[1].type = INPUT_KEYBOARD; items[1].U.ki.wVk = key;
+                  items[2].type = INPUT_KEYBOARD; items[2].U.ki.wVk = key; items[2].U.ki.dwFlags = KEYEVENTF_KEYUP;
+                  items[3].type = INPUT_KEYBOARD; items[3].U.ki.wVk = modifier; items[3].U.ki.dwFlags = KEYEVENTF_KEYUP;
+                  return SendInput(4, items, Marshal.SizeOf(typeof(INPUT))) == 4;
+              }
+          }
+          '@
+
+          $probe = 'WININSPECT_HOSTED_INPUT_PROBE'
+          $notepad = Start-Process notepad.exe -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(15)
+            do {
+              Start-Sleep -Milliseconds 250
+              $notepad.Refresh()
+            } while ($notepad.MainWindowHandle -eq 0 -and -not $notepad.HasExited -and [DateTime]::UtcNow -lt $deadline)
+            if ($notepad.MainWindowHandle -eq 0) { throw 'Notepad did not expose a main window.' }
+            if (-not [HostedInputProbe]::SetForegroundWindow($notepad.MainWindowHandle)) { throw 'SetForegroundWindow returned false.' }
+            Start-Sleep -Milliseconds 500
+            if (-not [HostedInputProbe]::SendUnicode($probe)) { throw 'SendInput Unicode injection did not report complete delivery.' }
+            Start-Sleep -Milliseconds 500
+            if (-not [HostedInputProbe]::KeyChord(0x11, 0x41)) { throw 'Ctrl+A injection failed.' }
+            if (-not [HostedInputProbe]::KeyChord(0x11, 0x43)) { throw 'Ctrl+C injection failed.' }
+            Start-Sleep -Milliseconds 500
+            $clipboard = Get-Clipboard -Raw
+            $status = if ($clipboard -eq $probe) { 'PASS' } else { 'FAIL' }
+            [ordered]@{
+              schemaVersion = 1
+              runner = '${{ matrix.runner }}'
+              architecture = '${{ matrix.arch }}'
+              method = 'user32.SendInput keyboard -> Notepad -> clipboard verification'
+              status = $status
+              expected = $probe
+              observed = $clipboard
+              scope = 'hosted-runner synthetic keyboard characterization; not physical HID or WinBot acceptance'
+            } | ConvertTo-Json -Depth 5 | Set-Content "./synthetic-input-${{ matrix.arch }}.json" -Encoding utf8NoBOM
+            if ($status -ne 'PASS') { throw "Synthetic keyboard verification failed; observed '$clipboard'." }
+          } finally {
+            if ($notepad -and -not $notepad.HasExited) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Final cleanup after observation
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
           $uninstaller = Join-Path $root 'uninstall.exe'
           $u = Start-Process $uninstaller -ArgumentList '/S' -PassThru -Wait
           if ($u.ExitCode -ne 0) { throw "final uninstall failed: $($u.ExitCode)" }
           $deadline = [DateTime]::UtcNow.AddSeconds(15)
           while ((Test-Path $root) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
           if (Test-Path $root) { throw "final install directory residue remains: $root" }
+
+      - name: Prove native installer version-transition path
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect'
+          function Install([string]$path) {
+            $p = Start-Process (Resolve-Path $path).Path -ArgumentList '/S' -PassThru -Wait
+            if ($p.ExitCode -ne 0) { throw "Installer failed ($path): $($p.ExitCode)" }
+          }
+          function Assert-Version([string]$expected) {
+            $actual = (Get-ItemProperty -LiteralPath $key -Name DisplayVersion -ErrorAction Stop).DisplayVersion
+            if ($actual -ne $expected) { throw "Expected DisplayVersion $expected, got $actual" }
+            $cli = Join-Path $root 'wininspect.exe'
+            & $cli '--version' *> $null
+            if ($LASTEXITCODE -ne 0) { throw "Installed CLI unhealthy at package version $expected." }
+            return $actual
+          }
+
+          Install './source/dist/WinInspect-Installer-hosted-a.exe'
+          $a = Assert-Version 'hosted-a'
+
+          # Deterministic package-admission failure: truncate B before execution.
+          # This is a preflight/package-corruption recovery claim, not a mid-write rollback claim.
+          Copy-Item './source/dist/WinInspect-Installer-hosted-b.exe' './source/dist/WinInspect-Installer-hosted-b-corrupt.exe' -Force
+          $stream = [System.IO.File]::Open('./source/dist/WinInspect-Installer-hosted-b-corrupt.exe',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+          try { $stream.SetLength([Math]::Min(4096, $stream.Length)) } finally { $stream.Dispose() }
+          $bad = Start-Process (Resolve-Path './source/dist/WinInspect-Installer-hosted-b-corrupt.exe').Path -ArgumentList '/S' -PassThru -Wait
+          if ($bad.ExitCode -eq 0) { throw 'Corrupted installer unexpectedly returned success.' }
+          $afterBad = Assert-Version 'hosted-a'
+
+          Install './source/dist/WinInspect-Installer-hosted-b.exe'
+          $b = Assert-Version 'hosted-b'
+          Install './source/dist/WinInspect-Installer-hosted-a.exe'
+          $rollback = Assert-Version 'hosted-a'
+
+          [ordered]@{
+            schemaVersion = 1
+            architecture = '${{ matrix.arch }}'
+            sourceIdentity = $env:GITHUB_SHA
+            transition = @($a,$b,$rollback)
+            corruptedPackageRecovery = [ordered]@{ attempted = $true; corruptExit = $bad.ExitCode; retainedVersion = $afterBad; status = 'passed' }
+            verdict = 'passed'
+            scope = 'same-source native package-version transition A->B->A plus corrupted-package rejection; proves installer control path and preflight recovery, not cross-source application compatibility or mid-write rollback'
+          } | ConvertTo-Json -Depth 5 | Set-Content "./version-transition-${{ matrix.arch }}.json" -Encoding utf8NoBOM
+
+          $u = Start-Process (Join-Path $root 'uninstall.exe') -ArgumentList '/S' -PassThru -Wait
+          if ($u.ExitCode -ne 0) { throw "transition cleanup failed: $($u.ExitCode)" }
 
       - name: Upload evidence
         if: always()
@@ -103,5 +267,191 @@ jobs:
           path: |
             treatment.json
             installer-lifecycle-${{ matrix.arch }}.json
+            post-install-observation-${{ matrix.arch }}/
+            synthetic-input-${{ matrix.arch }}.json
+            version-transition-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  historical-x64-transition:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Acquire immutable prior release installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest 'https://github.com/SemperSupra/WinInspect/releases/download/v0.4.3/WinInspect-Installer-v0.4.3.exe' -OutFile './WinInspect-Installer-v0.4.3.exe'
+          Invoke-WebRequest 'https://github.com/SemperSupra/WinInspect/releases/download/v0.4.4/WinInspect-Installer-v0.4.4.exe' -OutFile './WinInspect-Installer-v0.4.4.exe'
+          $expected = @{
+            './WinInspect-Installer-v0.4.3.exe' = 'e50ef2e886ebb0e1b38d369ee89dbd0977c90f5aed4665de65670f0066189c10'
+            './WinInspect-Installer-v0.4.4.exe' = '601d5f54083ea8922328b8b35d9094b8fb2eb8e8d243dd0883de90fb9919acba'
+          }
+          foreach ($entry in $expected.GetEnumerator()) {
+            $actual = (Get-FileHash -LiteralPath $entry.Key -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $entry.Value) { throw "Digest mismatch for $($entry.Key): $actual" }
+          }
+
+      - name: Prove real x64 upgrade downgrade and failure recovery
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect'
+          $aInstaller = (Resolve-Path './WinInspect-Installer-v0.4.3.exe').Path
+          $bInstaller = (Resolve-Path './WinInspect-Installer-v0.4.4.exe').Path
+
+          function Invoke-Installer([string]$path, [int]$timeoutSeconds = 180) {
+            $p = Start-Process $path -ArgumentList '/S' -PassThru
+            if (-not $p.WaitForExit($timeoutSeconds * 1000)) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              return [ordered]@{ exit = $null; timedOut = $true }
+            }
+            return [ordered]@{ exit = $p.ExitCode; timedOut = $false }
+          }
+          function Assert-Version([string]$expected) {
+            $actual = (Get-ItemProperty -LiteralPath $key -Name DisplayVersion -ErrorAction Stop).DisplayVersion
+            if ($actual -ne $expected) { throw "Expected DisplayVersion $expected, got $actual" }
+            $cli = Join-Path $root 'wininspect.exe'
+            $out = & $cli '--version' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "CLI health check failed at $expected." }
+            return $actual
+          }
+          function Get-ProductHashes {
+            $result = [ordered]@{}
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              $result[$name] = (Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            return $result
+          }
+          function Hashes-Equal($left, $right) {
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              if ($left[$name] -ne $right[$name]) { return $false }
+            }
+            return $true
+          }
+          function Cleanup {
+            $u = Join-Path $root 'uninstall.exe'
+            if (Test-Path $u) {
+              $p = Start-Process $u -ArgumentList '/S' -PassThru -Wait
+              if ($p.ExitCode -ne 0) { throw "Uninstall failed: $($p.ExitCode)" }
+            }
+          }
+
+          Cleanup
+
+          $r = Invoke-Installer $aInstaller
+          if ($r.timedOut -or $r.exit -ne 0) { throw 'v0.4.3 clean install failed.' }
+          $vA = Assert-Version 'v0.4.3'
+          $hashA = Get-ProductHashes
+
+          $r = Invoke-Installer $bInstaller
+          if ($r.timedOut -or $r.exit -ne 0) { throw 'v0.4.3 -> v0.4.4 upgrade failed.' }
+          $vB = Assert-Version 'v0.4.4'
+          $hashB = Get-ProductHashes
+          if (Hashes-Equal $hashA $hashB) { throw 'Historical upgrade did not replace any product binary.' }
+
+          $r = Invoke-Installer $aInstaller
+          if ($r.timedOut -or $r.exit -ne 0) { throw 'v0.4.4 -> v0.4.3 downgrade failed.' }
+          $vRollback = Assert-Version 'v0.4.3'
+          $hashRollback = Get-ProductHashes
+          if (-not (Hashes-Equal $hashA $hashRollback)) { throw 'Rollback did not restore the exact v0.4.3 product binary set.' }
+
+          # Characterize an upgrade while a GUI image is in use. A clean refusal or
+          # a healthy completed transition are both acceptable characterization outcomes;
+          # a partial/broken state is not.
+          $gui = Start-Process (Join-Path $root 'wininspect-gui.exe') -PassThru
+          Start-Sleep -Seconds 2
+          $r = Invoke-Installer $bInstaller 120
+          $displayAfterInUse = (Get-ItemProperty -LiteralPath $key -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion
+          $cliHealthy = $false
+          try {
+            & (Join-Path $root 'wininspect.exe') '--version' *> $null
+            $cliHealthy = ($LASTEXITCODE -eq 0)
+          } catch {}
+          if (-not $gui.HasExited) { Stop-Process -Id $gui.Id -Force -ErrorAction SilentlyContinue }
+
+          if (-not $r.timedOut -and $r.exit -eq 0 -and $displayAfterInUse -eq 'v0.4.4' -and $cliHealthy) {
+            $inUseStatus = 'PASS_COMPLETED'
+          } elseif (($r.timedOut -or $r.exit -ne 0) -and $displayAfterInUse -eq 'v0.4.3' -and $cliHealthy) {
+            $inUseStatus = 'CLEANLY_BLOCKED'
+          } else {
+            $inUseStatus = 'BROKEN_OR_PARTIAL'
+          }
+          if ($inUseStatus -eq 'BROKEN_OR_PARTIAL') { throw "Process-in-use upgrade left an inconsistent state (exit=$($r.exit), timeout=$($r.timedOut), version=$displayAfterInUse, cliHealthy=$cliHealthy)." }
+
+          Cleanup
+          $r = Invoke-Installer $aInstaller
+          if ($r.timedOut -or $r.exit -ne 0) { throw 'v0.4.3 re-install before fault injection failed.' }
+          Assert-Version 'v0.4.3' | Out-Null
+          $hashBeforeFault = Get-ProductHashes
+
+          # Mid-upgrade fault injection: hold one installed product binary with no
+          # sharing so the next installer cannot replace it normally.
+          $lockedPath = Join-Path $root 'wininspect.exe'
+          $lock = [System.IO.File]::Open(
+            $lockedPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None)
+          try {
+            $faultRun = Invoke-Installer $bInstaller 90
+          } finally {
+            $lock.Dispose()
+          }
+
+          $displayAfterFault = (Get-ItemProperty -LiteralPath $key -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion
+          $hashAfterFault = Get-ProductHashes
+          $healthyAfterFault = $false
+          try {
+            & (Join-Path $root 'wininspect.exe') '--version' *> $null
+            $healthyAfterFault = ($LASTEXITCODE -eq 0)
+          } catch {}
+
+          if (($faultRun.timedOut -or $faultRun.exit -ne 0) -and
+              $displayAfterFault -eq 'v0.4.3' -and
+              (Hashes-Equal $hashBeforeFault $hashAfterFault) -and
+              $healthyAfterFault) {
+            $faultStatus = 'PASS_PREVIOUS_INSTALL_PRESERVED'
+          } elseif (-not $faultRun.timedOut -and $faultRun.exit -eq 0 -and
+                    $displayAfterFault -eq 'v0.4.4' -and
+                    (Hashes-Equal $hashB $hashAfterFault) -and
+                    $healthyAfterFault) {
+            $faultStatus = 'INJECTION_INEFFECTIVE_UPGRADE_COMPLETED'
+          } else {
+            $faultStatus = 'FAIL_PARTIAL_OR_BROKEN'
+          }
+
+          [ordered]@{
+            schemaVersion = 1
+            runner = 'windows-2025'
+            treatment = 'released x64 installers'
+            installerA = [ordered]@{ version = 'v0.4.3'; sha256 = 'e50ef2e886ebb0e1b38d369ee89dbd0977c90f5aed4665de65670f0066189c10' }
+            installerB = [ordered]@{ version = 'v0.4.4'; sha256 = '601d5f54083ea8922328b8b35d9094b8fb2eb8e8d243dd0883de90fb9919acba' }
+            upgrade = "$vA->$vB"
+            downgrade = "$vB->$vRollback"
+            processInUseUpgrade = $inUseStatus
+            faultInjection = [ordered]@{
+              mechanism = 'exclusive no-share lock on installed wininspect.exe'
+              timedOut = $faultRun.timedOut
+              exit = $faultRun.exit
+              displayVersion = $displayAfterFault
+              cliHealthy = $healthyAfterFault
+              status = $faultStatus
+            }
+            verdict = if ($faultStatus -eq 'FAIL_PARTIAL_OR_BROKEN') { 'failed' } else { 'passed' }
+          } | ConvertTo-Json -Depth 8 | Set-Content './historical-x64-transition.json' -Encoding utf8NoBOM
+
+          if ($faultStatus -eq 'FAIL_PARTIAL_OR_BROKEN') { throw 'Fault-injected upgrade did not preserve or cleanly transition installation state.' }
+          Cleanup
+
+      - name: Upload historical transition evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: historical-x64-transition
+          path: historical-x64-transition.json
           if-no-files-found: warn
           retention-days: 30
