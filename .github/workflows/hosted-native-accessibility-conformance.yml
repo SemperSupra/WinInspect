@@ -6,6 +6,7 @@ on:
       - 'source/**'
       - 'experiments/Apply-HostedNativeHciRepair.ps1'
       - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
       - 'scripts/Invoke-AxeWindowsConformance.ps1'
       - '.github/workflows/hosted-native-accessibility-conformance.yml'
   workflow_dispatch:
@@ -39,6 +40,7 @@ jobs:
         run: |
           ./experiments/Apply-HostedNativeHciRepair.ps1
           ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'HCI candidate introduced whitespace errors.' }
 
