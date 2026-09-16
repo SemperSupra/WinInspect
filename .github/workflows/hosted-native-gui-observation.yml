@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'source/**'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
       - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
       - 'scripts/Get-PeExecutionMode.ps1'
       - '.github/workflows/hosted-native-gui-observation.yml'
@@ -38,6 +39,14 @@ jobs:
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply fail-closed HCI repair
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeHciRepair.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'HCI repair introduced whitespace errors.' }
+          git diff -- source/clients/gui/src/gui_main.cpp
 
       - name: Record runner identity
         shell: pwsh
@@ -93,6 +102,20 @@ jobs:
           if (-not $gui) { throw 'wininspect-gui.exe not found after successful build.' }
           ./scripts/Invoke-HostedNativeGuiObservation.ps1 -GuiPath $gui.FullName -OutputDirectory evidence
 
+      - name: Assert disconnected recovery affordances
+        shell: pwsh
+        run: |
+          if (-not (Test-Path evidence/uia-tree.json)) { throw 'UIA evidence missing.' }
+          $uia = Get-Content evidence/uia-tree.json -Raw | ConvertFrom-Json
+          $names = @($uia | ForEach-Object { $_.name })
+          foreach ($expected in @('Connect','Refresh','Highlight','Start Daemon')) {
+            if ($names -notcontains $expected) { throw "Expected visible affordance '$expected' missing from UIA tree." }
+          }
+          if (-not ($names | Where-Object { $_ -like '*Daemon unavailable*start daemon*' })) {
+            throw 'Actionable disconnected status was not exposed through UI Automation.'
+          }
+          Write-Host 'Disconnected recovery affordances are semantically observable.'
+
       - name: Emit qualification summary
         if: always()
         shell: pwsh
@@ -101,7 +124,7 @@ jobs:
             $o = Get-Content evidence/observation.json -Raw | ConvertFrom-Json
             $pe = Get-Content evidence/pe-execution.json -Raw | ConvertFrom-Json
             @"
-          ### Hosted native observation — ${{ matrix.name }}
+          ### Hosted native HCI observation — ${{ matrix.name }}
 
           - treatment: `${{ matrix.treatment }}`
           - runner: `${{ matrix.runner }}`
@@ -112,20 +135,18 @@ jobs:
           - semantic elements: `$($o.semantic_observation.element_count)`
           - window capture: `$($o.window_capture.status)`
           - interactive input: `$($o.interactive_input.status)`
-          - IsWow64Process2 process machine: `$($o.target.process_machine)` (supplemental; not used to classify Windows-on-Arm execution)
-          - native machine: `$($o.target.native_machine)`
 
-          This is hosted-native characterization evidence only. It does not establish controlled interactive WinBot/native-desktop acceptance.
+          This rep validates hosted-native rendering and semantic affordances only. It does not establish controlled interactive WinBot/native-desktop acceptance.
           "@ >> $env:GITHUB_STEP_SUMMARY
           } else {
-            "### Hosted native observation — ${{ matrix.name }}`n`nComplete architecture/observation evidence was not produced; inspect build/job logs." >> $env:GITHUB_STEP_SUMMARY
+            "### Hosted native HCI observation — ${{ matrix.name }}`n`nComplete architecture/observation evidence was not produced; inspect build/job logs." >> $env:GITHUB_STEP_SUMMARY
           }
 
       - name: Upload observation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: hosted-native-observation-${{ matrix.name }}
+          name: hosted-native-hci-observation-${{ matrix.name }}
           path: evidence/
           if-no-files-found: warn
           retention-days: 14
