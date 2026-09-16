@@ -8,6 +8,7 @@ on:
       - 'experiments/Normalize-HostedNativeHciLayout.ps1'
       - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
       - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'experiments/Normalize-HostedNativeDpiScaling.ps1'
       - 'scripts/Invoke-HostedNativeDpiConformance.ps1'
       - '.github/workflows/hosted-native-dpi-conformance.yml'
   workflow_dispatch:
@@ -36,15 +37,16 @@ jobs:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Apply current HCI candidate
+      - name: Apply HCI and reversible DPI candidate
         shell: pwsh
         run: |
           ./experiments/Apply-HostedNativeHciRepair.ps1
           ./experiments/Normalize-HostedNativeHciLayout.ps1
           ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
           ./experiments/Normalize-HostedNativeAccessibleNames.ps1
+          ./experiments/Normalize-HostedNativeDpiScaling.ps1
           git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'HCI candidate introduced whitespace errors.' }
+          if ($LASTEXITCODE -ne 0) { throw 'DPI candidate introduced whitespace errors.' }
 
       - name: Configure GUI
         shell: pwsh
