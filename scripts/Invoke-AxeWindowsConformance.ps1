@@ -37,15 +37,6 @@ if (args.Length != 2)
     return 64;
 }
 
-static class Native
-{
-    public const uint BM_CLICK = 0x00F5;
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetDlgItem(IntPtr parent, int id);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
-}
-
 var guiPath = Path.GetFullPath(args[0]);
 var outputDirectory = Path.GetFullPath(args[1]);
 Directory.CreateDirectory(outputDirectory);
@@ -147,6 +138,15 @@ finally
         try { process.Kill(entireProcessTree: true); } catch { }
         try { process.WaitForExit(5000); } catch { }
     }
+}
+
+static class Native
+{
+    public const uint BM_CLICK = 0x00F5;
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetDlgItem(IntPtr parent, int id);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 }
 '@
 
