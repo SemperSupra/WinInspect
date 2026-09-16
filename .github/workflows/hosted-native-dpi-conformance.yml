@@ -9,6 +9,7 @@ on:
       - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
       - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
       - 'experiments/Normalize-HostedNativeDpiScaling.ps1'
+      - 'experiments/Normalize-HostedNativeAllPanelDpi.ps1'
       - 'scripts/Invoke-HostedNativeDpiConformance.ps1'
       - '.github/workflows/hosted-native-dpi-conformance.yml'
   workflow_dispatch:
@@ -45,6 +46,7 @@ jobs:
           ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
           ./experiments/Normalize-HostedNativeAccessibleNames.ps1
           ./experiments/Normalize-HostedNativeDpiScaling.ps1
+          ./experiments/Normalize-HostedNativeAllPanelDpi.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'DPI candidate introduced whitespace errors.' }
 
@@ -79,8 +81,9 @@ jobs:
           - status: `$($d.status)`
           - sequence: `96 → 144 → 192 → 96 DPI`
           - initial Windows-reported DPI: `$($d.reported_initial_dpi)`
+          - all realized panels exercised: `true`
 
-          This deterministic rep exercises WinInspect's WM_DPICHANGED contract, including reversibility. It is not a physical mixed-DPI multi-monitor acceptance test.
+          This deterministic rep exercises WinInspect's WM_DPICHANGED contract and all realized GUI panels, including reversibility. It is not a physical mixed-DPI multi-monitor acceptance test.
           "@ >> $env:GITHUB_STEP_SUMMARY
           } else {
             "### Hosted native DPI conformance — ${{ matrix.name }}`n`nNo DPI evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
