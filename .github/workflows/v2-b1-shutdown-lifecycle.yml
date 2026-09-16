@@ -35,6 +35,7 @@ jobs:
         shell: pwsh
         run: |
           ./experiments/Normalize-V2B1ProjectedBaseline.ps1
+          New-Item -ItemType Directory -Force -Path source/tests | Out-Null
           ./experiments/Apply-V2B1ShutdownCandidate.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Candidate transform introduced whitespace errors.' }
