@@ -67,10 +67,6 @@ jobs:
         run: |
           $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
           if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationClientsideProviders
-          $providerAssembly = [Reflection.Assembly]::Load('UIAutomationClientsideProviders')
-          [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providerAssembly.GetName())
           ./scripts/Invoke-HostedNativeKeyboardConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/keyboard-conformance.json'
 
       - name: Emit keyboard summary
@@ -88,11 +84,11 @@ jobs:
           - realized panels exercised: `$($k.tab_count)`
           - panel passes: `$passed`
           - panel failures: `$failed`
-          - semantic UIA provider: `UIAutomationClientsideProviders`
           - focus observation: `$($k.focus_observation)`
           - input delivery: `$($k.input_delivery)`
+          - UIA projection: diagnostic only; semantic accessibility is independently gated by Axe.Windows
 
-          This directly exercises hosted-native Win32 keyboard traversal across every realized panel and separates native focus evidence from semantic UI Automation evidence. It remains distinct from controlled interactive WinBot/native-desktop acceptance.
+          This directly exercises hosted-native Win32 native focus and Tab/Shift+Tab traversal across every realized panel. It remains distinct from controlled interactive WinBot/native-desktop acceptance.
           "@ >> $env:GITHUB_STEP_SUMMARY
           } else {
             "### Hosted native keyboard conformance — ${{ matrix.name }}`n`nNo keyboard evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
