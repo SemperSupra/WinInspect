@@ -1,7 +1,7 @@
 diff --git a/source/tools/wininspect.nsi b/source/tools/wininspect.nsi
 --- a/source/tools/wininspect.nsi
 +++ b/source/tools/wininspect.nsi
-@@ -350,6 +350,52 @@ skip_zip:
+@@ -350,6 +350,55 @@ skip_zip:
    StrCpy $existing_method "none"
  FunctionEnd
  
@@ -57,7 +57,7 @@ diff --git a/source/tools/wininspect.nsi b/source/tools/wininspect.nsi
 +
  ; ── Initialization (after sections so section constants are available) ───────
  Function .onInit
-@@ -482,9 +528,12 @@ upgrade_ok:
+@@ -482,8 +531,11 @@ upgrade_ok:
      ${EndIf}
    ${EndIf}
  
