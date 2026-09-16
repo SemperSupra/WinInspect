@@ -1,0 +1,120 @@
+name: Hosted native GUI observation
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
+      - '.github/workflows/hosted-native-gui-observation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-native-server2025
+            runner: windows-2025
+            cmake_arch: x64
+            treatment: native-x64
+          - name: arm64-native-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+            treatment: native-arm64
+          - name: x64-prism-win11-arm
+            runner: windows-11-vs2026-arm
+            cmake_arch: x64
+            treatment: x64-on-arm64-prism
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record runner identity
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          [ordered]@{
+            treatment = '${{ matrix.treatment }}'
+            runner_label = '${{ matrix.runner }}'
+            requested_build_arch = '${{ matrix.cmake_arch }}'
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+            runner_arch = $env:RUNNER_ARCH
+            processor_architecture = $env:PROCESSOR_ARCHITECTURE
+            processor_architew6432 = $env:PROCESSOR_ARCHITEW6432
+            os_caption = $os.Caption
+            os_version = $os.Version
+            os_build = $os.BuildNumber
+            os_architecture = $os.OSArchitecture
+            cpu_name = $cpu.Name
+            cpu_architecture = $cpu.Architecture
+            process_session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+            user_interactive = [Environment]::UserInteractive
+            timestamp_utc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 6 | Set-Content evidence/runner.json -Encoding utf8
+          Get-Content evidence/runner.json
+
+      - name: Configure projected WinInspect
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build GUI and daemon
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui wininspectd --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI/daemon build failed.' }
+          Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object FullName,Length
+
+      - name: Observe GUI through hosted native Windows surfaces
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after successful build.' }
+          ./scripts/Invoke-HostedNativeGuiObservation.ps1 -GuiPath $gui.FullName -OutputDirectory evidence
+
+      - name: Emit qualification summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/observation.json) {
+            $o = Get-Content evidence/observation.json -Raw | ConvertFrom-Json
+            @"
+          ### Hosted native observation — ${{ matrix.name }}
+
+          - treatment: `${{ matrix.treatment }}`
+          - runner: `${{ matrix.runner }}`
+          - semantic observation: `$($o.semantic_observation.status)`
+          - semantic elements: `$($o.semantic_observation.element_count)`
+          - window capture: `$($o.window_capture.status)`
+          - interactive input: `$($o.interactive_input.status)`
+          - target process machine: `$($o.target.process_machine)`
+          - native machine: `$($o.target.native_machine)`
+          - emulated: `$($o.target.emulated)`
+
+          This is hosted-native characterization evidence only. It does not establish controlled interactive WinBot/native-desktop acceptance.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### Hosted native observation — ${{ matrix.name }}`n`nNo observation.json was produced; inspect build/job logs." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload observation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-observation-${{ matrix.name }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
