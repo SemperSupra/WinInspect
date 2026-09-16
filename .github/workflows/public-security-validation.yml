@@ -92,9 +92,10 @@ jobs:
         shell: pwsh
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/microsoft/Windows-driver-samples.git wds
-          if ($LASTEXITCODE -ne 0) { throw 'clone failed' }
-          git -C wds checkout $env:WDS_SHA -- packages.config Directory.Build.props Directory.Build.targets Build-Samples.ps1 Get-NtTargetVersions.ps1 exclusions.csv hid/vhidmini2
-          if ($LASTEXITCODE -ne 0) { throw 'pinned checkout failed' }
+          if ($LASTEXITCODE -ne 0) { throw "clone failed: $LASTEXITCODE" }
+          git -C wds checkout $env:WDS_SHA
+          if ($LASTEXITCODE -ne 0) { throw "pinned checkout failed: $LASTEXITCODE" }
+          if (-not (Test-Path wds/packages.config)) { throw 'packages.config missing after pinned checkout' }
 
       - name: Restore WDK NuGet packages
         shell: pwsh
@@ -127,11 +128,11 @@ jobs:
             $result.attempted = $true
             $result.inf = $inf.FullName
             $lines = & pnputil.exe /add-driver $inf.FullName /install 2>&1
-            $result.exit_code = $LASTEXITCODE
+            $code = $LASTEXITCODE
+            $result.exit_code = $code
             $result.output = @($lines | ForEach-Object { "$_" })
-            if ($LASTEXITCODE -eq 0) {
-              $result.classification = 'hosted-runner-driver-install-accepted'
-            } else {
+            if ($code -eq 0) { $result.classification='hosted-runner-driver-install-accepted' }
+            else {
               $joined = $result.output -join "`n"
               if ($joined -match 'signature|signed|publisher|hash') { $result.classification='hosted-runner-signing-boundary' }
               elseif ($joined -match 'reboot|restart') { $result.classification='hosted-runner-reboot-boundary' }
