@@ -13,6 +13,10 @@ on:
       - '.github/workflows/hosted-native-gui-observation.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -114,8 +118,6 @@ jobs:
           if (-not (Test-Path evidence/uia-tree.json)) { throw 'UIA evidence missing.' }
           $uia = Get-Content evidence/uia-tree.json -Raw | ConvertFrom-Json
           $names = @($uia | ForEach-Object { $_.name })
-          # Accessible-name conformance is owned by the independent Axe.Windows lane.
-          # This observation lane retains only rendering/recovery/layout invariants.
           foreach ($expected in @('Connect','Refresh','Highlight','Start Daemon')) {
             if ($names -notcontains $expected) { throw "Expected visible/semantic affordance '$expected' missing from UIA tree." }
           }
