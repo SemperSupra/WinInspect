@@ -6,6 +6,7 @@ on:
       - 'source/**'
       - 'experiments/Apply-HostedNativeHciRepair.ps1'
       - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
       - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
       - 'scripts/Get-PeExecutionMode.ps1'
       - '.github/workflows/hosted-native-gui-observation.yml'
@@ -46,6 +47,7 @@ jobs:
         run: |
           ./experiments/Apply-HostedNativeHciRepair.ps1
           ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'HCI repair introduced whitespace errors.' }
           git diff -- source/clients/gui/src/gui_main.cpp
