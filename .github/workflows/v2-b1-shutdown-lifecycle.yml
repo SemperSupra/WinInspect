@@ -1,0 +1,122 @@
+name: V2-B1 daemon shutdown lifecycle
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/v2-b1-daemon-shutdown-lifecycle.patch'
+      - '.github/workflows/v2-b1-shutdown-lifecycle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            arch: ARM64
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply exact V2-B1 candidate
+        shell: pwsh
+        run: |
+          git apply --check experiments/v2-b1-daemon-shutdown-lifecycle.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate patch does not apply exactly to projected source.' }
+          git apply experiments/v2-b1-daemon-shutdown-lifecycle.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate patch application failed.' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate patch introduced whitespace errors.' }
+          if (Select-String -Path source/core/src/core.cpp -SimpleMatch 'std::exit(0)' -Quiet) {
+            throw 'Historical out-of-band std::exit shutdown bypass remains in core.cpp.'
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.arch }}' -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build focused lifecycle targets
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspectd test_daemon_shutdown_lifecycle --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Focused V2-B1 build failed.' }
+
+      - name: Run two-phase lifecycle unit regression
+        shell: pwsh
+        run: |
+          & ./build/Release/test_daemon_shutdown_lifecycle.exe
+          if ($LASTEXITCODE -ne 0) { throw 'V2-B1 lifecycle unit regression failed.' }
+
+      - name: Exercise real named-pipe shutdown response and process teardown
+        shell: pwsh
+        run: |
+          $daemon = (Resolve-Path './build/Release/wininspectd.exe').Path
+          $log = Join-Path $env:RUNNER_TEMP 'v2-b1-daemon.log'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless','--no-config','--no-discovery','--log-file',$log -PassThru
+          try {
+            $pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', 'wininspectd', [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None)
+            try {
+              $pipe.Connect(10000)
+              $json = '{"id":"v2-b1","method":"daemon.shutdown","params":{}}'
+              $payload = [Text.Encoding]::UTF8.GetBytes($json)
+              $len = [BitConverter]::GetBytes([uint32]$payload.Length)
+              $pipe.Write($len, 0, $len.Length)
+              $pipe.Write($payload, 0, $payload.Length)
+              $pipe.Flush()
+
+              $lenBuf = New-Object byte[] 4
+              $read = $pipe.Read($lenBuf, 0, 4)
+              if ($read -ne 4) { throw "Expected 4 response length bytes, got $read." }
+              $responseLength = [BitConverter]::ToUInt32($lenBuf, 0)
+              if ($responseLength -le 0 -or $responseLength -gt 1048576) { throw "Invalid response length $responseLength." }
+              $buf = New-Object byte[] $responseLength
+              $offset = 0
+              while ($offset -lt $responseLength) {
+                $n = $pipe.Read($buf, $offset, $responseLength - $offset)
+                if ($n -le 0) { throw 'Pipe closed before complete shutdown response.' }
+                $offset += $n
+              }
+              $responseText = [Text.Encoding]::UTF8.GetString($buf)
+              $response = $responseText | ConvertFrom-Json
+              if (-not $response.ok) { throw "daemon.shutdown returned failure: $responseText" }
+              Write-Host "shutdown_response=$responseText"
+            } finally {
+              $pipe.Dispose()
+            }
+
+            if (-not $p.WaitForExit(15000)) {
+              throw 'Daemon did not complete graceful teardown within 15 seconds after acknowledged shutdown.'
+            }
+            if ($p.ExitCode -ne 0) { throw "Daemon exited with code $($p.ExitCode)." }
+            Write-Host "daemon_exit_code=$($p.ExitCode)"
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $log) { Get-Content $log | Select-Object -Last 80 }
+            $p.Dispose()
+          }
+
+      - name: Record evidence boundary
+        if: always()
+        shell: pwsh
+        run: |
+          @"
+          ### V2-B1 ${{ matrix.name }}
+
+          Candidate source is the exact patch `experiments/v2-b1-daemon-shutdown-lifecycle.patch` applied to this PR's projected-source base.
+
+          This rep checks buildability, the two-phase request/activation invariant, an acknowledged named-pipe `daemon.shutdown`, and bounded process teardown on GitHub-hosted native Windows. It does not constitute WinBot interactive-desktop acceptance or private-source promotion authority.
+          "@ >> $env:GITHUB_STEP_SUMMARY
