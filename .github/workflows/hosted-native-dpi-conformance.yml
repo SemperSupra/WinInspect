@@ -1,0 +1,94 @@
+name: Hosted native GUI DPI conformance
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'scripts/Invoke-HostedNativeDpiConformance.ps1'
+      - '.github/workflows/hosted-native-dpi-conformance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dpi:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            cmake_arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply current HCI candidate
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeHciRepair.ps1
+          ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'HCI candidate introduced whitespace errors.' }
+
+      - name: Configure GUI
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI build failed.' }
+
+      - name: Exercise reversible DPI transition sequence
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
+          ./scripts/Invoke-HostedNativeDpiConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/dpi-conformance.json'
+
+      - name: Emit DPI summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path 'evidence/dpi-conformance.json') {
+            $d = Get-Content 'evidence/dpi-conformance.json' -Raw | ConvertFrom-Json
+            @"
+          ### Hosted native DPI conformance — ${{ matrix.name }}
+
+          - status: `$($d.status)`
+          - sequence: `96 → 144 → 192 → 96 DPI`
+          - initial Windows-reported DPI: `$($d.reported_initial_dpi)`
+
+          This deterministic rep exercises WinInspect's WM_DPICHANGED contract, including reversibility. It is not a physical mixed-DPI multi-monitor acceptance test.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### Hosted native DPI conformance — ${{ matrix.name }}`n`nNo DPI evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload DPI evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-dpi-${{ matrix.name }}
+          path: evidence/dpi-conformance.json
+          if-no-files-found: warn
+          retention-days: 14
