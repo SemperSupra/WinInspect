@@ -21,6 +21,9 @@ Replace-Exactly @'
 #include <windows.h>
 '@ @'
 #include <windows.h>
+// oleacc.h uses DEFINE_GUID for the dynamic-annotation identifiers; instantiate
+// them in this GUI translation unit exactly as Microsoft's accessibility samples do.
+#include <initguid.h>
 #include <oleacc.h>
 #include <objbase.h>
 '@ 'accessibility includes'
