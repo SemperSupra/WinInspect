@@ -5,6 +5,7 @@ on:
     paths:
       - 'source/**'
       - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
       - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
       - 'scripts/Get-PeExecutionMode.ps1'
       - '.github/workflows/hosted-native-gui-observation.yml'
@@ -44,6 +45,7 @@ jobs:
         shell: pwsh
         run: |
           ./experiments/Apply-HostedNativeHciRepair.ps1
+          ./experiments/Normalize-HostedNativeHciLayout.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'HCI repair introduced whitespace errors.' }
           git diff -- source/clients/gui/src/gui_main.cpp
@@ -114,7 +116,13 @@ jobs:
           if (-not ($names | Where-Object { $_ -like '*Daemon unavailable*start daemon*' })) {
             throw 'Actionable disconnected status was not exposed through UI Automation.'
           }
-          Write-Host 'Disconnected recovery affordances are semantically observable.'
+          $refresh = $uia | Where-Object { $_.name -eq 'Refresh' } | Select-Object -First 1
+          $highlight = $uia | Where-Object { $_.name -eq 'Highlight' } | Select-Object -First 1
+          $status = $uia | Where-Object { $_.name -like '*Daemon unavailable*start daemon*' } | Select-Object -First 1
+          if (-not $refresh -or -not $highlight -or -not $status) { throw 'Toolbar geometry evidence incomplete.' }
+          if ($highlight.bounds.x -lt ($refresh.bounds.x + $refresh.bounds.width)) { throw 'Highlight overlaps Refresh.' }
+          if ($status.bounds.x -lt ($highlight.bounds.x + $highlight.bounds.width)) { throw 'Status overlaps Highlight.' }
+          Write-Host 'Disconnected recovery affordances and toolbar separation are semantically observable.'
 
       - name: Emit qualification summary
         if: always()
