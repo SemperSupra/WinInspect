@@ -49,42 +49,29 @@ function Get-ThreadFocusHwnd([uint32]$ThreadId) {
     return $info.hwndFocus
 }
 
-function Get-ElementRecord($Element) {
-    if ($null -eq $Element) { return $null }
-    $c = $Element.Current
-    $rid = try { $Element.GetRuntimeId() -join '.' } catch { '' }
+function Get-ElementRecordFromHwnd([IntPtr]$WindowHandle) {
+    if ($WindowHandle -eq [IntPtr]::Zero) { return $null }
+    $e = [System.Windows.Automation.AutomationElement]::FromHandle($WindowHandle)
+    if ($null -eq $e) {
+        return [ordered]@{ name=''; automation_id=''; class_name=''; control_type=''; enabled=$null; offscreen=$null; is_keyboard_focusable=$null; native_window_handle=$WindowHandle.ToInt64() }
+    }
+    $c = $e.Current
     return [ordered]@{
-        runtime_id=$rid; name=$c.Name; automation_id=$c.AutomationId; class_name=$c.ClassName
-        control_type=$c.ControlType.ProgrammaticName; enabled=$c.IsEnabled; offscreen=$c.IsOffscreen
-        is_keyboard_focusable=$c.IsKeyboardFocusable; native_window_handle=$c.NativeWindowHandle
+        name=$c.Name; automation_id=$c.AutomationId; class_name=$c.ClassName; control_type=$c.ControlType.ProgrammaticName
+        enabled=$c.IsEnabled; offscreen=$c.IsOffscreen; is_keyboard_focusable=$c.IsKeyboardFocusable; native_window_handle=$c.NativeWindowHandle
     }
 }
 
-function Get-ElementRecordFromHwnd([IntPtr]$WindowHandle) {
-    if ($WindowHandle -eq [IntPtr]::Zero) { return $null }
-    return Get-ElementRecord ([System.Windows.Automation.AutomationElement]::FromHandle($WindowHandle))
-}
-
-function Find-VisibleControlPair($Root,[string]$AutomationId) {
+function Find-VisibleNativeByAutomationId($Root,[string]$AutomationId) {
     $condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty,$AutomationId)
     $elements = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
-    $visible = @()
     foreach ($element in $elements) {
-        try { if (-not $element.Current.IsOffscreen) { $visible += $element } } catch { }
+        try {
+            if (-not $element.Current.IsOffscreen -and $element.Current.NativeWindowHandle -ne 0) { return $element }
+        } catch { }
     }
-    if ($visible.Count -eq 0) { throw "No visible UIA element with AutomationId '$AutomationId' was found." }
-
-    $native = $visible | Where-Object { $_.Current.NativeWindowHandle -ne 0 } | Select-Object -First 1
-    if ($null -eq $native) { throw "No visible native HWND proxy with AutomationId '$AutomationId' was found." }
-    $semantic = $visible | Where-Object { $_.Current.ControlType.ProgrammaticName -ne 'ControlType.Pane' } | Select-Object -First 1
-    if ($null -eq $semantic) { $semantic = $native }
-
-    return [ordered]@{
-        native = $native
-        semantic = $semantic
-        candidates = @($visible | ForEach-Object { Get-ElementRecord $_ })
-    }
+    throw "No visible native UIA element with AutomationId '$AutomationId' was found."
 }
 
 function Select-Tab([IntPtr]$MainWindow,[int]$TabId) {
@@ -128,8 +115,9 @@ function Send-TargetTab([uint32]$TargetThread,[bool]$Reverse) {
 
 $process=Start-Process -FilePath $gui -PassThru
 $evidence=[ordered]@{
-    schema_version=5; timestamp_utc=[DateTime]::UtcNow.ToString('o'); gui_path=$gui; tabs=@()
-    boundary='Hosted-native keyboard traversal across every realized GUI panel with native HWND and semantic UIA evidence separated; not controlled interactive WinBot/native-desktop acceptance.'
+    schema_version=6; timestamp_utc=[DateTime]::UtcNow.ToString('o'); gui_path=$gui; tabs=@()
+    semantic_uia_projection='diagnostic-only; standard-control accessibility semantics are independently owned by the Axe.Windows lane'
+    boundary='Hosted-native native-focus and Tab/Shift+Tab traversal across every realized GUI panel; not controlled interactive WinBot/native-desktop acceptance.'
 }
 try {
     $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds); $hwnd=[IntPtr]::Zero
@@ -160,21 +148,22 @@ try {
         $violations=[System.Collections.Generic.List[string]]::new()
         $result=[ordered]@{
             tab_id=$case.tab_id;tab_name=$case.tab_name;anchor_id=$case.anchor_id;anchor_label=$case.anchor_label
-            uia_candidates=@();semantic_element=$null;anchor_native_tabstop=$null;semantic_uia_keyboard_focusable=$null
-            initial_focus=$null;after_tab=$null;after_shift_tab=$null;focus_established=$false;tab_advanced=$false;shift_tab_returned=$false
-            violations=@();status='FAIL'
+            anchor_native_tabstop=$null;uia_projection=$null;initial_focus=$null;after_tab=$null;after_shift_tab=$null
+            focus_established=$false;tab_advanced=$false;shift_tab_returned=$false;violations=@();status='FAIL'
         }
         try {
             Select-Tab $hwnd $case.tab_id
-            $pair=Find-VisibleControlPair $root $case.anchor_id
-            $result.uia_candidates=$pair.candidates
-            $result.semantic_element=Get-ElementRecord $pair.semantic
-            $nativeHwnd=[IntPtr]::new([int64]$pair.native.Current.NativeWindowHandle)
+            $anchor=Find-VisibleNativeByAutomationId $root $case.anchor_id
+            $nativeHwnd=[IntPtr]::new([int64]$anchor.Current.NativeWindowHandle)
+            $result.uia_projection=[ordered]@{
+                control_type=$anchor.Current.ControlType.ProgrammaticName
+                is_keyboard_focusable=$anchor.Current.IsKeyboardFocusable
+                class_name=$anchor.Current.ClassName
+                name=$anchor.Current.Name
+            }
             $style=[KeyboardNative]::GetWindowLongPtr($nativeHwnd,[KeyboardNative]::GWL_STYLE).ToInt64()
             $result.anchor_native_tabstop=(($style -band [KeyboardNative]::WS_TABSTOP)-ne 0)
-            $result.semantic_uia_keyboard_focusable=$pair.semantic.Current.IsKeyboardFocusable
             if(-not $result.anchor_native_tabstop){$violations.Add('missing_ws_tabstop')}
-            if(-not $result.semantic_uia_keyboard_focusable){$violations.Add('semantic_uia_not_keyboard_focusable')}
 
             Set-TargetFocus $nativeHwnd $targetThread
             $initialHwnd=Get-ThreadFocusHwnd $targetThread; $result.initial_focus=Get-ElementRecordFromHwnd $initialHwnd
@@ -196,9 +185,9 @@ try {
         } catch { $violations.Add(('exception: '+$_.Exception.Message)) }
         $result.violations=@($violations); $result.status=if($violations.Count -eq 0){'PASS'}else{'FAIL'}
         $evidence.tabs+=$result
-        Write-Host ("KEYBOARD_TAB tab={0} status={1} native_tabstop={2} semantic_type={3} semantic_focusable={4} focus={5} tab={6} reverse={7} violations={8}" -f
-            $result.tab_name,$result.status,$result.anchor_native_tabstop,$result.semantic_element.control_type,$result.semantic_uia_keyboard_focusable,
-            $result.focus_established,$result.tab_advanced,$result.shift_tab_returned,($result.violations -join ','))
+        Write-Host ("KEYBOARD_TAB tab={0} status={1} native_tabstop={2} focus={3} tab={4} reverse={5} uia_type={6} uia_focusable={7} violations={8}" -f
+            $result.tab_name,$result.status,$result.anchor_native_tabstop,$result.focus_established,$result.tab_advanced,$result.shift_tab_returned,
+            $result.uia_projection.control_type,$result.uia_projection.is_keyboard_focusable,($result.violations -join ','))
     }
     $evidence.status=if(-not($evidence.tabs.status -contains 'FAIL')){'PASS'}else{'FAIL'}
 }
@@ -207,4 +196,4 @@ finally{
     $process.Dispose(); $evidence|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $outputFull -Encoding utf8
 }
 Get-Content -LiteralPath $outputFull
-if($evidence.status -ne 'PASS'){throw 'All-panel keyboard conformance failed; inspect native and semantic per-tab evidence.'}
+if($evidence.status -ne 'PASS'){throw 'All-panel native keyboard conformance failed; inspect per-tab evidence.'}
