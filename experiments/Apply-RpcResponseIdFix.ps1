@@ -37,12 +37,12 @@ int main()
   CoreEngine core(&backend);
   CoreRequest req;
   req.id = "correlation-sentinel";
-  req.method = "daemon.version";
+  req.method = "daemon.metrics";
   req.params = json::Object{};
   auto snapshot = backend.capture_snapshot();
   auto resp = core.handle(req, snapshot, nullptr);
   if (!resp.ok) {
-    std::cerr << "daemon.version unexpectedly failed\n";
+    std::cerr << "daemon.metrics unexpectedly failed\n";
     return 1;
   }
   if (resp.id != req.id) {
