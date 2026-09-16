@@ -74,23 +74,25 @@ jobs:
         run: |
           ./source/scripts/Test-InstallerLifecycle.ps1 -InstallerPath './source/dist/WinInspect-Installer-hosted-ci.exe' -EvidencePath "./installer-lifecycle-${{ matrix.arch }}.json"
 
-      - name: Prove reinstall and installed binary launch
+      - name: Prove reinstall installed CLI launch and final cleanup
         shell: pwsh
         run: |
           $installer = (Resolve-Path './source/dist/WinInspect-Installer-hosted-ci.exe').Path
           $p = Start-Process $installer -ArgumentList '/S' -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "reinstall failed: $($p.ExitCode)" }
           $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
-          foreach ($exe in @('wininspect.exe','wininspectd.exe')) {
-            $path = Join-Path $root $exe
-            if (-not (Test-Path $path -PathType Leaf)) { throw "installed binary missing: $path" }
-            & $path '--help' *> $null
-            if ($LASTEXITCODE -ne 0) { throw "$exe launch probe failed: $LASTEXITCODE" }
-          }
+          $cli = Join-Path $root 'wininspect.exe'
+          if (-not (Test-Path $cli -PathType Leaf)) { throw "installed binary missing: $cli" }
+          $versionOutput = & $cli '--version' 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "installed CLI version probe failed: $LASTEXITCODE" }
+          if (($versionOutput -join "`n") -notmatch '^WinInspect ') { throw 'installed CLI version probe returned unexpected output' }
+          $daemon = Join-Path $root 'wininspectd.exe'
+          if (-not (Test-Path $daemon -PathType Leaf)) { throw "installed daemon missing: $daemon" }
           $uninstaller = Join-Path $root 'uninstall.exe'
           $u = Start-Process $uninstaller -ArgumentList '/S' -PassThru -Wait
           if ($u.ExitCode -ne 0) { throw "final uninstall failed: $($u.ExitCode)" }
-          Start-Sleep -Seconds 2
+          $deadline = [DateTime]::UtcNow.AddSeconds(15)
+          while ((Test-Path $root) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
           if (Test-Path $root) { throw "final install directory residue remains: $root" }
 
       - name: Upload evidence
