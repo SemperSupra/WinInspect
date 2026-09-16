@@ -22,9 +22,11 @@ try {
 
   $program = @'
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using Axe.Windows.Automation;
@@ -33,6 +35,15 @@ if (args.Length != 2)
 {
     Console.Error.WriteLine("usage: scanner <gui-path> <output-directory>");
     return 64;
+}
+
+static class Native
+{
+    public const uint BM_CLICK = 0x00F5;
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetDlgItem(IntPtr parent, int id);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 }
 
 var guiPath = Path.GetFullPath(args[0]);
@@ -62,26 +73,63 @@ try
     if (process.MainWindowHandle == IntPtr.Zero)
         throw new TimeoutException("WinInspect GUI did not expose a top-level window within 15 seconds.");
 
-    // Let initial disconnected-state UI settle before scanning the process UIA tree.
     Thread.Sleep(750);
 
-    var config = Config.Builder.ForProcessId(process.Id)
-        .WithOutputFileFormat(OutputFileFormat.A11yTest)
-        .WithOutputDirectory(outputDirectory)
-        .Build();
-    var scanner = ScannerFactory.CreateScanner(config);
-    // Axe.Windows 2.4.2 documents null for default scan options.
-    var result = scanner.Scan(null);
+    var tabs = new (int Id, string Name)[]
+    {
+        (1000, "Dashboard"),
+        (1001, "Windows"),
+        (1002, "Capture"),
+        (1003, "Input"),
+        (1004, "Sessions"),
+        (1005, "Events"),
+        (1006, "Metrics"),
+        (1007, "Processes")
+    };
 
-    var windows = result.WindowScanOutputs.ToArray();
-    var totalErrors = windows.Sum(w => w.ErrorCount);
+    var tabResults = new List<object>();
+    var totalErrors = 0;
+    var totalWindows = 0;
+
+    foreach (var tab in tabs)
+    {
+        var button = Native.GetDlgItem(process.MainWindowHandle, tab.Id);
+        if (button == IntPtr.Zero)
+            throw new InvalidOperationException($"Sidebar tab '{tab.Name}' (ID {tab.Id}) was not found.");
+        Native.SendMessageW(button, Native.BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+        Thread.Sleep(300);
+
+        var tabDirectory = Path.Combine(outputDirectory, $"tab-{tab.Id}-{tab.Name.ToLowerInvariant()}");
+        Directory.CreateDirectory(tabDirectory);
+        var config = Config.Builder.ForProcessId(process.Id)
+            .WithOutputFileFormat(OutputFileFormat.A11yTest)
+            .WithOutputDirectory(tabDirectory)
+            .Build();
+        var scanner = ScannerFactory.CreateScanner(config);
+        var result = scanner.Scan(null);
+        var windows = result.WindowScanOutputs.ToArray();
+        var errors = windows.Sum(w => w.ErrorCount);
+        totalErrors += errors;
+        totalWindows += windows.Length;
+        tabResults.Add(new
+        {
+            tab_id = tab.Id,
+            tab_name = tab.Name,
+            window_count = windows.Length,
+            error_count = errors
+        });
+        Console.WriteLine($"Axe.Windows tab={tab.Name} windows={windows.Length} errors={errors}.");
+    }
+
     var summary = new
     {
         process_id = process.Id,
         main_window_handle = process.MainWindowHandle.ToInt64(),
-        window_count = windows.Length,
+        tab_count = tabs.Length,
+        window_count = totalWindows,
         error_count = totalErrors,
         axe_windows_version = "2.4.2",
+        tabs = tabResults,
         timestamp_utc = DateTime.UtcNow.ToString("O")
     };
 
@@ -89,7 +137,7 @@ try
         Path.Combine(outputDirectory, "summary.json"),
         JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
 
-    Console.WriteLine($"Axe.Windows scanned {windows.Length} top-level window(s); errors={totalErrors}.");
+    Console.WriteLine($"Axe.Windows scanned {tabs.Length} realized tabs; aggregate errors={totalErrors}.");
     return totalErrors == 0 ? 0 : 2;
 }
 finally
@@ -107,7 +155,7 @@ finally
   dotnet run --configuration Release -- $gui $output | Out-Host
   $scannerExit = $LASTEXITCODE
   if ($scannerExit -eq 2) {
-    throw 'Axe.Windows reported one or more accessibility-rule errors.'
+    throw 'Axe.Windows reported one or more accessibility-rule errors across realized tabs.'
   }
   if ($scannerExit -ne 0) {
     throw "Axe.Windows scanner host failed with exit code $scannerExit."
