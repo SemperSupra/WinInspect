@@ -15,8 +15,8 @@ function Replace-Exactly {
 }
 
 # Adopt Microsoft's documented native Win32 dynamic-annotation mechanism instead of
-# inventing a custom UIA provider. Axe.Windows identified exactly two focusable controls
-# with null Name: Search (ID 602) and the window-property list (ID 102).
+# inventing a custom UIA provider. Axe.Windows identified four focusable controls whose
+# native providers need purpose-based names: Search, Window properties, Event log, and Processes.
 Replace-Exactly @'
 #include <windows.h>
 '@ @'
@@ -80,6 +80,10 @@ Replace-Exactly @'
                               PROPID_ACC_NAME, L"Search windows");
     accProps_->SetHwndPropStr(hList_, OBJID_CLIENT, CHILDID_SELF,
                               PROPID_ACC_NAME, L"Window properties");
+    accProps_->SetHwndPropStr(hEventLogList_, OBJID_CLIENT, CHILDID_SELF,
+                              PROPID_ACC_NAME, L"Event log");
+    accProps_->SetHwndPropStr(hProcList_, OBJID_CLIENT, CHILDID_SELF,
+                              PROPID_ACC_NAME, L"Processes");
     SendMessageW(hSearchEdit_, EM_SETCUEBANNER, TRUE, (LPARAM)L"Search windows");
   }
 
@@ -88,6 +92,8 @@ Replace-Exactly @'
       MSAAPROPID props[] = { PROPID_ACC_NAME };
       accProps_->ClearHwndProps(hSearchEdit_, OBJID_CLIENT, CHILDID_SELF, props, 1);
       accProps_->ClearHwndProps(hList_, OBJID_CLIENT, CHILDID_SELF, props, 1);
+      accProps_->ClearHwndProps(hEventLogList_, OBJID_CLIENT, CHILDID_SELF, props, 1);
+      accProps_->ClearHwndProps(hProcList_, OBJID_CLIENT, CHILDID_SELF, props, 1);
       accProps_->Release();
       accProps_ = nullptr;
     }
@@ -124,4 +130,4 @@ $cmake = $cmake.Substring(0,$first) + $newLink + $cmake.Substring($first + $oldL
 
 [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($cmakePath,$cmake,[Text.UTF8Encoding]::new($false))
-Write-Host 'Win32 accessible names normalized for Search windows and Window properties using IAccPropServices.'
+Write-Host 'Win32 accessible names normalized for Search windows, Window properties, Event log, and Processes using IAccPropServices.'
