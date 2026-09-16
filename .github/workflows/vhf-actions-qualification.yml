@@ -13,7 +13,7 @@ permissions:
 jobs:
   vhf-preflight:
     name: VHF build and hosted-runner feasibility
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 35
     env:
       WDS_SHA: 97429c5623590d52f001249460daf43e6749d777
@@ -69,26 +69,35 @@ jobs:
           Get-ChildItem wds/packages -Directory | Select-Object -ExpandProperty Name | Sort-Object | Set-Content evidence/wdk-packages.txt
           Get-Content evidence/wdk-packages.txt
 
-      - name: Build Microsoft's vhidmini2 sample
+      - name: Build Microsoft vhidmini2 through official harness
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found' }
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
-          if (-not $msbuild) { throw 'MSBuild.exe not found' }
-          & $msbuild -version | Tee-Object -FilePath evidence/msbuild-version.txt
-          & $msbuild wds/hid/vhidmini2/vhidmini2.sln /m /t:Restore,Build /p:Configuration=Release /p:Platform=x64 /bl:evidence/vhidmini2.binlog
-          if ($LASTEXITCODE -ne 0) { throw "vhidmini2 build failed: $LASTEXITCODE" }
-          Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Include *.sys,*.inf,*.cat,*.exe |
-            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} |
-            ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
+          Push-Location wds
+          try {
+            ./Build-Samples.ps1 `
+              -Samples 'hid.vhidmini2' `
+              -Configurations 'Release' `
+              -Platforms 'x64' `
+              -RunMode NuGet `
+              -ThrottleLimit 1 `
+              -Verbose
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Build-Samples failed: $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+          Copy-Item wds/_logs -Destination evidence/wds-build-logs -Recurse -Force -ErrorAction SilentlyContinue
+          $artifacts = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Include *.sys,*.inf,*.cat,*.exe |
+            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}}
+          $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
+          if (-not ($artifacts | Where-Object { $_.FullName -match '\.(sys)$' })) { throw 'No .sys driver artifact was produced.' }
           Get-Content evidence/build-artifacts.json
 
       - name: Classify driver install capability
         shell: pwsh
         continue-on-error: true
         run: |
-          $inf = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Filter vhidmini.inf | Select-Object -First 1
+          $inf = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Filter '*.inf' |
+            Where-Object { $_.FullName -match '\\x64\\Release\\' } |
+            Select-Object -First 1
           $result = [ordered]@{ attempted=$false; inf=$null; exit_code=$null; classification='no-built-inf'; output=@() }
           if ($inf) {
             $result.attempted = $true
@@ -100,7 +109,7 @@ jobs:
             if ($code -eq 0) { $result.classification='hosted-runner-driver-install-accepted' }
             else {
               $joined = $result.output -join "`n"
-              if ($joined -match 'signature|signed|publisher|hash') { $result.classification='hosted-runner-signing-boundary' }
+              if ($joined -match 'signature|signed|publisher|hash|certificate') { $result.classification='hosted-runner-signing-boundary' }
               elseif ($joined -match 'reboot|restart') { $result.classification='hosted-runner-reboot-boundary' }
               elseif ($joined -match 'access|denied|privilege|administrator') { $result.classification='hosted-runner-privilege-boundary' }
               else { $result.classification='hosted-runner-install-unsupported-or-other' }
@@ -122,7 +131,7 @@ jobs:
         shell: pwsh
         run: |
           [ordered]@{
-            build = if (Test-Path evidence/build-artifacts.json) { 'completed' } else { 'not-completed' }
+            build = if (Test-Path evidence/build-artifacts.json) { 'attempted' } else { 'not-completed' }
             install = if (Test-Path evidence/install-capability.json) { (Get-Content evidence/install-capability.json | ConvertFrom-Json).classification } else { 'not-attempted' }
             next = 'Keep GitHub Actions as first executor. Escalate only cells blocked by concrete hosted-runner evidence.'
           } | ConvertTo-Json -Depth 4 | Set-Content evidence/summary.json -Encoding utf8
