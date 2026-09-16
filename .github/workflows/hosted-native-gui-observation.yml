@@ -7,6 +7,7 @@ on:
       - 'experiments/Apply-HostedNativeHciRepair.ps1'
       - 'experiments/Normalize-HostedNativeHciLayout.ps1'
       - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
       - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
       - 'scripts/Get-PeExecutionMode.ps1'
       - '.github/workflows/hosted-native-gui-observation.yml'
@@ -48,9 +49,10 @@ jobs:
           ./experiments/Apply-HostedNativeHciRepair.ps1
           ./experiments/Normalize-HostedNativeHciLayout.ps1
           ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'HCI repair introduced whitespace errors.' }
-          git diff -- source/clients/gui/src/gui_main.cpp
+          git diff -- source/clients/gui/src/gui_main.cpp source/CMakeLists.txt
 
       - name: Record runner identity
         shell: pwsh
@@ -106,14 +108,14 @@ jobs:
           if (-not $gui) { throw 'wininspect-gui.exe not found after successful build.' }
           ./scripts/Invoke-HostedNativeGuiObservation.ps1 -GuiPath $gui.FullName -OutputDirectory evidence
 
-      - name: Assert disconnected recovery affordances
+      - name: Assert disconnected recovery and accessible semantics
         shell: pwsh
         run: |
           if (-not (Test-Path evidence/uia-tree.json)) { throw 'UIA evidence missing.' }
           $uia = Get-Content evidence/uia-tree.json -Raw | ConvertFrom-Json
           $names = @($uia | ForEach-Object { $_.name })
-          foreach ($expected in @('Connect','Refresh','Highlight','Start Daemon')) {
-            if ($names -notcontains $expected) { throw "Expected visible affordance '$expected' missing from UIA tree." }
+          foreach ($expected in @('Connect','Refresh','Highlight','Start Daemon','Search windows','Window properties')) {
+            if ($names -notcontains $expected) { throw "Expected visible/semantic affordance '$expected' missing from UIA tree." }
           }
           if (-not ($names | Where-Object { $_ -like '*Daemon unavailable*start daemon*' })) {
             throw 'Actionable disconnected status was not exposed through UI Automation.'
@@ -124,7 +126,7 @@ jobs:
           if (-not $refresh -or -not $highlight -or -not $status) { throw 'Toolbar geometry evidence incomplete.' }
           if ($highlight.bounds.x -lt ($refresh.bounds.x + $refresh.bounds.width)) { throw 'Highlight overlaps Refresh.' }
           if ($status.bounds.x -lt ($highlight.bounds.x + $highlight.bounds.width)) { throw 'Status overlaps Highlight.' }
-          Write-Host 'Disconnected recovery affordances and toolbar separation are semantically observable.'
+          Write-Host 'Disconnected recovery, accessible names, and toolbar separation are semantically observable.'
 
       - name: Emit qualification summary
         if: always()
