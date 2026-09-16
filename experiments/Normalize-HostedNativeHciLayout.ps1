@@ -43,4 +43,5 @@ Replace-Exactly $path @'
     }
 '@
 
-Write-Host 'Hosted-native HCI toolbar layout normalized: Refresh, Highlight, and status no longer overlap.'
+& ./experiments/Normalize-HostedNativePanelButtons.ps1
+Write-Host 'Hosted-native HCI toolbar layout and panel-owned action rendering normalized.'
