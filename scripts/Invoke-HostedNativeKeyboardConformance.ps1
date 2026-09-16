@@ -24,9 +24,7 @@ public static class KeyboardNative {
     public const int VK_SHIFT = 0x10;
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left, Top, Right, Bottom;
-    }
+    public struct RECT { public int Left, Top, Right, Bottom; }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GUITHREADINFO {
@@ -43,38 +41,28 @@ public static class KeyboardNative {
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
-
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetDlgItem(IntPtr hDlg, int nIDDlgItem);
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
-
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetFocus(IntPtr hWnd);
-
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO info);
-
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetKeyboardState([Out] byte[] state);
-
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetKeyboardState(byte[] state);
@@ -94,17 +82,7 @@ function Get-ElementRecordFromHwnd([IntPtr]$WindowHandle) {
     if ($WindowHandle -eq [IntPtr]::Zero) { return $null }
     $e = [System.Windows.Automation.AutomationElement]::FromHandle($WindowHandle)
     if ($null -eq $e) {
-        return [ordered]@{
-            runtime_id = ''
-            name = ''
-            automation_id = ''
-            class_name = ''
-            control_type = ''
-            enabled = $null
-            offscreen = $null
-            is_keyboard_focusable = $null
-            native_window_handle = $WindowHandle.ToInt64()
-        }
+        return [ordered]@{ runtime_id=''; name=''; automation_id=''; class_name=''; control_type=''; enabled=$null; offscreen=$null; is_keyboard_focusable=$null; native_window_handle=$WindowHandle.ToInt64() }
     }
     $c = $e.Current
     $rid = try { $e.GetRuntimeId() -join '.' } catch { '' }
@@ -127,9 +105,7 @@ function Find-VisibleByAutomationId($Root,[string]$AutomationId) {
     $elements = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
     foreach ($element in $elements) {
         try {
-            if (-not $element.Current.IsOffscreen -and $element.Current.NativeWindowHandle -ne 0) {
-                return $element
-            }
+            if (-not $element.Current.IsOffscreen -and $element.Current.NativeWindowHandle -ne 0) { return $element }
         } catch { }
     }
     throw "No visible native UIA element with AutomationId '$AutomationId' was found."
@@ -152,64 +128,51 @@ function Set-TargetFocus([IntPtr]$Target,[uint32]$TargetThread) {
         }
         [KeyboardNative]::SetFocus($Target) | Out-Null
         Start-Sleep -Milliseconds 120
-    }
-    finally {
-        if ($attached) {
-            [KeyboardNative]::AttachThreadInput($currentThread,$TargetThread,$false) | Out-Null
-        }
+    } finally {
+        if ($attached) { [KeyboardNative]::AttachThreadInput($currentThread,$TargetThread,$false) | Out-Null }
     }
 }
 
 function Send-TargetTab {
-    param(
-        [uint32]$TargetThread,
-        [bool]$Reverse
-    )
+    param([uint32]$TargetThread,[bool]$Reverse)
     $currentThread = [KeyboardNative]::GetCurrentThreadId()
     $attached = $false
     try {
         if ($TargetThread -ne $currentThread) {
-            $attached = [KeyboardNative]::AttachThreadInput($currentThread, $TargetThread, $true)
+            $attached = [KeyboardNative]::AttachThreadInput($currentThread,$TargetThread,$true)
             if (-not $attached) { throw 'AttachThreadInput failed while posting hosted Tab input.' }
         }
-
         $keys = New-Object byte[] 256
         if (-not [KeyboardNative]::GetKeyboardState($keys)) { throw 'GetKeyboardState failed.' }
         $keys[[KeyboardNative]::VK_SHIFT] = $(if ($Reverse) { 0x80 } else { 0x00 })
         if (-not [KeyboardNative]::SetKeyboardState($keys)) { throw 'SetKeyboardState failed.' }
-
         $focus = Get-ThreadFocusHwnd $TargetThread
         if ($focus -eq [IntPtr]::Zero) { throw 'Target GUI thread has no keyboard focus before Tab.' }
-        if (-not [KeyboardNative]::PostMessageW($focus, [KeyboardNative]::WM_KEYDOWN,
-                [IntPtr][KeyboardNative]::VK_TAB, [IntPtr]1)) {
-            throw 'Failed to post WM_KEYDOWN/VK_TAB to target focus window.'
-        }
-        if (-not [KeyboardNative]::PostMessageW($focus, [KeyboardNative]::WM_KEYUP,
-                [IntPtr][KeyboardNative]::VK_TAB, [IntPtr]0xC0000001)) {
-            throw 'Failed to post WM_KEYUP/VK_TAB to target focus window.'
-        }
+        if (-not [KeyboardNative]::PostMessageW($focus,[KeyboardNative]::WM_KEYDOWN,[IntPtr][KeyboardNative]::VK_TAB,[IntPtr]1)) { throw 'Failed to post WM_KEYDOWN/VK_TAB.' }
+        if (-not [KeyboardNative]::PostMessageW($focus,[KeyboardNative]::WM_KEYUP,[IntPtr][KeyboardNative]::VK_TAB,[IntPtr]0xC0000001)) { throw 'Failed to post WM_KEYUP/VK_TAB.' }
         Start-Sleep -Milliseconds 250
-
         $keys[[KeyboardNative]::VK_SHIFT] = 0x00
         [KeyboardNative]::SetKeyboardState($keys) | Out-Null
-    }
-    finally {
-        if ($attached) {
-            [KeyboardNative]::AttachThreadInput($currentThread, $TargetThread, $false) | Out-Null
-        }
+    } finally {
+        if ($attached) { [KeyboardNative]::AttachThreadInput($currentThread,$TargetThread,$false) | Out-Null }
     }
 }
 
 $process = Start-Process -FilePath $gui -PassThru
+$evidence = [ordered]@{
+    schema_version = 4
+    timestamp_utc = [DateTime]::UtcNow.ToString('o')
+    gui_path = $gui
+    tabs = @()
+    boundary = 'Hosted-native keyboard traversal across every realized GUI panel; independent of unrelated foreground windows; not controlled interactive WinBot/native-desktop acceptance.'
+}
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $hwnd = [IntPtr]::Zero
     do {
         Start-Sleep -Milliseconds 100
-        $process.Refresh()
-        $hwnd = $process.MainWindowHandle
+        $process.Refresh(); $hwnd = $process.MainWindowHandle
     } while ($hwnd -eq [IntPtr]::Zero -and -not $process.HasExited -and [DateTime]::UtcNow -lt $deadline)
-
     if ($process.HasExited) { throw "GUI exited before keyboard probe with code $($process.ExitCode)." }
     if ($hwnd -eq [IntPtr]::Zero) { throw 'GUI did not expose a main window for keyboard probe.' }
 
@@ -227,79 +190,77 @@ try {
         [ordered]@{ tab_id=1007; tab_name='Processes'; anchor_id='505'; anchor_label='Processes list' }
     )
 
-    $caseResults = @()
     [uint32]$targetPid = 0
     $targetThread = [KeyboardNative]::GetWindowThreadProcessId($hwnd,[ref]$targetPid)
     if ($targetThread -eq 0) { throw 'Could not resolve the GUI thread.' }
+    $evidence.process_id = $process.Id
+    $evidence.main_window_handle = ('0x{0:X}' -f $hwnd.ToInt64())
+    $evidence.gui_thread_id = $targetThread
+    $evidence.tab_count = $cases.Count
+    $evidence.focus_observation = 'GetGUIThreadInfo(target GUI thread)'
+    $evidence.input_delivery = 'PostMessage WM_KEYDOWN/WM_KEYUP VK_TAB with attached target keyboard state'
 
     foreach ($case in $cases) {
-        Select-Tab $hwnd $case.tab_id
-        $anchor = Find-VisibleByAutomationId $root $case.anchor_id
-        $anchorHwnd = [IntPtr]::new([int64]$anchor.Current.NativeWindowHandle)
-        $anchorStyle = [KeyboardNative]::GetWindowLongPtr($anchorHwnd,[KeyboardNative]::GWL_STYLE).ToInt64()
-        $nativeTabStop = (($anchorStyle -band [KeyboardNative]::WS_TABSTOP) -ne 0)
-        if (-not $nativeTabStop) { throw "$($case.tab_name) anchor '$($case.anchor_label)' lacks WS_TABSTOP." }
-        if (-not $anchor.Current.IsKeyboardFocusable) { throw "$($case.tab_name) anchor '$($case.anchor_label)' is not UIA keyboard-focusable." }
+        $violations = [System.Collections.Generic.List[string]]::new()
+        $result = [ordered]@{
+            tab_id = $case.tab_id; tab_name = $case.tab_name; anchor_id = $case.anchor_id; anchor_label = $case.anchor_label
+            anchor_native_tabstop = $null; anchor_uia_keyboard_focusable = $null
+            initial_focus = $null; after_tab = $null; after_shift_tab = $null
+            focus_established = $false; tab_advanced = $false; shift_tab_returned = $false
+            violations = @(); status = 'FAIL'
+        }
+        try {
+            Select-Tab $hwnd $case.tab_id
+            $anchor = Find-VisibleByAutomationId $root $case.anchor_id
+            $anchorHwnd = [IntPtr]::new([int64]$anchor.Current.NativeWindowHandle)
+            $anchorStyle = [KeyboardNative]::GetWindowLongPtr($anchorHwnd,[KeyboardNative]::GWL_STYLE).ToInt64()
+            $nativeTabStop = (($anchorStyle -band [KeyboardNative]::WS_TABSTOP) -ne 0)
+            $uiaFocusable = $anchor.Current.IsKeyboardFocusable
+            $result.anchor_native_tabstop = $nativeTabStop
+            $result.anchor_uia_keyboard_focusable = $uiaFocusable
+            if (-not $nativeTabStop) { $violations.Add('missing_ws_tabstop') }
+            if (-not $uiaFocusable) { $violations.Add('uia_not_keyboard_focusable') }
 
-        Set-TargetFocus $anchorHwnd $targetThread
-        $initialHwnd = Get-ThreadFocusHwnd $targetThread
-        if ($initialHwnd -ne $anchorHwnd) {
-            throw "$($case.tab_name) could not establish focus on '$($case.anchor_label)'."
-        }
-        $initial = Get-ElementRecordFromHwnd $initialHwnd
+            Set-TargetFocus $anchorHwnd $targetThread
+            $initialHwnd = Get-ThreadFocusHwnd $targetThread
+            $result.initial_focus = Get-ElementRecordFromHwnd $initialHwnd
+            $result.focus_established = ($initialHwnd -eq $anchorHwnd)
+            if (-not $result.focus_established) { $violations.Add('native_focus_not_established') }
 
-        Send-TargetTab -TargetThread $targetThread -Reverse $false
-        $forwardHwnd = Get-ThreadFocusHwnd $targetThread
-        if ($forwardHwnd -eq [IntPtr]::Zero -or $forwardHwnd -eq $initialHwnd) {
-            throw "$($case.tab_name) Tab did not advance focus from '$($case.anchor_label)'."
-        }
-        $forward = Get-ElementRecordFromHwnd $forwardHwnd
-        if ($forward.offscreen -eq $true) {
-            throw "$($case.tab_name) Tab advanced into an offscreen/hidden control."
-        }
+            if ($result.focus_established) {
+                Send-TargetTab -TargetThread $targetThread -Reverse $false
+                $forwardHwnd = Get-ThreadFocusHwnd $targetThread
+                $result.after_tab = Get-ElementRecordFromHwnd $forwardHwnd
+                $result.tab_advanced = ($forwardHwnd -ne [IntPtr]::Zero -and $forwardHwnd -ne $initialHwnd)
+                if (-not $result.tab_advanced) { $violations.Add('tab_did_not_advance') }
+                elseif ($result.after_tab.offscreen -eq $true) { $violations.Add('tab_advanced_to_hidden_control') }
 
-        Send-TargetTab -TargetThread $targetThread -Reverse $true
-        $reverseHwnd = Get-ThreadFocusHwnd $targetThread
-        $reverse = Get-ElementRecordFromHwnd $reverseHwnd
-        if ($reverseHwnd -ne $initialHwnd) {
-            throw "$($case.tab_name) Shift+Tab did not return focus to '$($case.anchor_label)'; observed '$($reverse.name)' ($($reverse.control_type))."
+                if ($result.tab_advanced) {
+                    Send-TargetTab -TargetThread $targetThread -Reverse $true
+                    $reverseHwnd = Get-ThreadFocusHwnd $targetThread
+                    $result.after_shift_tab = Get-ElementRecordFromHwnd $reverseHwnd
+                    $result.shift_tab_returned = ($reverseHwnd -eq $initialHwnd)
+                    if (-not $result.shift_tab_returned) { $violations.Add('shift_tab_did_not_return') }
+                }
+            }
+        } catch {
+            $violations.Add(('exception: ' + $_.Exception.Message))
         }
-
-        $caseResults += [ordered]@{
-            tab_id = $case.tab_id
-            tab_name = $case.tab_name
-            anchor_id = $case.anchor_id
-            anchor_label = $case.anchor_label
-            anchor_native_tabstop = $nativeTabStop
-            anchor_uia_keyboard_focusable = $anchor.Current.IsKeyboardFocusable
-            initial_focus = $initial
-            after_tab = $forward
-            after_shift_tab = $reverse
-            status = 'PASS'
-        }
+        $result.violations = @($violations)
+        $result.status = if ($violations.Count -eq 0) { 'PASS' } else { 'FAIL' }
+        $evidence.tabs += $result
+        Write-Host ("KEYBOARD_TAB tab={0} status={1} native_tabstop={2} uia_focusable={3} focus={4} tab={5} reverse={6} violations={7}" -f
+            $result.tab_name,$result.status,$result.anchor_native_tabstop,$result.anchor_uia_keyboard_focusable,
+            $result.focus_established,$result.tab_advanced,$result.shift_tab_returned,($result.violations -join ','))
     }
 
-    $evidence = [ordered]@{
-        schema_version = 3
-        timestamp_utc = [DateTime]::UtcNow.ToString('o')
-        gui_path = $gui
-        process_id = $process.Id
-        main_window_handle = ('0x{0:X}' -f $hwnd.ToInt64())
-        gui_thread_id = $targetThread
-        tab_count = $cases.Count
-        tabs = $caseResults
-        focus_observation = 'GetGUIThreadInfo(target GUI thread)'
-        input_delivery = 'PostMessage WM_KEYDOWN/WM_KEYUP VK_TAB with attached target keyboard state'
-        status = if ($caseResults.Count -eq $cases.Count -and -not ($caseResults.status -contains 'FAIL')) { 'PASS' } else { 'FAIL' }
-        boundary = 'Hosted-native keyboard traversal across every realized GUI panel; independent of unrelated foreground windows; not controlled interactive WinBot/native-desktop acceptance.'
-    }
-    $evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $outputFull -Encoding utf8
-    Get-Content -LiteralPath $outputFull
-    if ($evidence.status -ne 'PASS') { throw 'All-panel keyboard conformance failed.' }
+    $evidence.status = if (-not ($evidence.tabs.status -contains 'FAIL')) { 'PASS' } else { 'FAIL' }
 }
 finally {
-    if (-not $process.HasExited) {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    }
+    if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
     $process.Dispose()
+    $evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $outputFull -Encoding utf8
 }
+
+Get-Content -LiteralPath $outputFull
+if ($evidence.status -ne 'PASS') { throw 'All-panel keyboard conformance failed; inspect per-tab violations.' }
