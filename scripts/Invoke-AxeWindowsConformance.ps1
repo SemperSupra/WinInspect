@@ -70,7 +70,8 @@ try
         .WithOutputDirectory(outputDirectory)
         .Build();
     var scanner = ScannerFactory.CreateScanner(config);
-    var result = scanner.Scan(new ScanOptions(scanId: "wininspect-gui"));
+    // Axe.Windows 2.4.2 documents null for default scan options.
+    var result = scanner.Scan(null);
 
     var windows = result.WindowScanOutputs.ToArray();
     var totalErrors = windows.Sum(w => w.ErrorCount);
