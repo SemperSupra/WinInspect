@@ -7,6 +7,7 @@ on:
       - 'experiments/Apply-HostedNativeHciRepair.ps1'
       - 'experiments/Normalize-HostedNativeHciLayout.ps1'
       - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
       - 'scripts/Invoke-HostedNativeKeyboardConformance.ps1'
       - '.github/workflows/hosted-native-keyboard-conformance.yml'
   workflow_dispatch:
@@ -41,6 +42,7 @@ jobs:
           ./experiments/Apply-HostedNativeHciRepair.ps1
           ./experiments/Normalize-HostedNativeHciLayout.ps1
           ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Keyboard candidate introduced whitespace errors.' }
 
