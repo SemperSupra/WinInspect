@@ -1,0 +1,105 @@
+name: Hosted Windows installer lifecycle matrix
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-installer-lifecycle-matrix.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer-lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record treatment identity
+        shell: pwsh
+        run: |
+          [ordered]@{
+            runner = '${{ matrix.runner }}'
+            requestedArchitecture = '${{ matrix.arch }}'
+            os = [System.Environment]::OSVersion.VersionString
+            osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            sha = $env:GITHUB_SHA
+          } | ConvertTo-Json | Set-Content treatment.json -Encoding utf8NoBOM
+          Get-Content treatment.json
+
+      - name: Build projected release subjects
+        shell: pwsh
+        run: |
+          cmake -S source -B source/build -A ${{ matrix.arch }} -DWININSPECT_BUILD_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build source/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
+
+      - name: Stage and package
+        shell: pwsh
+        run: |
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE 'source\build\Release'
+          $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'source\dist\staging'
+          $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source\dist'
+          New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $src = Join-Path $buildRoot $name
+            if (-not (Test-Path $src -PathType Leaf)) { throw "Missing $src" }
+            Copy-Item $src (Join-Path $stageRoot $name) -Force
+          }
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis.exe -ErrorAction Stop).Source }
+          & $makensis '/DVERSION=hosted-ci' "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" (Join-Path $env:GITHUB_WORKSPACE 'source\tools\wininspect.nsi')
+          if ($LASTEXITCODE -ne 0) { throw 'makensis failed.' }
+
+      - name: Prove install repeat uninstall cleanup
+        shell: pwsh
+        run: |
+          ./source/scripts/Test-InstallerLifecycle.ps1 -InstallerPath './source/dist/WinInspect-Installer-hosted-ci.exe' -EvidencePath "./installer-lifecycle-${{ matrix.arch }}.json"
+
+      - name: Prove reinstall and installed binary launch
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path './source/dist/WinInspect-Installer-hosted-ci.exe').Path
+          $p = Start-Process $installer -ArgumentList '/S' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "reinstall failed: $($p.ExitCode)" }
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          foreach ($exe in @('wininspect.exe','wininspectd.exe')) {
+            $path = Join-Path $root $exe
+            if (-not (Test-Path $path -PathType Leaf)) { throw "installed binary missing: $path" }
+            & $path '--help' *> $null
+            if ($LASTEXITCODE -ne 0) { throw "$exe launch probe failed: $LASTEXITCODE" }
+          }
+          $uninstaller = Join-Path $root 'uninstall.exe'
+          $u = Start-Process $uninstaller -ArgumentList '/S' -PassThru -Wait
+          if ($u.ExitCode -ne 0) { throw "final uninstall failed: $($u.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $root) { throw "final install directory residue remains: $root" }
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-lifecycle-${{ matrix.arch }}
+          path: |
+            treatment.json
+            installer-lifecycle-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 30
