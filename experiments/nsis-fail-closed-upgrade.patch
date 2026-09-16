@@ -1,7 +1,7 @@
 diff --git a/source/tools/wininspect.nsi b/source/tools/wininspect.nsi
 --- a/source/tools/wininspect.nsi
 +++ b/source/tools/wininspect.nsi
-@@ -350,6 +350,55 @@ skip_zip:
+@@ -350,5 +350,54 @@ skip_zip:
    StrCpy $existing_method "none"
  FunctionEnd
  
