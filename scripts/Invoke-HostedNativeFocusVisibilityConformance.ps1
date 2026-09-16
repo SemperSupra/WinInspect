@@ -96,8 +96,8 @@ try {
     $connectHwnd=[IntPtr]::new([int64]$connect.Current.NativeWindowHandle)
     $searchHwnd=[IntPtr]::new([int64]$search.Current.NativeWindowHandle)
     if ($connectHwnd -eq [IntPtr]::Zero -or $searchHwnd -eq [IntPtr]::Zero) { throw 'Focus targets lacked native HWNDs.' }
-    [uint32]$pid=0
-    $thread=[FocusVisualNative]::GetWindowThreadProcessId($connectHwnd,[ref]$pid)
+    [uint32]$targetPid=0
+    $thread=[FocusVisualNative]::GetWindowThreadProcessId($connectHwnd,[ref]$targetPid)
     if ($thread -eq 0) { throw 'Could not resolve GUI thread.' }
 
     Set-TargetFocus $connectHwnd $thread
