@@ -5,6 +5,7 @@ on:
     paths:
       - 'source/**'
       - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
+      - 'scripts/Get-PeExecutionMode.ps1'
       - '.github/workflows/hosted-native-gui-observation.yml'
   workflow_dispatch:
 
@@ -29,7 +30,7 @@ jobs:
           - name: x64-prism-win11-arm
             runner: windows-11-vs2026-arm
             cmake_arch: x64
-            treatment: x64-on-arm64-prism
+            treatment: x64-on-arm64-emulation
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -78,6 +79,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI/daemon build failed.' }
           Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object FullName,Length
 
+      - name: Verify treatment architecture from PE image
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after successful build.' }
+          ./scripts/Get-PeExecutionMode.ps1 -Path $gui.FullName -ExpectedMode '${{ matrix.treatment }}' -OutputPath evidence/pe-execution.json
+
       - name: Observe GUI through hosted native Windows surfaces
         shell: pwsh
         run: |
@@ -89,25 +97,28 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path evidence/observation.json) {
+          if ((Test-Path evidence/observation.json) -and (Test-Path evidence/pe-execution.json)) {
             $o = Get-Content evidence/observation.json -Raw | ConvertFrom-Json
+            $pe = Get-Content evidence/pe-execution.json -Raw | ConvertFrom-Json
             @"
           ### Hosted native observation — ${{ matrix.name }}
 
           - treatment: `${{ matrix.treatment }}`
           - runner: `${{ matrix.runner }}`
+          - PE machine: `$($pe.pe_machine_name)` (`$($pe.pe_machine)`)
+          - verified execution mode: `$($pe.execution_mode)`
+          - treatment match: `$($pe.matches_expected)`
           - semantic observation: `$($o.semantic_observation.status)`
           - semantic elements: `$($o.semantic_observation.element_count)`
           - window capture: `$($o.window_capture.status)`
           - interactive input: `$($o.interactive_input.status)`
-          - target process machine: `$($o.target.process_machine)`
+          - IsWow64Process2 process machine: `$($o.target.process_machine)` (supplemental; not used to classify Windows-on-Arm execution)
           - native machine: `$($o.target.native_machine)`
-          - emulated: `$($o.target.emulated)`
 
           This is hosted-native characterization evidence only. It does not establish controlled interactive WinBot/native-desktop acceptance.
           "@ >> $env:GITHUB_STEP_SUMMARY
           } else {
-            "### Hosted native observation — ${{ matrix.name }}`n`nNo observation.json was produced; inspect build/job logs." >> $env:GITHUB_STEP_SUMMARY
+            "### Hosted native observation — ${{ matrix.name }}`n`nComplete architecture/observation evidence was not produced; inspect build/job logs." >> $env:GITHUB_STEP_SUMMARY
           }
 
       - name: Upload observation evidence
