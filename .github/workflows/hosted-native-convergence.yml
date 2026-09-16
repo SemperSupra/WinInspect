@@ -114,14 +114,10 @@ jobs:
           $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
           ./scripts/Invoke-AxeWindowsConformance.ps1 -GuiPath $gui.FullName -OutputDirectory 'evidence/axe-windows'
 
-      - name: Exercise all-panel keyboard traversal
+      - name: Exercise all-panel native keyboard traversal
         shell: pwsh
         run: |
           $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationClientsideProviders
-          $providerAssembly = [Reflection.Assembly]::Load('UIAutomationClientsideProviders')
-          [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providerAssembly.GetName())
           ./scripts/Invoke-HostedNativeKeyboardConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/keyboard-conformance.json'
 
       - name: Exercise High Contrast rendering
@@ -158,12 +154,12 @@ jobs:
           - PR head: `$($candidate.pr_head_sha)`
           - checkout projection: `$($candidate.checkout_sha)`
           - Axe errors: `$($axe.error_count)`
-          - keyboard: `$($keyboard.status)`
+          - native keyboard: `$($keyboard.status)`
           - High Contrast: `$($hc.status)`
           - reversible all-panel DPI: `$($dpi.status)`
           - visible focus: `$($focus.status)`
 
-          One transformed source tree was built once and exercised by the independent hosted-native HCI oracles. This remains hosted-native qualification evidence, not controlled interactive WinBot/native-desktop acceptance.
+          One transformed source tree was built once and exercised by independent hosted-native oracles. Axe.Windows owns semantic accessibility; the keyboard lane owns native focus/traversal. This remains hosted-native qualification evidence, not controlled interactive WinBot/native-desktop acceptance.
           "@ >> $env:GITHUB_STEP_SUMMARY
 
       - name: Upload convergence evidence
