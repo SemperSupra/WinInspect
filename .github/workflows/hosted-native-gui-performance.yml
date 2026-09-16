@@ -1,0 +1,98 @@
+name: Hosted native GUI performance characterization
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'scripts/Measure-HostedNativeGuiPerformance.ps1'
+      - '.github/workflows/hosted-native-gui-performance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  characterize:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            cmake_arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply exact HCI candidate
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeHciRepair.ps1
+          ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'HCI candidate introduced whitespace errors.' }
+
+      - name: Configure GUI
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI build failed.' }
+
+      - name: Characterize launch readiness and responsiveness
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
+          ./scripts/Measure-HostedNativeGuiPerformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/gui-performance.json' -Repetitions 5
+
+      - name: Emit performance summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path 'evidence/gui-performance.json') {
+            $p = Get-Content 'evidence/gui-performance.json' -Raw | ConvertFrom-Json
+            @"
+          ### Hosted native GUI performance characterization — ${{ matrix.name }}
+
+          - first launch to HWND: `$($p.first_launch_hwnd_ms) ms`
+          - first launch to primary UIA affordance: `$($p.first_launch_uia_ms) ms`
+          - subsequent launch median to HWND: `$($p.subsequent_hwnd_median_ms) ms`
+          - subsequent launch median to primary UIA affordance: `$($p.subsequent_uia_median_ms) ms`
+          - median WM_NULL response: `$($p.wm_null_median_of_medians_ms) ms`
+          - median working set: `$($p.working_set_median_bytes) bytes`
+          - median CPU over 250 ms settle sample: `$($p.cpu_sample_median_ms) ms`
+
+          Characterization only: these architectures use different hosted OS/SKU images and are not ranked against each other. No arbitrary UX threshold is asserted. ETW/WPR is reserved for a measured regression or unexplained variance.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### Hosted native GUI performance characterization — ${{ matrix.name }}`n`nNo performance evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-gui-performance-${{ matrix.name }}
+          path: evidence/gui-performance.json
+          if-no-files-found: warn
+          retention-days: 14
