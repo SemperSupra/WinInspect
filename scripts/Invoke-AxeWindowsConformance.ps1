@@ -79,6 +79,7 @@ try
     };
 
     var tabResults = new List<object>();
+    var allErrorDetails = new List<object>();
     var totalErrors = 0;
     var totalWindows = 0;
 
@@ -102,14 +103,47 @@ try
         var errors = windows.Sum(w => w.ErrorCount);
         totalErrors += errors;
         totalWindows += windows.Length;
+
+        var tabErrorDetails = windows
+            .SelectMany(w => w.Errors)
+            .Select(e => new
+            {
+                tab_id = tab.Id,
+                tab_name = tab.Name,
+                rule_id = e.Rule.ID.ToString(),
+                description = e.Rule.Description,
+                how_to_fix = e.Rule.HowToFix,
+                standard = e.Rule.Standard.ToString(),
+                property_id = e.Rule.PropertyID,
+                condition = e.Rule.Condition,
+                element_properties = e.Element.Properties,
+                element_patterns = e.Element.Patterns.ToArray()
+            })
+            .Cast<object>()
+            .ToArray();
+
+        allErrorDetails.AddRange(tabErrorDetails);
         tabResults.Add(new
         {
             tab_id = tab.Id,
             tab_name = tab.Name,
             window_count = windows.Length,
-            error_count = errors
+            error_count = errors,
+            errors = tabErrorDetails
         });
+
         Console.WriteLine($"Axe.Windows tab={tab.Name} windows={windows.Length} errors={errors}.");
+        foreach (var detail in windows.SelectMany(w => w.Errors))
+        {
+            detail.Element.Properties.TryGetValue("Name", out var elementName);
+            detail.Element.Properties.TryGetValue("AutomationId", out var automationId);
+            detail.Element.Properties.TryGetValue("ControlType", out var controlType);
+            detail.Element.Properties.TryGetValue("ClassName", out var className);
+            Console.WriteLine(
+                $"AXE_ERROR tab={tab.Name} rule={detail.Rule.ID} " +
+                $"name={JsonSerializer.Serialize(elementName)} automation_id={JsonSerializer.Serialize(automationId)} " +
+                $"control_type={JsonSerializer.Serialize(controlType)} class={JsonSerializer.Serialize(className)}");
+        }
     }
 
     var summary = new
@@ -121,6 +155,7 @@ try
         error_count = totalErrors,
         axe_windows_version = "2.4.2",
         tabs = tabResults,
+        errors = allErrorDetails,
         timestamp_utc = DateTime.UtcNow.ToString("O")
     };
 
