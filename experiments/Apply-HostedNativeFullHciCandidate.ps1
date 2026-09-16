@@ -16,8 +16,10 @@ $steps = @(
 foreach ($step in $steps) {
     $path = Join-Path $PSScriptRoot $step
     if (-not (Test-Path -LiteralPath $path)) { throw "Required HCI transform missing: $step" }
+    # PowerShell scripts signal failure by throwing under ErrorActionPreference=Stop.
+    # Do not inspect inherited $LASTEXITCODE here: a child script may invoke native
+    # commands internally and leave a stale value even after completing successfully.
     & $path
-    if ($LASTEXITCODE -ne 0) { throw "HCI transform failed: $step" }
 }
 
 git diff --check
