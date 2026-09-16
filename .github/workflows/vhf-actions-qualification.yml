@@ -1,0 +1,161 @@
+name: Public VHF Actions qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/vhf-actions-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vhf-preflight:
+    name: VHF build and hosted-runner feasibility
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      WDS_SHA: 97429c5623590d52f001249460daf43e6749d777
+    steps:
+      - name: Check out public deploy plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Record hosted Windows boundary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          $admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $secureBoot = $null
+          try { $secureBoot = Confirm-SecureBootUEFI } catch { $secureBoot = "unavailable:$($_.Exception.Message)" }
+          $inventory = [ordered]@{
+            experiment = 'wininspect-381-vhf-actions-preflight'
+            repository = $env:GITHUB_REPOSITORY
+            commit = $env:GITHUB_SHA
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            windows_caption = $os.Caption
+            windows_version = $os.Version
+            windows_build = $os.BuildNumber
+            manufacturer = $computer.Manufacturer
+            model = $computer.Model
+            process_is_admin = $admin
+            secure_boot = $secureBoot
+            windows_driver_samples_sha = $env:WDS_SHA
+          }
+          $inventory | ConvertTo-Json -Depth 5 | Set-Content evidence/runner.json -Encoding utf8
+          Get-Content evidence/runner.json
+
+      - name: Acquire pinned Microsoft driver samples
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --filter=blob:none --no-checkout https://github.com/microsoft/Windows-driver-samples.git wds
+          git -C wds checkout $env:WDS_SHA -- packages.config Directory.Build.props Directory.Build.targets Build-Samples.ps1 Get-NtTargetVersions.ps1 exclusions.csv hid/vhidmini2
+          git -C wds rev-parse HEAD | Tee-Object -FilePath evidence/wds-head.txt
+
+      - name: Restore Microsoft WDK NuGet packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          nuget help | Select-Object -First 3 | Set-Content evidence/nuget-version.txt
+          nuget restore wds/packages.config -PackagesDirectory wds/packages -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed: $LASTEXITCODE" }
+          Get-ChildItem wds/packages -Directory | Select-Object -ExpandProperty Name | Sort-Object | Set-Content evidence/wdk-packages.txt
+          Get-Content evidence/wdk-packages.txt
+
+      - name: Build Microsoft's vhidmini2 sample
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found' }
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw 'MSBuild.exe not found' }
+          & $msbuild -version | Tee-Object -FilePath evidence/msbuild-version.txt
+          & $msbuild wds/hid/vhidmini2/vhidmini2.sln /m /t:Restore,Build /p:Configuration=Release /p:Platform=x64 /bl:evidence/vhidmini2.binlog
+          if ($LASTEXITCODE -ne 0) { throw "vhidmini2 build failed: $LASTEXITCODE" }
+          Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Include *.sys,*.inf,*.cat,*.exe |
+            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} |
+            ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
+          Get-Content evidence/build-artifacts.json
+
+      - name: Classify driver install capability
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $inf = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Filter vhidmini.inf | Where-Object { $_.FullName -match '\\x64\\|\\Release\\' } | Select-Object -First 1
+          if (-not $inf) {
+            $inf = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Filter vhidmini.inf | Select-Object -First 1
+          }
+          $result = [ordered]@{
+            attempted = $false
+            inf = if ($inf) { $inf.FullName } else { $null }
+            exit_code = $null
+            classification = 'no-built-inf'
+            output = @()
+          }
+          if ($inf) {
+            $result.attempted = $true
+            $lines = & pnputil.exe /add-driver $inf.FullName /install 2>&1
+            $code = $LASTEXITCODE
+            $result.exit_code = $code
+            $result.output = @($lines | ForEach-Object { "$_" })
+            if ($code -eq 0) {
+              $result.classification = 'hosted-runner-driver-install-accepted'
+            } else {
+              $joined = ($result.output -join "`n")
+              if ($joined -match 'signature|signed|publisher|hash') {
+                $result.classification = 'hosted-runner-signing-boundary'
+              } elseif ($joined -match 'reboot|restart') {
+                $result.classification = 'hosted-runner-reboot-boundary'
+              } elseif ($joined -match 'access|denied|privilege|administrator') {
+                $result.classification = 'hosted-runner-privilege-boundary'
+              } else {
+                $result.classification = 'hosted-runner-install-unsupported-or-other'
+              }
+            }
+          }
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/install-capability.json -Encoding utf8
+          Get-Content evidence/install-capability.json
+
+      - name: Enumerate HID and Raw Input-adjacent evidence if install succeeded
+        shell: pwsh
+        run: |
+          $install = Get-Content evidence/install-capability.json | ConvertFrom-Json
+          $devices = Get-PnpDevice -Class HIDClass -ErrorAction SilentlyContinue |
+            Select-Object Status,Class,FriendlyName,InstanceId
+          $devices | ConvertTo-Json -Depth 5 | Set-Content evidence/hid-enumeration.json -Encoding utf8
+          if ($install.classification -eq 'hosted-runner-driver-install-accepted') {
+            Write-Host 'Driver installation was accepted on the hosted runner; retain enumeration as evidence.'
+          } else {
+            Write-Host "Driver load/enumeration is not claimed; classification: $($install.classification)"
+          }
+
+      - name: Summarize disposition
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = [ordered]@{
+            build = if (Test-Path evidence/build-artifacts.json) { 'completed' } else { 'not-completed' }
+            install = if (Test-Path evidence/install-capability.json) { (Get-Content evidence/install-capability.json | ConvertFrom-Json).classification } else { 'not-attempted' }
+            next = 'Keep GitHub Actions as first executor. Only escalate installation/runtime cells to WinBot if hosted runner evidence establishes a concrete signing, privilege, reboot, or device-runtime boundary.'
+          }
+          $summary | ConvertTo-Json -Depth 4 | Set-Content evidence/summary.json -Encoding utf8
+          Get-Content evidence/summary.json
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vhf-actions-qualification
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
