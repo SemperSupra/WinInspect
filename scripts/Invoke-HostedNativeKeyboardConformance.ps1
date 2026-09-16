@@ -25,6 +25,19 @@ public static class KeyboardNative {
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetFocus(IntPtr hWnd);
 }
 '@
 
@@ -74,7 +87,25 @@ try {
     if (-not $nativeTabStop) { throw 'Connect does not carry the native WS_TABSTOP style after keyboard-access normalization.' }
 
     [KeyboardNative]::SetForegroundWindow($hwnd) | Out-Null
-    $connect.SetFocus()
+    [uint32]$targetPid = 0
+    $targetThread = [KeyboardNative]::GetWindowThreadProcessId($connectHwnd, [ref]$targetPid)
+    $currentThread = [KeyboardNative]::GetCurrentThreadId()
+    if ($targetThread -eq 0) { throw 'Could not resolve GUI thread for Connect.' }
+
+    $attached = $false
+    try {
+        if ($targetThread -ne $currentThread) {
+            $attached = [KeyboardNative]::AttachThreadInput($currentThread, $targetThread, $true)
+            if (-not $attached) { throw 'AttachThreadInput failed while establishing hosted keyboard focus.' }
+        }
+        [KeyboardNative]::SetFocus($connectHwnd) | Out-Null
+    }
+    finally {
+        if ($attached) {
+            [KeyboardNative]::AttachThreadInput($currentThread, $targetThread, $false) | Out-Null
+        }
+    }
+
     Start-Sleep -Milliseconds 200
     $initial = Get-FocusRecord
     if ($null -eq $initial -or $initial.name -ne 'Connect') {
@@ -106,6 +137,7 @@ try {
         connect_native_style = ('0x{0:X}' -f $connectStyle)
         connect_native_tabstop = $nativeTabStop
         connect_uia_keyboard_focusable = $connect.Current.IsKeyboardFocusable
+        focus_establishment = 'AttachThreadInput+SetFocus'
         initial_focus = $initial
         after_tab = $forward
         after_shift_tab = $reverse
