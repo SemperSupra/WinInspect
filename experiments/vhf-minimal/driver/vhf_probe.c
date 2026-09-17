@@ -1,4 +1,4 @@
-#include <windows.h>
+#include <ntddk.h>
 #include <wdf.h>
 #include <vhf.h>
 
@@ -7,33 +7,17 @@ EVT_WDF_DRIVER_DEVICE_ADD WinInspectVhfEvtDeviceAdd;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP WinInspectVhfEvtCleanup;
 
 static const UCHAR g_KeyboardReportDescriptor[] = {
-    0x05, 0x01,       /* Usage Page (Generic Desktop) */
-    0x09, 0x06,       /* Usage (Keyboard) */
-    0xA1, 0x01,       /* Collection (Application) */
-    0x05, 0x07,       /*   Usage Page (Keyboard/Keypad) */
-    0x19, 0xE0,       /*   Usage Minimum (Left Control) */
-    0x29, 0xE7,       /*   Usage Maximum (Right GUI) */
-    0x15, 0x00,       /*   Logical Minimum (0) */
-    0x25, 0x01,       /*   Logical Maximum (1) */
-    0x75, 0x01,       /*   Report Size (1) */
-    0x95, 0x08,       /*   Report Count (8) */
-    0x81, 0x02,       /*   Input (Data,Var,Abs) */
-    0x95, 0x01,       /*   Report Count (1) */
-    0x75, 0x08,       /*   Report Size (8) */
-    0x81, 0x01,       /*   Input (Const,Array,Abs) */
-    0x95, 0x06,       /*   Report Count (6) */
-    0x75, 0x08,       /*   Report Size (8) */
-    0x15, 0x00,       /*   Logical Minimum (0) */
-    0x25, 0x65,       /*   Logical Maximum (101) */
-    0x05, 0x07,       /*   Usage Page (Keyboard/Keypad) */
-    0x19, 0x00,       /*   Usage Minimum (0) */
-    0x29, 0x65,       /*   Usage Maximum (101) */
-    0x81, 0x00,       /*   Input (Data,Array,Abs) */
-    0xC0              /* End Collection */
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
+    0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7,
+    0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+    0x95, 0x08, 0x81, 0x02,
+    0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+    0x95, 0x06, 0x75, 0x08, 0x15, 0x00,
+    0x25, 0x65, 0x05, 0x07, 0x19, 0x00,
+    0x29, 0x65, 0x81, 0x00, 0xC0
 };
 
 typedef struct _VHF_PROBE_CONTEXT {
-    WDFIOTARGET IoTarget;
     VHFHANDLE VhfHandle;
 } VHF_PROBE_CONTEXT, *PVHF_PROBE_CONTEXT;
 
@@ -64,7 +48,6 @@ WinInspectVhfEvtDeviceAdd(
     NTSTATUS status;
     WDFDEVICE device;
     WDF_OBJECT_ATTRIBUTES attributes;
-    WDF_IO_TARGET_OPEN_PARAMS openParams;
     PVHF_PROBE_CONTEXT context;
     VHF_CONFIG vhfConfig;
 
@@ -79,23 +62,11 @@ WinInspectVhfEvtDeviceAdd(
     }
 
     context = WinInspectVhfGetContext(device);
-    context->IoTarget = NULL;
     context->VhfHandle = NULL;
-
-    status = WdfIoTargetCreate(device, WDF_NO_OBJECT_ATTRIBUTES, &context->IoTarget);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_FILE(&openParams, NULL);
-    status = WdfIoTargetOpen(context->IoTarget, &openParams);
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
 
     VHF_CONFIG_INIT(
         &vhfConfig,
-        WdfIoTargetWdmGetTargetFileHandle(context->IoTarget),
+        WdfDeviceWdmGetDeviceObject(device),
         (USHORT)sizeof(g_KeyboardReportDescriptor),
         (PUCHAR)g_KeyboardReportDescriptor);
     vhfConfig.VendorID = 0x1209;
@@ -127,9 +98,5 @@ WinInspectVhfEvtCleanup(
     if (context->VhfHandle != NULL) {
         VhfDelete(context->VhfHandle, TRUE);
         context->VhfHandle = NULL;
-    }
-    if (context->IoTarget != NULL) {
-        WdfIoTargetClose(context->IoTarget);
-        context->IoTarget = NULL;
     }
 }

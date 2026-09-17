@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   vhf-source-start:
-    name: Minimal UMDF2 VHF source-device start
+    name: Minimal KMDF VHF source-device start
     runs-on: windows-2025-vs2026
     timeout-minutes: 35
     env:
@@ -36,7 +36,7 @@ jobs:
           $os = Get-CimInstance Win32_OperatingSystem
           $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
           [ordered]@{
-            experiment = 'wininspect-381-minimal-umdf-vhf-source-start'
+            experiment = 'wininspect-381-minimal-kmdf-vhf-source-start'
             commit = $env:GITHUB_SHA
             runner_os = $env:RUNNER_OS
             runner_arch = $env:RUNNER_ARCH
@@ -60,11 +60,31 @@ jobs:
           New-Item -ItemType Directory -Force wds/hid/wininspect_vhf_probe | Out-Null
           Copy-Item experiments/vhf-minimal/driver/* wds/hid/wininspect_vhf_probe/ -Force
 
-      - name: Build original minimal VHF source fixture
+      - name: Inventory VHF libraries in hosted toolchain
+        shell: pwsh
+        run: |
+          $roots = @(
+            (Resolve-Path wds/packages).Path,
+            'C:\Program Files (x86)\Windows Kits\10\Lib'
+          ) | Where-Object { Test-Path $_ }
+          $found = foreach ($root in $roots) {
+            Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -ieq 'VhfKm.lib' -or $_.Name -ieq 'VhfUm.lib' } |
+              Select-Object Name,FullName,Length
+          }
+          $found | Sort-Object Name,FullName | ConvertTo-Json -Depth 4 | Set-Content evidence/vhf-library-inventory.json -Encoding utf8
+          [ordered]@{
+            vhfkm_count = @($found | Where-Object Name -ieq 'VhfKm.lib').Count
+            vhfum_count = @($found | Where-Object Name -ieq 'VhfUm.lib').Count
+          } | ConvertTo-Json | Set-Content evidence/vhf-library-counts.json -Encoding utf8
+          Get-Content evidence/vhf-library-counts.json
+
+      - name: Build documented KMDF VHF source fixture
         id: build
         shell: pwsh
         continue-on-error: true
         run: |
+          $buildCode = 1
           Push-Location wds
           try {
             ./Build-Samples.ps1 `
@@ -74,19 +94,24 @@ jobs:
               -RunMode NuGet `
               -ThrottleLimit 1 `
               -Verbose
-            $buildCode = $LASTEXITCODE
+            $buildCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+          }
+          catch {
+            $_ | Out-String | Set-Content ../evidence/build-exception.txt
+            $buildCode = 1
           }
           finally { Pop-Location }
           Copy-Item wds/_logs -Destination evidence/wds-build-logs -Recurse -Force -ErrorAction SilentlyContinue
-          $artifacts = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Include *.dll,*.inf,*.cat |
-            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}}
+          $artifacts = @(Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Include *.sys,*.inf,*.cat |
+            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}})
           $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/vhf-build-artifacts.json -Encoding utf8
           [ordered]@{
             exit_code = $buildCode
-            dll_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.dll$' })
+            sys_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.sys$' })
             inf_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.inf$' })
             cat_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.cat$' })
           } | ConvertTo-Json | Set-Content evidence/vhf-build-result.json -Encoding utf8
+          Get-Content evidence/vhf-build-result.json
           if ($buildCode -ne 0) { exit $buildCode }
 
       - name: Sign, stage, create, and start source device
@@ -194,15 +219,19 @@ jobs:
           $result.hid_children = $hid
           $source | ConvertTo-Json -Depth 6 | Set-Content evidence/source-device.json -Encoding utf8
           $hid | ConvertTo-Json -Depth 6 | Set-Content evidence/hid-child.json -Encoding utf8
-          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 500 -ErrorAction SilentlyContinue |
-            Set-Content evidence/setupapi-tail.txt
+          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 500 -ErrorAction SilentlyContinue | Set-Content evidence/setupapi-tail.txt
 
           $sourceOk = [bool]($source | Where-Object { $_.Status -eq 'OK' })
           $hidOk = [bool]($hid | Where-Object { $_.Status -eq 'OK' })
           if ($sourceOk -and $hidOk) {
-            $result.classification = 'actual-vhf-source-started-and-keyboard-child-enumerated'
+            $result.classification = 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated'
           } elseif ($sourceOk) {
             $result.classification = 'source-started-but-vhf-hid-child-not-observed'
+          } elseif ($result.install_exit_code -ne 0) {
+            $joined = $result.install_output -join "`n"
+            if ($joined -match 'signature|signed|certificate|hash') { $result.classification = 'kernel-load-signing-boundary' }
+            elseif ($joined -match 'reboot|restart') { $result.classification = 'kernel-load-reboot-boundary' }
+            else { $result.classification = 'source-device-not-started' }
           } else {
             $result.classification = 'source-device-not-started'
           }
@@ -218,7 +247,7 @@ jobs:
 
           $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
           Get-Content evidence/vhf-start-result.json
-          if ($result.classification -ne 'actual-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
+          if ($result.classification -ne 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
 
       - name: Summarize disposition
         if: always()
@@ -226,25 +255,30 @@ jobs:
         run: |
           $build = if (Test-Path evidence/vhf-build-result.json) { Get-Content evidence/vhf-build-result.json | ConvertFrom-Json } else { $null }
           $start = if (Test-Path evidence/vhf-start-result.json) { Get-Content evidence/vhf-start-result.json | ConvertFrom-Json } else { $null }
+          $libs = if (Test-Path evidence/vhf-library-counts.json) { Get-Content evidence/vhf-library-counts.json | ConvertFrom-Json } else { $null }
           [ordered]@{
-            experiment = 'wininspect-381-minimal-umdf-vhf-source-start'
+            experiment = 'wininspect-381-minimal-kmdf-vhf-source-start'
             discovery_only = $true
-            fixture = 'original minimal WinInspect UMDF2 VHF keyboard source; no broker or product contract'
+            fixture = 'minimal documented KMDF VHF keyboard source; no broker or product contract'
+            vhfkm_count = if ($libs) { $libs.vhfkm_count } else { $null }
+            vhfum_count = if ($libs) { $libs.vhfum_count } else { $null }
             build = if ($build) { $build } else { 'not-recorded' }
             source_start = if ($start) { $start.classification } else { 'not-attempted' }
-            next = if ($start -and $start.classification -eq 'actual-vhf-source-started-and-keyboard-child-enumerated') {
+            next = if ($start -and $start.classification -eq 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') {
               'Next cell: common probe + idle control + SendInput control + one VhfReadReportSubmit make/break.'
+            } elseif ($libs -and $libs.vhfum_count -gt 0) {
+              'KMDF result is recorded; user-mode VHF library is present, so separately qualify the pinned Microsoft DMF UMDF sample.'
             } else {
-              'Stop at the exact build/start boundary unless one causal variable changes.'
+              'Stop at the exact build/start boundary unless one causal variable changes; DMF UMDF remains a separate packaging/toolchain question.'
             }
           } | ConvertTo-Json -Depth 8 | Set-Content evidence/summary.json -Encoding utf8
           Get-Content evidence/summary.json
 
-      - name: Upload VHF source-start evidence
+      - name: Upload VHF qualification evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vhf-source-start
+          name: vhf-kmdf-source-start
           path: evidence/
           if-no-files-found: error
           retention-days: 14

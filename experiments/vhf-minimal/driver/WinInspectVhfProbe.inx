@@ -1,12 +1,12 @@
-; Minimal experimental UMDF2 VHF source-device package for WinInspect qualification.
-; This is a disposable test fixture, not a product driver package.
+; Minimal experimental KMDF VHF source-device package for WinInspect qualification.
+; Disposable test fixture, not a product driver package.
 
 [Version]
 Signature="$WINDOWS NT$"
 Class=System
 ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
 Provider=%ProviderName%
-DriverVer=09/17/2026,0.0.0.1
+DriverVer=09/17/2026,0.0.0.2
 CatalogFile=WinInspectVhfProbe.cat
 PnpLockdown=1
 
@@ -23,40 +23,38 @@ DriverCopy=13
 1=%DiskName%,,,
 
 [SourceDisksFiles]
-WinInspectVhfProbe.dll=1
+WinInspectVhfProbe.sys=1
 
 [DriverCopy]
-WinInspectVhfProbe.dll
+WinInspectVhfProbe.sys
 
 [DeviceInstall.NT]
 CopyFiles=DriverCopy
-Include=wudfrd.inf
-Needs=WUDFRD.NT
 
 [DeviceInstall.NT.HW]
 AddReg=VhfAddReg
-Include=wudfrd.inf
-Needs=WUDFRD.NT.HW
 
 [VhfAddReg]
-HKR,,"LowerFilters",0x00010008,"vhf"
-HKR,,VhfMode,0x00010001,0x1
+HKR,,"LowerFilters",0x00010000,"vhf"
 
 [DeviceInstall.NT.Services]
-Include=wudfrd.inf
-Needs=WUDFRD.NT.Services
+AddService=WinInspectVhfProbe,0x00000002,ServiceInstall
+
+[ServiceInstall]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\WinInspectVhfProbe.sys
 
 [DeviceInstall.NT.Wdf]
-UmdfService=WinInspectVhfProbe,WinInspectVhfProbe_Install
-UmdfServiceOrder=WinInspectVhfProbe
-UmdfHostProcessSharing=ProcessSharingDisabled
-UmdfHostPriority=PriorityHigh
+KmdfService=WinInspectVhfProbe,KmdfInstall
 
-[WinInspectVhfProbe_Install]
-UmdfLibraryVersion=$UMDFVERSION$
-ServiceBinary="%13%\WinInspectVhfProbe.dll"
+[KmdfInstall]
+KmdfLibraryVersion=$KMDFVERSION$
 
 [Strings]
 ProviderName="WinInspect Experimental Fixture"
-DeviceName="WinInspect VHF Probe Source Device"
+DeviceName="WinInspect KMDF VHF Probe Source Device"
+ServiceName="WinInspect KMDF VHF Probe"
 DiskName="WinInspect VHF Probe Installation Disk"
