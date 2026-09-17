@@ -1,0 +1,62 @@
+; Minimal experimental UMDF2 VHF source-device package for WinInspect qualification.
+; This is a disposable test fixture, not a product driver package.
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%ProviderName%
+DriverVer=09/17/2026,0.0.0.1
+CatalogFile=WinInspectVhfProbe.cat
+PnpLockdown=1
+
+[Manufacturer]
+%ProviderName%=Models,NT$ARCH$.10.0...22000
+
+[Models.NT$ARCH$.10.0...22000]
+%DeviceName%=DeviceInstall,ROOT\WININSPECT\VHFPROBE
+
+[DestinationDirs]
+DriverCopy=13
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+WinInspectVhfProbe.dll=1
+
+[DriverCopy]
+WinInspectVhfProbe.dll
+
+[DeviceInstall.NT]
+CopyFiles=DriverCopy
+Include=wudfrd.inf
+Needs=WUDFRD.NT
+
+[DeviceInstall.NT.HW]
+AddReg=VhfAddReg
+Include=wudfrd.inf
+Needs=WUDFRD.NT.HW
+
+[VhfAddReg]
+HKR,,"LowerFilters",0x00010008,"vhf"
+HKR,,VhfMode,0x00010001,0x1
+
+[DeviceInstall.NT.Services]
+Include=wudfrd.inf
+Needs=WUDFRD.NT.Services
+
+[DeviceInstall.NT.Wdf]
+UmdfService=WinInspectVhfProbe,WinInspectVhfProbe_Install
+UmdfServiceOrder=WinInspectVhfProbe
+UmdfHostProcessSharing=ProcessSharingDisabled
+UmdfHostPriority=PriorityHigh
+
+[WinInspectVhfProbe_Install]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary="%13%\WinInspectVhfProbe.dll"
+
+[Strings]
+ProviderName="WinInspect Experimental Fixture"
+DeviceName="WinInspect VHF Probe Source Device"
+DiskName="WinInspect VHF Probe Installation Disk"
