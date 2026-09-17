@@ -177,35 +177,56 @@ jobs:
           wine_bin=$(cat evidence/wine-bin.txt)
           export DISPLAY=:99
           export WINEARCH=win64
-          export WINEPREFIX="$PWD/evidence/wineprefix"
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
           export WINEDEBUG=-all
+          rm -rf "$WINEPREFIX"
+
+          "$wine_bin" cmd /c exit > evidence/wine-prefix-init.txt 2>&1
+          prefix_rc=$?
+          wineserver -w 2>> evidence/wine-prefix-init.txt
+          if [ "$prefix_rc" -ne 0 ]; then
+            printf '{"classification":"wine-prefix-init-failed","prefix_exit_code":%d}\n' "$prefix_rc" > evidence/wine-result.json
+            cat evidence/wine-prefix-init.txt
+            exit 1
+          fi
 
           "$wine_bin" "$PWD/evidence/wine_input_probe.exe" > evidence/probe.jsonl 2> evidence/probe.stderr &
           wine_pid=$!
           ready=false
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 60); do
             grep -q '"event":"probe_ready"' evidence/probe.jsonl 2>/dev/null && { ready=true; break; }
+            if ! kill -0 "$wine_pid" 2>/dev/null; then break; fi
             sleep 0.5
           done
           if [ "$ready" != true ]; then
-            echo '{"classification":"wine-probe-not-ready"}' > evidence/wine-result.json
+            probe_rc='running'
+            if ! kill -0 "$wine_pid" 2>/dev/null; then
+              wait "$wine_pid"; probe_rc=$?
+            fi
+            {
+              echo "probe_process=$probe_rc"
+              echo '--- probe stdout ---'
+              cat evidence/probe.jsonl 2>/dev/null || true
+              echo '--- probe stderr ---'
+              cat evidence/probe.stderr 2>/dev/null || true
+              echo '--- Xorg tail ---'
+              tail -80 evidence/Xorg.log 2>/dev/null || true
+            } > evidence/readiness-diagnostics.txt
+            printf '{"classification":"wine-probe-not-ready","probe_process":"%s"}\n' "$probe_rc" > evidence/wine-result.json
             exit 1
           fi
 
-          # Idle negative control: allow focus/setup chatter, but no input events.
           idle_start=$(wc -l < evidence/probe.jsonl)
           sleep 2
           idle_end=$(wc -l < evidence/probe.jsonl)
           sed -n "$((idle_start+1)),${idle_end}p" evidence/probe.jsonl > evidence/phase-idle.jsonl
 
-          # Same-session Win32 synthetic-input control.
           "$wine_bin" "$PWD/evidence/sendinput_control.exe" > evidence/sendinput-control.txt 2>&1
           send_rc=$?
           sleep 1
           send_end=$(wc -l < evidence/probe.jsonl)
           sed -n "$((idle_end+1)),${send_end}p" evidence/probe.jsonl > evidence/phase-sendinput.jsonl
 
-          # Restore the probe edit control to the foreground, then inject only via uinput.
           "$wine_bin" "$PWD/evidence/sendinput_control.exe" --focus-only > evidence/focus-control.txt 2>&1
           focus_rc=$?
           sleep 0.25
@@ -262,6 +283,31 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wine-uinput-w1
-          path: evidence/
+          path: |
+            evidence/environment.txt
+            evidence/packages-installed.txt
+            evidence/wine-bin.txt
+            evidence/wine-version.txt
+            evidence/mingw-version.txt
+            evidence/wine_input_probe.exe
+            evidence/sendinput_control.exe
+            evidence/uinput-hosted-probe
+            evidence/fixture-sha256.txt
+            evidence/xorg.conf
+            evidence/Xorg.log
+            evidence/xorg-stdout.txt
+            evidence/wine-prefix-init.txt
+            evidence/probe.jsonl
+            evidence/probe.stderr
+            evidence/readiness-diagnostics.txt
+            evidence/phase-idle.jsonl
+            evidence/phase-sendinput.jsonl
+            evidence/phase-uinput.jsonl
+            evidence/sendinput-control.txt
+            evidence/focus-control.txt
+            evidence/uinput-emitter.txt
+            evidence/uinput-emitter.err
+            evidence/wine-result.json
+            evidence/summary.md
           if-no-files-found: error
           retention-days: 14
