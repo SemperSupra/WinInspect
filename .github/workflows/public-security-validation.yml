@@ -161,10 +161,12 @@ jobs:
           sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf" -logfile "$xorg_log" \
             > evidence/xorg-stdout.txt 2>&1 &
           xorg_pid=$!
+          trace_pid=''
+          probe_pid=''
           cleanup() {
-            kill "${trace_pid:-0}" 2>/dev/null || true
-            kill "${probe_pid:-0}" 2>/dev/null || true
-            sudo kill "$xorg_pid" 2>/dev/null || true
+            if [ -n "${trace_pid:-}" ] && [ "$trace_pid" -gt 1 ] 2>/dev/null; then kill "$trace_pid" 2>/dev/null || true; fi
+            if [ -n "${probe_pid:-}" ] && [ "$probe_pid" -gt 1 ] 2>/dev/null; then kill "$probe_pid" 2>/dev/null || true; fi
+            if [ -n "${xorg_pid:-}" ] && [ "$xorg_pid" -gt 1 ] 2>/dev/null; then sudo kill "$xorg_pid" 2>/dev/null || true; fi
           }
           trap cleanup EXIT
 
@@ -190,11 +192,11 @@ jobs:
           device_seen_rc=$?
           wait "$probe_pid"
           probe_rc=$?
-          probe_pid=0
+          probe_pid=''
           sleep 0.5
           kill "$trace_pid" 2>/dev/null || true
           wait "$trace_pid" 2>/dev/null || true
-          trace_pid=0
+          trace_pid=''
 
           grep -q 'RawKeyPress' evidence/xi2-events.txt
           press_rc=$?
