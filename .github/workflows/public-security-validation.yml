@@ -60,7 +60,7 @@ jobs:
           retention-days: 14
 
   wine-uinput-hosted-preflight:
-    name: Wine uinput hosted boundary preflight
+    name: Wine uinput Xorg/libinput boundary preflight
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'experiment/379-wine-uinput-actions-preflight' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -70,30 +70,41 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Record runner and input boundary
+      - name: Record runner and uinput prerequisite
         shell: bash
         run: |
           set -u
           mkdir -p evidence
           {
-            echo "experiment=wininspect-379-wine-uinput-hosted-preflight"
+            echo "experiment=wininspect-379-wine-uinput-xorg-preflight"
             echo "commit=$GITHUB_SHA"
             echo "runner_os=$RUNNER_OS"
             echo "runner_arch=$RUNNER_ARCH"
             uname -a
             cat /etc/os-release
-          } > evidence/environment.txt
-
-          {
             echo '--- /dev/uinput ---'
             ls -l /dev/uinput 2>&1 || true
             echo '--- /dev/input ---'
             ls -la /dev/input 2>&1 || true
-            echo '--- modules containing uinput ---'
-            grep -i '^uinput ' /proc/modules 2>&1 || true
-          } > evidence/input-before.txt
+          } > evidence/environment.txt
 
-      - name: Probe uinput capability
+      - name: Install minimal Xorg/libinput fixture if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for pkg in xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils; do
+            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || missing+=("$pkg")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Installing only missing packages: %s\n' "${missing[*]}" | tee evidence/packages-installed.txt
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+          else
+            echo 'All required Xorg/libinput packages already present.' | tee evidence/packages-installed.txt
+          fi
+
+      - name: Prove Xorg consumes the named uinput device and event
         shell: bash
         run: |
           set +e
@@ -103,46 +114,111 @@ jobs:
             -o evidence/uinput-hosted-probe
           compile_rc=$?
           if [ "$compile_rc" -ne 0 ]; then
-            printf '{"classification":"probe-compile-failed","compile_exit_code":%d}\n' "$compile_rc" > evidence/uinput-result.json
+            printf '{"classification":"probe-compile-failed","compile_exit_code":%d}\n' "$compile_rc" > evidence/xorg-result.json
             exit 0
           fi
 
-          modprobe_attempted=false
-          modprobe_rc=null
           if [ ! -e /dev/uinput ]; then
-            modprobe_attempted=true
-            sudo modprobe uinput > evidence/modprobe.out 2>&1
-            rc=$?
-            modprobe_rc=$rc
-          fi
-
-          if [ ! -e /dev/uinput ]; then
-            printf '{"classification":"hosted-runner-uinput-unavailable","modprobe_attempted":%s,"modprobe_exit_code":%s}\n' \
-              "$modprobe_attempted" "$modprobe_rc" > evidence/uinput-result.json
+            printf '{"classification":"hosted-runner-uinput-prerequisite-regressed"}\n' > evidence/xorg-result.json
             exit 0
           fi
 
-          ls -l /dev/uinput > evidence/uinput-device.txt 2>&1
+          cat > evidence/xorg.conf <<'EOF'
+          Section "ServerFlags"
+              Option "AutoAddDevices" "true"
+              Option "AutoEnableDevices" "true"
+              Option "AllowMouseOpenFail" "true"
+              Option "DontVTSwitch" "true"
+          EndSection
+          Section "Device"
+              Identifier "DummyDevice"
+              Driver "dummy"
+              VideoRam 256000
+          EndSection
+          Section "Monitor"
+              Identifier "DummyMonitor"
+              HorizSync 5.0 - 1000.0
+              VertRefresh 5.0 - 200.0
+              Modeline "1024x768" 65.0 1024 1048 1184 1344 768 771 777 806
+          EndSection
+          Section "Screen"
+              Identifier "DummyScreen"
+              Device "DummyDevice"
+              Monitor "DummyMonitor"
+              DefaultDepth 24
+              SubSection "Display"
+                  Depth 24
+                  Modes "1024x768"
+              EndSubSection
+          EndSection
+          Section "ServerLayout"
+              Identifier "DummyLayout"
+              Screen "DummyScreen"
+          EndSection
+          EOF
+
+          xorg_log="$PWD/evidence/Xorg.log"
+          sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf" -logfile "$xorg_log" \
+            > evidence/xorg-stdout.txt 2>&1 &
+          xorg_pid=$!
+          cleanup() {
+            kill "${trace_pid:-0}" 2>/dev/null || true
+            kill "${probe_pid:-0}" 2>/dev/null || true
+            sudo kill "$xorg_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          x_ready=false
+          for _ in $(seq 1 20); do
+            DISPLAY=:99 xset q >/dev/null 2>&1 && { x_ready=true; break; }
+            sleep 0.5
+          done
+          if [ "$x_ready" != true ]; then
+            printf '{"classification":"xorg-dummy-start-failed"}\n' > evidence/xorg-result.json
+            exit 0
+          fi
+
+          DISPLAY=:99 stdbuf -oL xinput test-xi2 --root > evidence/xi2-events.txt 2>&1 &
+          trace_pid=$!
+          sleep 0.5
           sudo evidence/uinput-hosted-probe > evidence/probe.out 2> evidence/probe.err &
           probe_pid=$!
           sleep 1
-          grep -H . /sys/class/input/*/device/name > evidence/input-names.txt 2>&1 || true
-          grep -q 'WinInspect-Actions-Probe-Keyboard' evidence/input-names.txt
-          observed_rc=$?
+          DISPLAY=:99 xinput list --long > evidence/xinput-list.txt 2>&1
+          xinput_rc=$?
+          grep -q 'WinInspect-Actions-Probe-Keyboard' evidence/xinput-list.txt
+          device_seen_rc=$?
           wait "$probe_pid"
           probe_rc=$?
+          probe_pid=0
+          sleep 0.5
+          kill "$trace_pid" 2>/dev/null || true
+          wait "$trace_pid" 2>/dev/null || true
+          trace_pid=0
 
-          if [ "$probe_rc" -eq 0 ] && [ "$observed_rc" -eq 0 ]; then
-            classification='hosted-runner-uinput-device-created-and-observed'
-          elif [ "$probe_rc" -eq 0 ]; then
-            classification='uinput-created-but-sysfs-observation-missing'
+          grep -q 'RawKeyPress' evidence/xi2-events.txt
+          press_rc=$?
+          grep -q 'RawKeyRelease' evidence/xi2-events.txt
+          release_rc=$?
+          grep -q 'WinInspect-Actions-Probe-Keyboard' evidence/Xorg.log
+          log_device_rc=$?
+
+          if [ "$xinput_rc" -eq 0 ] && [ "$device_seen_rc" -eq 0 ] && [ "$probe_rc" -eq 0 ] && [ "$press_rc" -eq 0 ] && [ "$release_rc" -eq 0 ]; then
+            classification='xorg-libinput-consumed-uinput-device-and-key-event'
+          elif [ "$device_seen_rc" -eq 0 ] && [ "$probe_rc" -eq 0 ]; then
+            classification='xorg-observed-device-but-xi2-event-not-confirmed'
+          elif [ "$log_device_rc" -eq 0 ]; then
+            classification='xorg-log-observed-device-but-xinput-path-incomplete'
           else
-            classification='uinput-device-create-failed'
+            classification='xorg-did-not-consume-uinput-device'
           fi
 
-          printf '{"classification":"%s","modprobe_attempted":%s,"modprobe_exit_code":%s,"probe_exit_code":%d,"sysfs_name_observed":%s}\n' \
-            "$classification" "$modprobe_attempted" "$modprobe_rc" "$probe_rc" \
-            "$([ "$observed_rc" -eq 0 ] && echo true || echo false)" > evidence/uinput-result.json
+          printf '{"classification":"%s","xinput_exit_code":%d,"device_seen":%s,"probe_exit_code":%d,"raw_key_press_seen":%s,"raw_key_release_seen":%s,"xorg_log_device_seen":%s}\n' \
+            "$classification" "$xinput_rc" \
+            "$([ "$device_seen_rc" -eq 0 ] && echo true || echo false)" "$probe_rc" \
+            "$([ "$press_rc" -eq 0 ] && echo true || echo false)" \
+            "$([ "$release_rc" -eq 0 ] && echo true || echo false)" \
+            "$([ "$log_device_rc" -eq 0 ] && echo true || echo false)" > evidence/xorg-result.json
 
       - name: Summarize discovery disposition
         if: always()
@@ -150,26 +226,26 @@ jobs:
         run: |
           set -u
           result='not-recorded'
-          if [ -f evidence/uinput-result.json ]; then
-            result=$(python3 -c "import json; print(json.load(open('evidence/uinput-result.json'))['classification'])")
+          if [ -f evidence/xorg-result.json ]; then
+            result=$(python3 -c "import json; print(json.load(open('evidence/xorg-result.json'))['classification'])")
           fi
           {
-            echo "# Wine/uinput hosted discovery"
+            echo '# Wine/uinput Xorg/libinput discovery'
             echo
             echo "Result: \`$result\`"
             echo
-            if [ "$result" = 'hosted-runner-uinput-device-created-and-observed' ]; then
-              echo 'Next causal cell: qualify a real input-consuming display server before Wine injection.'
+            if [ "$result" = 'xorg-libinput-consumed-uinput-device-and-key-event' ]; then
+              echo 'Next causal cell: add pinned Wine + common Win32 probe with idle and SendInput controls.'
             else
-              echo 'Stop hosted uinput work at this boundary unless one causal variable changes; do not substitute XTest/xdotool.'
+              echo 'Stop at this display/input boundary unless one causal variable changes.'
             fi
           } | tee evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload uinput discovery evidence
+      - name: Upload Xorg/uinput discovery evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: wine-uinput-hosted-preflight
+          name: wine-uinput-xorg-preflight
           path: evidence/
           if-no-files-found: error
           retention-days: 14
