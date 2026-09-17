@@ -4,10 +4,13 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+
+static const char *k_device_name = "WinInspect-Actions-Probe-Keyboard";
 
 static void sleep_ms(long ms) {
     struct timespec ts;
@@ -15,6 +18,46 @@ static void sleep_ms(long ms) {
     ts.tv_nsec = (ms % 1000) * 1000000L;
     while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {
     }
+}
+
+static int file_contains(const char *path, const char *needle) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return 0;
+    }
+    char line[2048];
+    int found = 0;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (strstr(line, needle) != NULL) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+static int wait_for_xorg_attachment(void) {
+    const char *path = getenv("WININSPECT_XORG_LOG");
+    if (!path || path[0] == '\0') {
+        path = "evidence/Xorg.log";
+    }
+
+    char needle[512];
+    snprintf(needle, sizeof(needle), "XINPUT: Adding extended input device \"%s\"", k_device_name);
+
+    for (int i = 0; i < 100; ++i) {
+        if (file_contains(path, needle)) {
+            printf("xorg_attached=%s\n", k_device_name);
+            fflush(stdout);
+            sleep_ms(250);
+            return 0;
+        }
+        sleep_ms(100);
+    }
+
+    fprintf(stderr, "Xorg attachment was not observed in %s within 10 seconds\n", path);
+    return -1;
 }
 
 static int emit_event(int fd, unsigned short type, unsigned short code, int value) {
@@ -58,7 +101,7 @@ int main(void) {
     setup.id.bustype = BUS_VIRTUAL;
     setup.id.vendor = 0x1D6B;
     setup.id.product = 0x0104;
-    snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "WinInspect-Actions-Probe-Keyboard");
+    snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "%s", k_device_name);
 
     if (ioctl(fd, UI_DEV_SETUP, &setup) < 0) {
         fprintf(stderr, "UI_DEV_SETUP failed: errno=%d (%s)\n", errno, strerror(errno));
@@ -71,9 +114,14 @@ int main(void) {
         return 5;
     }
 
-    printf("created=WinInspect-Actions-Probe-Keyboard\n");
+    printf("created=%s\n", k_device_name);
     fflush(stdout);
-    sleep_ms(3000);
+
+    if (wait_for_xorg_attachment() < 0) {
+        ioctl(fd, UI_DEV_DESTROY);
+        close(fd);
+        return 7;
+    }
 
     if (emit_key_a(fd) < 0) {
         fprintf(stderr, "event emission failed: errno=%d (%s)\n", errno, strerror(errno));
