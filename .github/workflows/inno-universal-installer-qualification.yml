@@ -150,7 +150,18 @@ jobs:
             $actual = Hashes
             foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
               $want = $expected.architectures[$arch][$v][$name]
-              if ($actual[$name] -ne $want) { throw "$name hash mismatch for $arch/$v" }
+              if ($actual[$name] -ne $want) {
+                $matches = @()
+                foreach ($candidateArch in @('x64','arm64')) {
+                  foreach ($candidateVersion in @('a','b')) {
+                    if ($actual[$name] -eq $expected.architectures[$candidateArch][$candidateVersion][$name]) {
+                      $matches += "$candidateArch/$candidateVersion"
+                    }
+                  }
+                }
+                $matchText = if ($matches.Count) { $matches -join ',' } else { 'none' }
+                throw "$name hash mismatch for $arch/$v actual=$($actual[$name]) expected=$want matches=$matchText"
+              }
             }
           }
           function Machine([string]$path) {
