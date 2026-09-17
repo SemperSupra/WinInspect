@@ -105,17 +105,28 @@ jobs:
           "$wine_bin" --version | tee evidence/wine-version.txt
           x86_64-w64-mingw32-g++ --version | head -1 | tee evidence/mingw-version.txt
 
-      - name: Build public-safe Win32 controls and native uinput emitter
+      - name: Build self-contained Win32 controls and native uinput emitter
         shell: bash
         run: |
           set -euo pipefail
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static-libgcc -static-libstdc++ \
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++ \
             experiments/wine-uinput/wine_input_probe.cpp -o evidence/wine_input_probe.exe -luser32
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static-libgcc -static-libstdc++ \
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++ \
             experiments/wine-uinput/sendinput_control.cpp -o evidence/sendinput_control.exe -luser32
           gcc -std=c11 -O2 -Wall -Wextra -Werror \
             experiments/wine-uinput/uinput-hosted-probe.c -o evidence/uinput-hosted-probe
           sha256sum evidence/wine_input_probe.exe evidence/sendinput_control.exe evidence/uinput-hosted-probe > evidence/fixture-sha256.txt
+
+          {
+            echo '--- wine_input_probe.exe ---'
+            x86_64-w64-mingw32-objdump -p evidence/wine_input_probe.exe | grep 'DLL Name:' || true
+            echo '--- sendinput_control.exe ---'
+            x86_64-w64-mingw32-objdump -p evidence/sendinput_control.exe | grep 'DLL Name:' || true
+          } | tee evidence/pe-imports.txt
+          if grep -Eqi 'lib(winpthread|gcc|stdc\+\+)[^ ]*\.dll' evidence/pe-imports.txt; then
+            echo 'Unexpected MinGW runtime DLL dependency remains.' >&2
+            exit 2
+          fi
 
       - name: Run idle, SendInput, and uinput phases in one Wine session
         id: matrix
@@ -183,7 +194,7 @@ jobs:
 
           "$wine_bin" cmd /c exit > evidence/wine-prefix-init.txt 2>&1
           prefix_rc=$?
-          wineserver -w 2>> evidence/wine-prefix-init.txt
+          command -v wineserver >/dev/null 2>&1 && wineserver -w 2>> evidence/wine-prefix-init.txt || true
           if [ "$prefix_rc" -ne 0 ]; then
             printf '{"classification":"wine-prefix-init-failed","prefix_exit_code":%d}\n' "$prefix_rc" > evidence/wine-result.json
             cat evidence/wine-prefix-init.txt
@@ -293,6 +304,7 @@ jobs:
             evidence/sendinput_control.exe
             evidence/uinput-hosted-probe
             evidence/fixture-sha256.txt
+            evidence/pe-imports.txt
             evidence/xorg.conf
             evidence/Xorg.log
             evidence/xorg-stdout.txt
