@@ -25,17 +25,23 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # pull_request normally checks out GitHub's synthetic merge commit. This
+          # experiment's transform is bound to the candidate branch bytes, so use
+          # the exact PR head instead; workflow_dispatch falls back to github.sha.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Record treatment identity
         shell: pwsh
         run: |
+          $checkedOutSha = (git rev-parse HEAD).Trim()
           [ordered]@{
             runner = '${{ matrix.runner }}'
             requestedArchitecture = '${{ matrix.arch }}'
             os = [System.Environment]::OSVersion.VersionString
             osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
             processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
-            sha = $env:GITHUB_SHA
+            sha = $checkedOutSha
             repair = 'existing-NSIS-product-file writeability preflight before mutation'
           } | ConvertTo-Json | Set-Content treatment.json -Encoding utf8NoBOM
 
@@ -190,11 +196,12 @@ jobs:
             $lockedResults += [ordered]@{ file = $name; exit = $r.exit; retainedVersion = 'failclosed-a'; retainedExactHashes = $true; status = 'PASS_FAIL_CLOSED' }
           }
 
+          $checkedOutSha = (git rev-parse HEAD).Trim()
           [ordered]@{
             schemaVersion = 1
             runner = '${{ matrix.runner }}'
             architecture = '${{ matrix.arch }}'
-            sourceSha = $env:GITHUB_SHA
+            sourceSha = $checkedOutSha
             treatment = 'NSIS existing-install writeability preflight'
             normalUpgrade = [ordered]@{ exit = $normal.exit; status = 'PASS' }
             normalRollback = [ordered]@{ exit = $rollback.exit; exactHashesRestored = $true; status = 'PASS' }
