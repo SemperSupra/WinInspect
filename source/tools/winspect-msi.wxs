@@ -1,0 +1,43 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="WinInspect"
+      Manufacturer="Mark E. DeYoung"
+      Version="$(ProductVersion)"
+      UpgradeCode="BFC7AE35-46B8-42B7-B584-62DA39BA1F02"
+      Scope="perUser">
+
+    <!-- Keep removal of the accepted old product inside the MSI transaction so
+         a failed major upgrade can restore the prior version during rollback. -->
+    <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="WinInspect">
+        <Component Id="DaemonComponent" Guid="*">
+          <File Id="DaemonExe" Source="$(Payload)\wininspectd.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="CliComponent" Guid="*">
+          <File Id="CliExe" Source="$(Payload)\wininspect.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="GuiComponent" Guid="*">
+          <File Id="GuiExe" Source="$(Payload)\wininspect-gui.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="ConfigComponent" Guid="*">
+          <File Id="ConfigDefault" Source="source\config.default.json" KeyPath="yes" />
+        </Component>
+        <Component Id="LicenseComponent" Guid="*">
+          <File Id="LicenseFile" Source="source\LICENSE" KeyPath="yes" />
+          <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="WinInspect" Level="1">
+      <ComponentRef Id="DaemonComponent" />
+      <ComponentRef Id="CliComponent" />
+      <ComponentRef Id="GuiComponent" />
+      <ComponentRef Id="ConfigComponent" />
+      <ComponentRef Id="LicenseComponent" />
+    </Feature>
+  </Package>
+</Wix>
