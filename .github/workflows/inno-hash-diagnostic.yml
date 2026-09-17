@@ -1,0 +1,106 @@
+name: Inno installed-payload identity diagnostic
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/inno-hash-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+            expected_machine: 34404
+          - runner: windows-11-arm
+            arch: arm64
+            expected_machine: 43620
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Download exact first-rep installer artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-universal-installers
+          path: dist
+          repository: SemperSupra/WinInspect
+          run-id: '35191437009'
+          github-token: ${{ github.token }}
+
+      - name: Install and classify exact payload identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arch = '${{ matrix.arch }}'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $installer = (Resolve-Path 'dist/WinInspect-Inno-hosted-a.exe').Path
+          $expected = Get-Content 'dist/expected-hashes.json' -Raw | ConvertFrom-Json -AsHashtable
+          $p = Start-Process $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Install failed: $($p.ExitCode)" }
+
+          function Machine([string]$path) {
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $pe = [BitConverter]::ToInt32($bytes,0x3c)
+            return [BitConverter]::ToUInt16($bytes,$pe+4)
+          }
+
+          $rows = @()
+          $mismatch = $false
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $path = Join-Path $root $name
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $want = [string]$expected['architectures'][$arch]['a'][$name]
+            $x64Want = [string]$expected['architectures']['x64']['a'][$name]
+            $armWant = [string]$expected['architectures']['arm64']['a'][$name]
+            $machine = Machine $path
+            $row = [ordered]@{
+              file = $name
+              bytes = (Get-Item $path).Length
+              machine = $machine
+              actual = $actual
+              expected = $want
+              matchesExpected = ($actual -eq $want)
+              matchesX64A = ($actual -eq $x64Want)
+              matchesArm64A = ($actual -eq $armWant)
+            }
+            $rows += [pscustomobject]$row
+            if ($actual -ne $want) { $mismatch = $true }
+          }
+
+          $displayVersion = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect_is1' -Name DisplayVersion -ErrorAction Stop).DisplayVersion
+          $evidence = [ordered]@{
+            schemaVersion = 1
+            runner = '${{ matrix.runner }}'
+            requestedArchitecture = $arch
+            osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            displayVersion = $displayVersion
+            files = $rows
+          }
+          $evidence | ConvertTo-Json -Depth 6 | Set-Content "diagnostic-$arch.json" -Encoding utf8NoBOM
+          $rows | Format-Table -AutoSize | Out-String -Width 240 | Write-Host
+          Get-Content "diagnostic-$arch.json"
+
+          $uninstaller = Join-Path $root 'unins000.exe'
+          if (Test-Path $uninstaller) {
+            $u = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+            Write-Host "Uninstall exit=$($u.ExitCode)"
+          }
+          if ($mismatch) { throw 'Installed payload hashes differ from expected source payload hashes; see diagnostic evidence above.' }
+          if (($rows | Where-Object machine -ne ${{ matrix.expected_machine }}).Count -ne 0) { throw 'Installed PE machine does not match requested native architecture.' }
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: inno-hash-diagnostic-${{ matrix.arch }}
+          path: diagnostic-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 7
