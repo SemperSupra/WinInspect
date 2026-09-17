@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: public-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   zizmor:
     name: GitHub Actions security (zizmor)
@@ -52,5 +56,120 @@ jobs:
         with:
           name: scorecard-sarif
           path: results.sarif
+          if-no-files-found: error
+          retention-days: 14
+
+  wine-uinput-hosted-preflight:
+    name: Wine uinput hosted boundary preflight
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'experiment/379-wine-uinput-actions-preflight' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Record runner and input boundary
+        shell: bash
+        run: |
+          set -u
+          mkdir -p evidence
+          {
+            echo "experiment=wininspect-379-wine-uinput-hosted-preflight"
+            echo "commit=$GITHUB_SHA"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            uname -a
+            cat /etc/os-release
+          } > evidence/environment.txt
+
+          {
+            echo '--- /dev/uinput ---'
+            ls -l /dev/uinput 2>&1 || true
+            echo '--- /dev/input ---'
+            ls -la /dev/input 2>&1 || true
+            echo '--- modules containing uinput ---'
+            grep -i '^uinput ' /proc/modules 2>&1 || true
+          } > evidence/input-before.txt
+
+      - name: Probe uinput capability
+        shell: bash
+        run: |
+          set +e
+          mkdir -p evidence
+          gcc -std=c11 -Wall -Wextra -Werror -O2 \
+            experiments/wine-uinput/uinput-hosted-probe.c \
+            -o evidence/uinput-hosted-probe
+          compile_rc=$?
+          if [ "$compile_rc" -ne 0 ]; then
+            printf '{"classification":"probe-compile-failed","compile_exit_code":%d}\n' "$compile_rc" > evidence/uinput-result.json
+            exit 0
+          fi
+
+          modprobe_attempted=false
+          modprobe_rc=null
+          if [ ! -e /dev/uinput ]; then
+            modprobe_attempted=true
+            sudo modprobe uinput > evidence/modprobe.out 2>&1
+            rc=$?
+            modprobe_rc=$rc
+          fi
+
+          if [ ! -e /dev/uinput ]; then
+            printf '{"classification":"hosted-runner-uinput-unavailable","modprobe_attempted":%s,"modprobe_exit_code":%s}\n' \
+              "$modprobe_attempted" "$modprobe_rc" > evidence/uinput-result.json
+            exit 0
+          fi
+
+          ls -l /dev/uinput > evidence/uinput-device.txt 2>&1
+          sudo evidence/uinput-hosted-probe > evidence/probe.out 2> evidence/probe.err &
+          probe_pid=$!
+          sleep 1
+          grep -H . /sys/class/input/*/device/name > evidence/input-names.txt 2>&1 || true
+          grep -q 'WinInspect-Actions-Probe-Keyboard' evidence/input-names.txt
+          observed_rc=$?
+          wait "$probe_pid"
+          probe_rc=$?
+
+          if [ "$probe_rc" -eq 0 ] && [ "$observed_rc" -eq 0 ]; then
+            classification='hosted-runner-uinput-device-created-and-observed'
+          elif [ "$probe_rc" -eq 0 ]; then
+            classification='uinput-created-but-sysfs-observation-missing'
+          else
+            classification='uinput-device-create-failed'
+          fi
+
+          printf '{"classification":"%s","modprobe_attempted":%s,"modprobe_exit_code":%s,"probe_exit_code":%d,"sysfs_name_observed":%s}\n' \
+            "$classification" "$modprobe_attempted" "$modprobe_rc" "$probe_rc" \
+            "$([ "$observed_rc" -eq 0 ] && echo true || echo false)" > evidence/uinput-result.json
+
+      - name: Summarize discovery disposition
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          result='not-recorded'
+          if [ -f evidence/uinput-result.json ]; then
+            result=$(python3 -c "import json; print(json.load(open('evidence/uinput-result.json'))['classification'])")
+          fi
+          {
+            echo "# Wine/uinput hosted discovery"
+            echo
+            echo "Result: \`$result\`"
+            echo
+            if [ "$result" = 'hosted-runner-uinput-device-created-and-observed' ]; then
+              echo 'Next causal cell: qualify a real input-consuming display server before Wine injection.'
+            else
+              echo 'Stop hosted uinput work at this boundary unless one causal variable changes; do not substitute XTest/xdotool.'
+            fi
+          } | tee evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload uinput discovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wine-uinput-hosted-preflight
+          path: evidence/
           if-no-files-found: error
           retention-days: 14
