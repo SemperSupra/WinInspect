@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/vhf-actions-qualification.yml'
+      - 'experiments/vhf-minimal/**'
   workflow_dispatch:
 
 permissions:
@@ -15,12 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  vhf-preflight:
-    name: VHF build/sign/stage hosted-runner feasibility
+  vhf-source-start:
+    name: Minimal UMDF2 VHF source-device start
     runs-on: windows-2025-vs2026
     timeout-minutes: 35
     env:
       WDS_SHA: 97429c5623590d52f001249460daf43e6749d777
+      HARDWARE_ID: 'ROOT\WININSPECT\VHFPROBE'
     steps:
       - name: Check out public deploy plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,182 +34,217 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path evidence | Out-Null
           $os = Get-CimInstance Win32_OperatingSystem
-          $computer = Get-CimInstance Win32_ComputerSystem
           $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-          $admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-          $secureBoot = $null
-          try { $secureBoot = Confirm-SecureBootUEFI } catch { $secureBoot = "unavailable:$($_.Exception.Message)" }
           [ordered]@{
-            experiment = 'wininspect-381-vhf-actions-sign-stage'
-            repository = $env:GITHUB_REPOSITORY
+            experiment = 'wininspect-381-minimal-umdf-vhf-source-start'
             commit = $env:GITHUB_SHA
             runner_os = $env:RUNNER_OS
             runner_arch = $env:RUNNER_ARCH
             windows_caption = $os.Caption
             windows_version = $os.Version
             windows_build = $os.BuildNumber
-            manufacturer = $computer.Manufacturer
-            model = $computer.Model
-            process_is_admin = $admin
-            secure_boot = $secureBoot
+            process_is_admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            hardware_id = $env:HARDWARE_ID
             windows_driver_samples_sha = $env:WDS_SHA
           } | ConvertTo-Json -Depth 5 | Set-Content evidence/runner.json -Encoding utf8
-          Get-Content evidence/runner.json
 
-      - name: Acquire pinned Microsoft driver samples
+      - name: Acquire pinned Microsoft driver build harness
         shell: pwsh
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/microsoft/Windows-driver-samples.git wds
           if ($LASTEXITCODE -ne 0) { throw "clone failed: $LASTEXITCODE" }
           git -C wds checkout $env:WDS_SHA
           if ($LASTEXITCODE -ne 0) { throw "pinned checkout failed: $LASTEXITCODE" }
-          git -C wds rev-parse HEAD | Tee-Object -FilePath evidence/wds-head.txt
-          if (-not (Test-Path wds/packages.config)) { throw 'packages.config missing after pinned checkout' }
-
-      - name: Restore Microsoft WDK NuGet packages
-        shell: pwsh
-        run: |
           nuget restore wds/packages.config -PackagesDirectory wds/packages -NonInteractive
           if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed: $LASTEXITCODE" }
-          Get-ChildItem wds/packages -Directory | Select-Object -ExpandProperty Name | Sort-Object | Set-Content evidence/wdk-packages.txt
+          New-Item -ItemType Directory -Force wds/hid/wininspect_vhf_probe | Out-Null
+          Copy-Item experiments/vhf-minimal/driver/* wds/hid/wininspect_vhf_probe/ -Force
 
-      - name: Build Microsoft vhidmini2 control fixture
+      - name: Build original minimal VHF source fixture
+        id: build
         shell: pwsh
+        continue-on-error: true
         run: |
           Push-Location wds
           try {
             ./Build-Samples.ps1 `
-              -Samples 'hid.vhidmini2' `
+              -Samples 'hid.wininspect_vhf_probe' `
               -Configurations 'Release' `
               -Platforms 'x64' `
               -RunMode NuGet `
               -ThrottleLimit 1 `
               -Verbose
-            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Build-Samples failed: $LASTEXITCODE" }
+            $buildCode = $LASTEXITCODE
           }
           finally { Pop-Location }
           Copy-Item wds/_logs -Destination evidence/wds-build-logs -Recurse -Force -ErrorAction SilentlyContinue
-          $artifacts = Get-ChildItem wds/hid/vhidmini2 -Recurse -File -Include *.dll,*.sys,*.inf,*.cat,*.exe |
+          $artifacts = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Include *.dll,*.inf,*.cat |
             Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}}
-          $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
-          if (-not ($artifacts | Where-Object { $_.FullName -match 'VhidminiUm\.inf$' })) { throw 'UMDF2 fixture INF was not produced.' }
+          $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/vhf-build-artifacts.json -Encoding utf8
+          [ordered]@{
+            exit_code = $buildCode
+            dll_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.dll$' })
+            inf_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.inf$' })
+            cat_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.cat$' })
+          } | ConvertTo-Json | Set-Content evidence/vhf-build-result.json -Encoding utf8
+          if ($buildCode -ne 0) { exit $buildCode }
 
-      - name: Test-sign, trust, and stage UMDF2 package
-        id: stage
+      - name: Sign, stage, create, and start source device
+        if: steps.build.outcome == 'success'
+        id: start
         shell: pwsh
         continue-on-error: true
         run: |
           $result = [ordered]@{
-            attempted = $false
-            inf = $null
-            catalog = $null
-            certificate_thumbprint = $null
+            classification = 'not-attempted'
             signature_status = $null
-            pnputil_exit_code = $null
             published_name = $null
-            cleanup_exit_code = $null
-            classification = 'fixture-not-found'
-            output = @()
-            cleanup_output = @()
+            devgen = $null
+            devgen_exit_code = $null
+            devgen_output = @()
+            install_exit_code = $null
+            install_output = @()
+            source_devices = @()
+            hid_children = @()
+            cleanup = @()
           }
 
-          $inf = Get-ChildItem wds/hid/vhidmini2/driver/umdf2 -Recurse -File -Filter 'VhidminiUm.inf' |
-            Where-Object { Test-Path (Join-Path $_.Directory.FullName 'wudf.cat') } |
+          $inf = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Filter 'WinInspectVhfProbe.inf' |
+            Where-Object { Test-Path (Join-Path $_.Directory.FullName 'WinInspectVhfProbe.cat') } |
             Select-Object -First 1
           if (-not $inf) {
-            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/sign-stage.json -Encoding utf8
-            throw 'Packaged UMDF2 INF/catalog pair was not found.'
+            $result.classification = 'built-package-not-found'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
           }
-
-          $cat = Join-Path $inf.Directory.FullName 'wudf.cat'
-          $result.attempted = $true
-          $result.inf = $inf.FullName
-          $result.catalog = $cat
+          $cat = Join-Path $inf.Directory.FullName 'WinInspectVhfProbe.cat'
 
           $cert = New-SelfSignedCertificate `
             -Type CodeSigningCert `
-            -Subject 'CN=WinInspect CI Test Driver Signing' `
+            -Subject 'CN=WinInspect VHF CI Test Signing' `
             -CertStoreLocation 'Cert:\LocalMachine\My' `
             -HashAlgorithm SHA256 `
             -KeyLength 2048 `
             -KeyExportPolicy Exportable `
             -NotAfter (Get-Date).AddDays(1)
-          $result.certificate_thumbprint = $cert.Thumbprint
-          Export-Certificate -Cert $cert -FilePath evidence/wininspect-ci-test-driver.cer -Force | Out-Null
-          Import-Certificate -FilePath evidence/wininspect-ci-test-driver.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
-          Import-Certificate -FilePath evidence/wininspect-ci-test-driver.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+          Export-Certificate -Cert $cert -FilePath evidence/wininspect-vhf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/wininspect-vhf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/wininspect-vhf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
 
           $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
             Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
             Sort-Object FullName -Descending |
             Select-Object -ExpandProperty FullName -First 1
-          if (-not $signtool) { throw 'signtool.exe not found in restored SDK/WDK packages.' }
-          $signtool | Set-Content evidence/signtool-path.txt
+          if (-not $signtool) { throw 'signtool.exe not found' }
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat | Out-File evidence/sign.txt
+          if ($LASTEXITCODE -ne 0) { throw "catalog signing failed: $LASTEXITCODE" }
+          $result.signature_status = [string](Get-AuthenticodeSignature -FilePath $cat).Status
 
-          & $signtool sign /v /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat 2>&1 | Tee-Object -FilePath evidence/signtool-sign.txt
-          if ($LASTEXITCODE -ne 0) {
-            $result.classification = 'test-sign-failed'
-            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/sign-stage.json -Encoding utf8
-            throw "signtool sign failed: $LASTEXITCODE"
-          }
-          & $signtool verify /v /pa $cat 2>&1 | Tee-Object -FilePath evidence/signtool-verify.txt
-          $signature = Get-AuthenticodeSignature -FilePath $cat
-          $result.signature_status = [string]$signature.Status
-
-          $lines = & pnputil.exe /add-driver $inf.FullName 2>&1
-          $code = $LASTEXITCODE
-          $result.pnputil_exit_code = $code
-          $result.output = @($lines | ForEach-Object { "$_" })
-          $joined = $result.output -join "`n"
-          $published = [regex]::Match($joined, '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          $stageLines = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stageJoined = $stageLines -join "`n"
+          $published = [regex]::Match($stageJoined, '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
           if ($published.Success) { $result.published_name = $published.Groups[1].Value }
-
-          if ($code -eq 0) {
-            $result.classification = 'hosted-runner-signed-package-staged'
-          }
-          elseif ($joined -match 'signature|signed|publisher|hash|certificate') {
-            $result.classification = 'hosted-runner-signing-boundary-persists'
-          }
-          elseif ($joined -match 'access|denied|privilege|administrator') {
-            $result.classification = 'hosted-runner-privilege-boundary'
-          }
-          else {
-            $result.classification = 'hosted-runner-stage-unsupported-or-other'
+          $stageLines | Set-Content evidence/stage.txt
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
           }
 
+          $devgenCandidates = @(
+            (Get-Command devgen.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
+            (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devgen.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\devgen\.exe$' } |
+              Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1),
+            (Get-ChildItem wds/packages -Recurse -File -Filter devgen.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\devgen\.exe$' } |
+              Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1)
+          ) | Where-Object { $_ } | Select-Object -Unique
+          $devgen = $devgenCandidates | Select-Object -First 1
+          $result.devgen = $devgen
+          if (-not $devgen) {
+            $result.classification = 'devgen-unavailable-on-hosted-runner'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
+          }
+
+          $devgenLines = & $devgen /add /bus ROOT /hardwareid $env:HARDWARE_ID 2>&1
+          $result.devgen_exit_code = $LASTEXITCODE
+          $result.devgen_output = @($devgenLines | ForEach-Object { "$_" })
+          if ($result.devgen_exit_code -ne 0) {
+            $result.classification = 'root-devnode-create-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
+          }
+
+          Start-Sleep -Seconds 2
+          $installLines = & pnputil.exe /add-driver $inf.FullName /install 2>&1
+          $result.install_exit_code = $LASTEXITCODE
+          $result.install_output = @($installLines | ForEach-Object { "$_" })
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+            Where-Object { $_.InstanceId -like 'ROOT\WININSPECT\VHFPROBE*' } |
+            Select-Object Status,Class,FriendlyName,InstanceId,Problem,ProblemDescription)
+          $hid = @(Get-PnpDevice -PresentOnly -Class HIDClass -ErrorAction SilentlyContinue |
+            Where-Object { $_.InstanceId -match 'VID_1209&PID_0266' } |
+            Select-Object Status,Class,FriendlyName,InstanceId,Problem,ProblemDescription)
+          $result.source_devices = $source
+          $result.hid_children = $hid
+          $source | ConvertTo-Json -Depth 6 | Set-Content evidence/source-device.json -Encoding utf8
+          $hid | ConvertTo-Json -Depth 6 | Set-Content evidence/hid-child.json -Encoding utf8
+          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 500 -ErrorAction SilentlyContinue |
+            Set-Content evidence/setupapi-tail.txt
+
+          $sourceOk = [bool]($source | Where-Object { $_.Status -eq 'OK' })
+          $hidOk = [bool]($hid | Where-Object { $_.Status -eq 'OK' })
+          if ($sourceOk -and $hidOk) {
+            $result.classification = 'actual-vhf-source-started-and-keyboard-child-enumerated'
+          } elseif ($sourceOk) {
+            $result.classification = 'source-started-but-vhf-hid-child-not-observed'
+          } else {
+            $result.classification = 'source-device-not-started'
+          }
+
+          foreach ($dev in $source) {
+            $lines = & pnputil.exe /remove-device $dev.InstanceId 2>&1
+            $result.cleanup += @($lines | ForEach-Object { "$_" })
+          }
           if ($result.published_name) {
-            $cleanup = & pnputil.exe /delete-driver $result.published_name /uninstall /force 2>&1
-            $result.cleanup_exit_code = $LASTEXITCODE
-            $result.cleanup_output = @($cleanup | ForEach-Object { "$_" })
+            $lines = & pnputil.exe /delete-driver $result.published_name /uninstall /force 2>&1
+            $result.cleanup += @($lines | ForEach-Object { "$_" })
           }
 
-          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/sign-stage.json -Encoding utf8
-          Get-Content evidence/sign-stage.json
-          if ($code -ne 0) { exit 1 }
+          $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+          Get-Content evidence/vhf-start-result.json
+          if ($result.classification -ne 'actual-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
 
       - name: Summarize disposition
         if: always()
         shell: pwsh
         run: |
-          $stage = if (Test-Path evidence/sign-stage.json) { Get-Content evidence/sign-stage.json | ConvertFrom-Json } else { $null }
+          $build = if (Test-Path evidence/vhf-build-result.json) { Get-Content evidence/vhf-build-result.json | ConvertFrom-Json } else { $null }
+          $start = if (Test-Path evidence/vhf-start-result.json) { Get-Content evidence/vhf-start-result.json | ConvertFrom-Json } else { $null }
           [ordered]@{
-            experiment = 'wininspect-381-vhf-actions-sign-stage'
+            experiment = 'wininspect-381-minimal-umdf-vhf-source-start'
             discovery_only = $true
-            fixture = 'Microsoft vhidmini2 UMDF2 control fixture; not VHF runtime evidence'
-            signing_stage = if ($stage) { $stage.classification } else { 'not-attempted' }
-            next = if ($stage -and $stage.classification -eq 'hosted-runner-signed-package-staged') {
-              'Run the next causal cell: actual VHF fixture plus source-device creation/start. Do not infer VHF runtime success from this control.'
+            fixture = 'original minimal WinInspect UMDF2 VHF keyboard source; no broker or product contract'
+            build = if ($build) { $build } else { 'not-recorded' }
+            source_start = if ($start) { $start.classification } else { 'not-attempted' }
+            next = if ($start -and $start.classification -eq 'actual-vhf-source-started-and-keyboard-child-enumerated') {
+              'Next cell: common probe + idle control + SendInput control + one VhfReadReportSubmit make/break.'
             } else {
-              'Stop hosted Windows at the recorded boundary unless one causal variable is changed.'
+              'Stop at the exact build/start boundary unless one causal variable changes.'
             }
-          } | ConvertTo-Json -Depth 5 | Set-Content evidence/summary.json -Encoding utf8
+          } | ConvertTo-Json -Depth 8 | Set-Content evidence/summary.json -Encoding utf8
           Get-Content evidence/summary.json
 
-      - name: Upload qualification evidence
+      - name: Upload VHF source-start evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vhf-actions-sign-stage
+          name: vhf-source-start
           path: evidence/
           if-no-files-found: error
           retention-days: 14
