@@ -22,7 +22,9 @@ DefaultGroupName=WinInspect
 OutputDir={#OutputDir}
 OutputBaseFilename=WinInspect-Inno-{#AppVersion}
 PrivilegesRequired=lowest
-SetupArchitecture=x86
+; Keep the default x86 Setup engine. It runs on x64 Windows and Arm64 Windows
+; through built-in Windows emulation while carrying architecture-native payloads.
+; This also keeps the experiment compatible with supported Inno Setup 6.x and 7.x.
 ArchitecturesAllowed=win64
 ArchitecturesInstallIn64BitMode=win64
 Compression=lzma2
@@ -37,16 +39,14 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 
 [Files]
-; One x86 setup executable carries native payloads for both supported Windows
-; architectures. Runtime OS architecture selects the product binaries.
 Source: "{#PayloadX64}\wininspectd.exe"; DestDir: "{app}"; DestName: "wininspectd.exe"; Flags: ignoreversion; Check: not IsArm64
 Source: "{#PayloadX64}\wininspect.exe"; DestDir: "{app}"; DestName: "wininspect.exe"; Flags: ignoreversion; Check: not IsArm64
 Source: "{#PayloadX64}\wininspect-gui.exe"; DestDir: "{app}"; DestName: "wininspect-gui.exe"; Flags: ignoreversion; Check: not IsArm64
 Source: "{#PayloadArm64}\wininspectd.exe"; DestDir: "{app}"; DestName: "wininspectd.exe"; Flags: ignoreversion; Check: IsArm64
 Source: "{#PayloadArm64}\wininspect.exe"; DestDir: "{app}"; DestName: "wininspect.exe"; Flags: ignoreversion; Check: IsArm64
 Source: "{#PayloadArm64}\wininspect-gui.exe"; DestDir: "{app}"; DestName: "wininspect-gui.exe"; Flags: ignoreversion; Check: IsArm64
-Source: "source\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "source\config.default.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\config.default.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\WinInspect GUI"; Filename: "{app}\wininspect-gui.exe"
