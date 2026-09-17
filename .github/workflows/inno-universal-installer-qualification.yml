@@ -1,0 +1,267 @@
+name: Inno universal installer qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/inno-universal-installer-qualification.yml'
+      - 'source/tools/wininspect-universal.iss'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-payload:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            cmake_arch: x64
+            artifact_arch: x64
+          - runner: windows-11-arm
+            cmake_arch: ARM64
+            artifact_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build native payload
+        shell: pwsh
+        run: |
+          cmake -S source -B "source/build-${{ matrix.artifact_arch }}" -A ${{ matrix.cmake_arch }} -DWININSPECT_BUILD_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build "source/build-${{ matrix.artifact_arch }}" --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+          $out = Join-Path $env:GITHUB_WORKSPACE "payload-${{ matrix.artifact_arch }}"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $src = Join-Path $env:GITHUB_WORKSPACE "source/build-${{ matrix.artifact_arch }}/Release/$name"
+            if (-not (Test-Path $src -PathType Leaf)) { throw "Missing $src" }
+            Copy-Item $src (Join-Path $out $name) -Force
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: inno-payload-${{ matrix.artifact_arch }}
+          path: payload-${{ matrix.artifact_arch }}
+          retention-days: 7
+
+  package:
+    needs: build-payload
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-payload-x64
+          path: payloads/x64-a
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-payload-arm64
+          path: payloads/arm64-a
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+      - name: Build A and B universal installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item payloads/x64-a payloads/x64-b -Recurse
+          Copy-Item payloads/arm64-a payloads/arm64-b -Recurse
+          foreach ($arch in @('x64','arm64')) {
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              [IO.File]::AppendAllText((Resolve-Path "payloads/$arch-b/$name"), "WININSPECT_INNO_B")
+            }
+          }
+          $iscc = Get-ChildItem @(${env:ProgramFiles},${env:ProgramFiles(x86)}) -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) { throw 'ISCC.exe not found.' }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          foreach ($version in @('hosted-a','hosted-b')) {
+            $x64 = (Resolve-Path "payloads/x64-$($version[-1])").Path
+            $arm64 = (Resolve-Path "payloads/arm64-$($version[-1])").Path
+            & $iscc "/DAppVersion=$version" "/DPayloadX64=$x64" "/DPayloadArm64=$arm64" "/DOutputDir=$((Resolve-Path dist).Path)" source/tools/wininspect-universal.iss
+            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $version." }
+          }
+          $expect = [ordered]@{ schemaVersion=1; source=$env:GITHUB_SHA; architectures=[ordered]@{} }
+          foreach ($arch in @('x64','arm64')) {
+            $expect.architectures[$arch] = [ordered]@{}
+            foreach ($version in @('a','b')) {
+              $h = [ordered]@{}
+              foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+                $h[$name] = (Get-FileHash "payloads/$arch-$version/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+              }
+              $expect.architectures[$arch][$version] = $h
+            }
+          }
+          $expect | ConvertTo-Json -Depth 8 | Set-Content dist/expected-hashes.json -Encoding utf8NoBOM
+          Get-ChildItem dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: inno-universal-installers
+          path: dist
+          retention-days: 7
+
+  windows-lifecycle:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+            pe_machine: 34404
+          - runner: windows-11-arm
+            arch: arm64
+            pe_machine: 43620
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-universal-installers
+          path: dist
+      - name: Qualify install transition rollback and fail-closed lock behavior
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect_is1'
+          $expected = Get-Content dist/expected-hashes.json -Raw | ConvertFrom-Json -AsHashtable
+          $arch = '${{ matrix.arch }}'
+
+          function Installer([string]$v) { return (Resolve-Path "dist/WinInspect-Inno-$v.exe").Path }
+          function Install([string]$v) {
+            $p = Start-Process (Installer $v) -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS' -PassThru -Wait
+            if ($p.ExitCode -ne 0) { throw "Install $v failed: $($p.ExitCode)" }
+          }
+          function Version { return (Get-ItemProperty -LiteralPath $reg -Name DisplayVersion -ErrorAction Stop).DisplayVersion }
+          function Hashes {
+            $h = [ordered]@{}
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              $h[$name] = (Get-FileHash (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            return $h
+          }
+          function Assert-Hashes([string]$v) {
+            $actual = Hashes
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              $want = $expected.architectures[$arch][$v][$name]
+              if ($actual[$name] -ne $want) { throw "$name hash mismatch for $arch/$v" }
+            }
+          }
+          function Machine([string]$path) {
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $pe = [BitConverter]::ToInt32($bytes,0x3c)
+            return [BitConverter]::ToUInt16($bytes,$pe+4)
+          }
+
+          Install 'hosted-a'
+          if ((Version) -ne 'hosted-a') { throw 'A registration mismatch.' }
+          Assert-Hashes 'a'
+          if ((Machine (Join-Path $root 'wininspect.exe')) -ne ${{ matrix.pe_machine }}) { throw 'Installed native PE architecture mismatch.' }
+          & (Join-Path $root 'wininspect.exe') '--version' *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'Installed CLI launch failed.' }
+
+          Install 'hosted-a'
+          Assert-Hashes 'a'
+
+          Install 'hosted-b'
+          if ((Version) -ne 'hosted-b') { throw 'B registration mismatch.' }
+          Assert-Hashes 'b'
+
+          Install 'hosted-a'
+          if ((Version) -ne 'hosted-a') { throw 'A rollback registration mismatch.' }
+          Assert-Hashes 'a'
+
+          $locked = [IO.File]::Open((Join-Path $root 'wininspect.exe'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+          try {
+            $p = Start-Process (Installer 'hosted-b') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS' -PassThru -Wait
+            $lockExit = $p.ExitCode
+          } finally { $locked.Dispose() }
+          if ($lockExit -eq 0) { throw 'Locked-binary upgrade incorrectly returned success.' }
+          if ((Version) -ne 'hosted-a') { throw "Locked-binary failure changed registered version to $(Version)." }
+          Assert-Hashes 'a'
+
+          Copy-Item (Installer 'hosted-b') dist/corrupt.exe -Force
+          $fs = [IO.File]::Open('dist/corrupt.exe',[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::None)
+          try { $fs.SetLength([Math]::Min(4096,$fs.Length)) } finally { $fs.Dispose() }
+          $badExit = $null; $badException = $null
+          try {
+            $bad = Start-Process (Resolve-Path dist/corrupt.exe).Path -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+            $badExit = $bad.ExitCode
+          } catch { $badException = $_.Exception.Message }
+          if (($null -eq $badException) -and $badExit -eq 0) { throw 'Corrupt installer was accepted.' }
+          if ((Version) -ne 'hosted-a') { throw 'Corrupt package changed registered version.' }
+          Assert-Hashes 'a'
+
+          $uninstaller = Join-Path $root 'unins000.exe'
+          $u = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+          if ($u.ExitCode -ne 0) { throw "Uninstall failed: $($u.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $reg) { throw 'Uninstall registration residue remains.' }
+          if (Test-Path $root) { throw 'Install directory residue remains.' }
+
+          [ordered]@{schemaVersion=1;runner='${{ matrix.runner }}';architecture=$arch;nativePE=$true;cleanInstall=$true;repeatInstall=$true;upgrade=$true;downgradeExact=$true;lockedBinaryExit=$lockExit;lockedBinaryFailClosed=$true;corruptPackageRejected=$true;uninstallClean=$true;scope='hosted Windows qualification only; not WinBot interactive acceptance'} | ConvertTo-Json | Set-Content "evidence-$arch.json" -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: inno-windows-${{ matrix.arch }}-evidence
+          path: evidence-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  wine-lifecycle:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-universal-installers
+          path: dist
+      - name: Install Wine runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32:i386 wine64 xvfb
+          wine --version
+      - name: Qualify installer lifecycle under Wine
+        shell: bash
+        env:
+          WINEPREFIX: ${{ github.workspace }}/wineprefix
+          WINEDEBUG: -all
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
+          wineboot -u
+          install_one() {
+            wine "$PWD/dist/WinInspect-Inno-$1.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS
+          }
+          install_one hosted-a
+          localappdata=$(wine cmd /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r' | tail -n1)
+          root=$(winepath -u "$localappdata\\WinInspect")
+          test -f "$root/wininspect.exe"
+          wine "$root/wininspect.exe" --version
+          install_one hosted-a
+          install_one hosted-b
+          wine "$root/wininspect.exe" --version
+          install_one hosted-a
+          wine "$root/wininspect.exe" --version
+          wine "$root/unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          sleep 2
+          test ! -d "$root"
+          printf '%s\n' '{"schemaVersion":1,"wineLifecycle":"passed","scope":"Wine compatibility qualification; not native Windows acceptance"}' > evidence-wine.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: inno-wine-evidence
+          path: evidence-wine.json
+          if-no-files-found: warn
+          retention-days: 30
