@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
@@ -5,7 +6,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
+
+static void sleep_ms(long ms) {
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000L;
+    while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {
+    }
+}
 
 static int emit_event(int fd, unsigned short type, unsigned short code, int value) {
     struct input_event ev;
@@ -20,7 +30,7 @@ static int emit_key_a(int fd) {
     if (emit_event(fd, EV_KEY, KEY_A, 1) < 0 || emit_event(fd, EV_SYN, SYN_REPORT, 0) < 0) {
         return -1;
     }
-    usleep(50000);
+    sleep_ms(50);
     if (emit_event(fd, EV_KEY, KEY_A, 0) < 0 || emit_event(fd, EV_SYN, SYN_REPORT, 0) < 0) {
         return -1;
     }
@@ -63,7 +73,7 @@ int main(void) {
 
     printf("created=WinInspect-Actions-Probe-Keyboard\n");
     fflush(stdout);
-    sleep(3);
+    sleep_ms(3000);
 
     if (emit_key_a(fd) < 0) {
         fprintf(stderr, "event emission failed: errno=%d (%s)\n", errno, strerror(errno));
@@ -73,7 +83,7 @@ int main(void) {
     }
     printf("emitted=KEY_A_make_break\n");
     fflush(stdout);
-    sleep(2);
+    sleep_ms(2000);
 
     ioctl(fd, UI_DEV_DESTROY);
     close(fd);
