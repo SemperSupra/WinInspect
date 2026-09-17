@@ -7,6 +7,26 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+static int emit_event(int fd, unsigned short type, unsigned short code, int value) {
+    struct input_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = type;
+    ev.code = code;
+    ev.value = value;
+    return write(fd, &ev, sizeof(ev)) == (ssize_t)sizeof(ev) ? 0 : -1;
+}
+
+static int emit_key_a(int fd) {
+    if (emit_event(fd, EV_KEY, KEY_A, 1) < 0 || emit_event(fd, EV_SYN, SYN_REPORT, 0) < 0) {
+        return -1;
+    }
+    usleep(50000);
+    if (emit_event(fd, EV_KEY, KEY_A, 0) < 0 || emit_event(fd, EV_SYN, SYN_REPORT, 0) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 int main(void) {
     const char *dev = "/dev/uinput";
     int fd = open(dev, O_WRONLY | O_NONBLOCK);
@@ -41,9 +61,19 @@ int main(void) {
         return 5;
     }
 
-    sleep(2);
     printf("created=WinInspect-Actions-Probe-Keyboard\n");
     fflush(stdout);
+    sleep(3);
+
+    if (emit_key_a(fd) < 0) {
+        fprintf(stderr, "event emission failed: errno=%d (%s)\n", errno, strerror(errno));
+        ioctl(fd, UI_DEV_DESTROY);
+        close(fd);
+        return 6;
+    }
+    printf("emitted=KEY_A_make_break\n");
+    fflush(stdout);
+    sleep(2);
 
     ioctl(fd, UI_DEV_DESTROY);
     close(fd);
