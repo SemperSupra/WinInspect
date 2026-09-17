@@ -70,8 +70,6 @@ WinInspectVhfEvtDeviceAdd(
 
     UNREFERENCED_PARAMETER(Driver);
 
-    WdfDeviceInitSetDeviceType(DeviceInit, FILE_DEVICE_UNKNOWN);
-
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, VHF_PROBE_CONTEXT);
     attributes.EvtCleanupCallback = WinInspectVhfEvtCleanup;
 
