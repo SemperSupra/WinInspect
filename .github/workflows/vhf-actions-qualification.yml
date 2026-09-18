@@ -262,7 +262,7 @@ jobs:
           Get-Content evidence/vhf-start-result.json
           if ($result.classification -ne 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
 
-      - name: Observe one VHF keyboard report with paired controls
+      - name: Observe one VHF keyboard report with system-device attribution
         if: steps.start.outcome == 'success'
         id: input
         shell: pwsh
