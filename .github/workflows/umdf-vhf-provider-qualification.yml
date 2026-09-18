@@ -68,6 +68,11 @@ jobs:
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
 
+          # DMF's DmfIncludes.h selects the user-mode path when UMDF_VERSION_MAJOR
+          # is visible to the compiler. The standalone static-library build on this
+          # hosted image does not propagate that macro, so set the documented UMDF
+          # version explicitly without adding kernel headers.
+          $env:CL = '/DUMDF_VERSION_MAJOR=2'
           $records = @()
 
           # Use Microsoft's own solution dependency graph for the DmfU library.
