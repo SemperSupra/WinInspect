@@ -1,11 +1,8 @@
 name: Public VHF Actions qualification
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/vhf-actions-qualification.yml'
-      - 'experiments/vhf-minimal/**'
+  # Historical KMDF qualification is retained for manual reproduction only on
+  # this Phase-1 provider branch. PR validation is owned by the UMDF W1 cell.
   workflow_dispatch:
 
 permissions:
