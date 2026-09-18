@@ -1,4 +1,4 @@
-name: Phase 1 Wine local IPC qualification
+name: Phase 1 Wine local privilege boundary
 
 on:
   pull_request:
@@ -12,12 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: wine-local-ipc-${{ github.event.pull_request.number || github.ref }}
+  group: wine-local-privilege-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  af-unix-peercred:
-    name: Wine AF_UNIX + Linux peer credentials
+  drop-priv-loopback:
+    name: Wine authenticated loopback + post-drop uinput
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -26,13 +26,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install minimal Wine and MinGW dependencies
+      - name: Install minimal dependencies and qualify uinput availability
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p evidence
+          sudo modprobe uinput
+          test -c /dev/uinput
+          ls -l /dev/uinput > evidence/uinput-device.txt
+
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64
-          mkdir -p evidence
+
           wine_bin=$(command -v wine64 || command -v wine || find /usr/lib/wine -maxdepth 1 -type f -name wine64 -print -quit)
           if [ -z "$wine_bin" ]; then
             echo 'wine executable not found after package install' >&2
@@ -40,62 +45,80 @@ jobs:
           fi
           echo "$wine_bin" > evidence/wine-bin.txt
           {
-            echo "experiment=wininspect-382-wine-af-unix-peercred"
+            echo "experiment=wininspect-382-wine-drop-priv-uinput"
             echo "kernel=$(uname -r)"
             echo "uid=$(id -u)"
+            echo "gid=$(id -g)"
             "$wine_bin" --version
             x86_64-w64-mingw32-gcc --version | head -1
           } > evidence/environment.txt
 
-      - name: Build native server and Win32 client
+      - name: Build drop-privilege server and Win32 client
         shell: bash
         run: |
           set -euo pipefail
-          gcc -std=c11 -O2 -Wall -Wextra -Werror experiments/wine-local-ipc/unix_peer_server.c -o evidence/unix-peer-server
-          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc \
-            experiments/wine-local-ipc/win32_unix_client.c -lws2_32 -o evidence/win32-unix-client.exe
-          sha256sum evidence/unix-peer-server evidence/win32-unix-client.exe > evidence/fixture-sha256.txt
-          x86_64-w64-mingw32-objdump -p evidence/win32-unix-client.exe | sed -n '/DLL Name/p' > evidence/client-imports.txt
+          gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-local-ipc/drop_priv_uinput_server.c             -o evidence/drop-priv-uinput-server
 
-      - name: Qualify secure local IPC boundary
-        id: ipc
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc             experiments/wine-local-ipc/win32_loopback_client.c             -lws2_32 -o evidence/win32-loopback-client.exe
+
+          sha256sum evidence/drop-priv-uinput-server evidence/win32-loopback-client.exe             > evidence/fixture-sha256.txt
+          x86_64-w64-mingw32-objdump -p evidence/win32-loopback-client.exe |
+            sed -n '/DLL Name/p' > evidence/client-imports.txt
+
+      - name: Qualify post-drop uinput authority boundary
+        id: treatment
         shell: bash
         continue-on-error: true
         run: |
           set -euo pipefail
-          export WINEPREFIX="$RUNNER_TEMP/wininspect-ipc-prefix"
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-drop-priv-prefix"
           mkdir -p "$WINEPREFIX"
           wine_bin=$(cat evidence/wine-bin.txt)
           "$wine_bin" wineboot.exe -u > evidence/wineboot.txt 2>&1 || true
 
-          host_socket="$WINEPREFIX/drive_c/wininspect-uinput.sock"
-          allowed_uid="$(id -u)"
-          sudo "$PWD/evidence/unix-peer-server" "$host_socket" "$allowed_uid" > evidence/server.txt 2> evidence/server.err &
+          uid=$(id -u)
+          gid=$(id -g)
+          token=$(openssl rand -hex 32)
+
+          sudo "$PWD/evidence/drop-priv-uinput-server" "$uid" "$gid" "$token"             > evidence/server.txt 2> evidence/server.err &
           server_pid=$!
+
           cleanup() {
             sudo kill "$server_pid" 2>/dev/null || true
-            sudo rm -f "$host_socket" 2>/dev/null || true
           }
           trap cleanup EXIT
 
           ready=false
-          for _ in $(seq 1 50); do
-            if grep -q '^READY ' evidence/server.txt 2>/dev/null; then ready=true; break; fi
-            if ! sudo kill -0 "$server_pid" 2>/dev/null; then break; fi
+          for _ in $(seq 1 80); do
+            if grep -q '^READY ' evidence/server.txt 2>/dev/null; then
+              ready=true
+              break
+            fi
+            if ! sudo kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
             sleep 0.1
           done
           if [ "$ready" != true ]; then
-            echo '{"classification":"unix-server-not-ready"}' > evidence/result.json
+            printf '{"classification":"drop-priv-server-not-ready"}\n' > evidence/result.json
             exit 1
           fi
 
-          stat -c 'mode=%a uid=%u gid=%g path=%n' "$host_socket" > evidence/socket-stat.txt
+          ready_line=$(grep '^READY ' evidence/server.txt | tail -1)
+          port=$(printf '%s\n' "$ready_line" | sed -n 's/.* port=\([0-9][0-9]*\).*/\1/p')
+          server_euid=$(printf '%s\n' "$ready_line" | sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p')
+          server_egid=$(printf '%s\n' "$ready_line" | sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$port" ] || [ "$server_euid" != "$uid" ] || [ "$server_egid" != "$gid" ]; then
+            printf '{"classification":"privilege-drop-not-proven","server_euid":"%s","server_egid":"%s","expected_uid":"%s","expected_gid":"%s"}\n'               "$server_euid" "$server_egid" "$uid" "$gid" > evidence/result.json
+            exit 1
+          fi
+
           set +e
-          timeout 15s "$wine_bin" "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
+          timeout 20s "$wine_bin" "$PWD/evidence/win32-loopback-client.exe" "$port" "$token"             > evidence/client.txt 2> evidence/client.err
           client_rc=$?
 
           server_done=false
-          for _ in $(seq 1 50); do
+          for _ in $(seq 1 80); do
             if ! sudo kill -0 "$server_pid" 2>/dev/null; then
               server_done=true
               break
@@ -109,27 +132,36 @@ jobs:
           server_rc=$?
           set -e
 
-          peer_uid="$(sed -n 's/.* uid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)"
-          socket_mode="$(awk -F'[ =]' '{for(i=1;i<=NF;i++) if($i=="mode") print $(i+1)}' evidence/socket-stat.txt)"
-          if [ "$client_rc" -eq 0 ] && [ "$server_rc" -eq 0 ] && [ "$peer_uid" = "$allowed_uid" ] && [ "$socket_mode" = "600" ]; then
-            classification='wine-win32-af-unix-peercred-pass'
+          post_drop_input=$(sed -n 's/.*post_drop_input=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+          result_euid=$(sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+          result_egid=$(sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+          keyboard_destroy=$(sed -n 's/.*keyboard_destroy=\(-*[0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+          mouse_destroy=$(sed -n 's/.*mouse_destroy=\(-*[0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+
+          if [ "$client_rc" -eq 0 ] && [ "$server_rc" -eq 0 ] &&
+             [ "$post_drop_input" = "1" ] &&
+             [ "$result_euid" = "$uid" ] && [ "$result_egid" = "$gid" ] &&
+             [ "$keyboard_destroy" = "0" ] && [ "$mouse_destroy" = "0" ]; then
+            classification='wine-loopback-auth-post-drop-uinput-pass'
           elif [ "$client_rc" -ne 0 ]; then
-            classification='wine-win32-af-unix-client-boundary'
-          elif [ "$peer_uid" != "$allowed_uid" ]; then
-            classification='peer-credential-mismatch'
+            classification='wine-loopback-client-failed'
+          elif [ "$post_drop_input" != "1" ]; then
+            classification='post-drop-uinput-write-failed'
+          elif [ "$result_euid" != "$uid" ] || [ "$result_egid" != "$gid" ]; then
+            classification='privilege-drop-not-maintained'
           else
-            classification='af-unix-ipc-inconclusive'
+            classification='drop-priv-uinput-inconclusive'
           fi
-          printf '{"classification":"%s","client_exit_code":%d,"server_exit_code":%d,"allowed_uid":"%s","peer_uid":"%s","socket_mode":"%s"}\n' \
-            "$classification" "$client_rc" "$server_rc" "$allowed_uid" "$peer_uid" "$socket_mode" > evidence/result.json
+
+          printf '{"classification":"%s","client_exit_code":%d,"server_exit_code":%d,"server_euid":"%s","server_egid":"%s","post_drop_input":"%s","keyboard_destroy":"%s","mouse_destroy":"%s"}\n'             "$classification" "$client_rc" "$server_rc" "$result_euid" "$result_egid"             "$post_drop_input" "$keyboard_destroy" "$mouse_destroy" > evidence/result.json
           cat evidence/result.json
-          [ "$classification" = 'wine-win32-af-unix-peercred-pass' ]
+          [ "$classification" = 'wine-loopback-auth-post-drop-uinput-pass' ]
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: phase1-wine-local-ipc
+          name: phase1-wine-drop-priv-uinput
           path: evidence/
           if-no-files-found: error
           retention-days: 14
