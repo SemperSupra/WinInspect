@@ -1,0 +1,67 @@
+; WinInspect direct UMDF2/VHF qualification fixture.
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderString%
+DriverVer=09/18/2026,0.0.1.0
+CatalogFile=wudf.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskDescription%,,,
+
+[SourceDisksFiles]
+WinInspectUmdfVhf.dll=1
+
+[Manufacturer]
+%ManufacturerString%=Models,NT$ARCH$.10.0
+
+[Models.NT$ARCH$.10.0]
+%DeviceDesc%=WinInspectUmdfVhf,ROOT\WININSPECT\UMDFVHF
+
+[WinInspectUmdfVhf.NT]
+CopyFiles=UMDriverCopy
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT
+
+[WinInspectUmdfVhf.NT.hw]
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.hw
+AddReg=WinInspectUmdfVhf_AddReg
+
+[WinInspectUmdfVhf.NT.Services]
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Services
+
+[WinInspectUmdfVhf.NT.Filters]
+Include=WUDFRD.inf
+Needs=WUDFRD_LowerFilter.NT.Filters
+
+[WinInspectUmdfVhf_AddReg]
+HKR,,"LowerFilters",0x00010000,"vhf"
+HKR,,VhfMode,0x00010001,0x1
+
+[WinInspectUmdfVhf.NT.Wdf]
+UmdfService="WinInspectUmdfVhf",WinInspectUmdfVhf_Install
+UmdfServiceOrder=WinInspectUmdfVhf
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+UmdfFileObjectPolicy=AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction=Copy
+UmdfFsContextUsePolicy=CanUseFsContext2
+
+[WinInspectUmdfVhf_Install]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary="%13%\WinInspectUmdfVhf.dll"
+
+[UMDriverCopy]
+WinInspectUmdfVhf.dll
+
+[Strings]
+ProviderString="WinInspect Experiment"
+ManufacturerString="WinInspect Experiment"
+DiskDescription="WinInspect UMDF2 VHF qualification"
+DeviceDesc="WinInspect UMDF2 VHF source device"
