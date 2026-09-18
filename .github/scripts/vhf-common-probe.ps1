@@ -61,9 +61,12 @@ $result = [ordered]@{
   idle_input_events = 0
   sendinput_exit_code = $null
   sendinput_input_events = 0
+  sendinput_raw_events = 0
+  sendinput_named_device_events = 0
   vhf_raw_events = 0
   vhf_application_events = 0
   vhf_raw_device_names = @()
+  vhf_raw_device_handles = @()
 }
 
 $probeOut = Join-Path $EvidenceDir 'probe.jsonl'
@@ -97,7 +100,7 @@ try {
   $vhfObserved = $false
   for ($i = 0; $i -lt 120; $i++) {
     $tail = @(Get-Content $probeOut | Select-Object -Skip $beforeVhf)
-    if ($tail -match 'VID_1209&PID_0266') { $vhfObserved = $true; break }
+    if ($tail -match 'HID_DEVICE_SYSTEM_VHF') { $vhfObserved = $true; break }
     if ($probe.HasExited) { break }
     Start-Sleep -Milliseconds 250
   }
@@ -110,10 +113,14 @@ try {
   $vhfLines = @(Get-Content (Join-Path $EvidenceDir 'phase-vhf.jsonl'))
   $result.idle_input_events = @($idleLines | Where-Object { $_ -match '"event":"(raw_input|key_message|edit_changed)"' }).Count
   $result.sendinput_input_events = @($sendLines | Where-Object { $_ -match '"event":"(raw_input|key_message|edit_changed)"' }).Count
-  $vhfRaw = @($vhfLines | Where-Object { $_ -match '"event":"raw_input"' -and $_ -match 'VID_1209&PID_0266' })
+  $sendRaw = @($sendLines | Where-Object { $_ -match '"event":"raw_input"' })
+  $result.sendinput_raw_events = $sendRaw.Count
+  $result.sendinput_named_device_events = @($sendRaw | Where-Object { $_ -notmatch '"hDevice":"0x0"' -or $_ -notmatch '"device_name":""' }).Count
+  $vhfRaw = @($vhfLines | Where-Object { $_ -match '"event":"raw_input"' -and $_ -match 'HID_DEVICE_SYSTEM_VHF' })
   $result.vhf_raw_events = $vhfRaw.Count
   $result.vhf_application_events = @($vhfLines | Where-Object { $_ -match '"event":"(key_message|edit_changed)"' }).Count
   $result.vhf_raw_device_names = @($vhfRaw | ForEach-Object { if ($_ -match '"device_name":"([^"]*)"') { $Matches[1] } } | Sort-Object -Unique)
+  $result.vhf_raw_device_handles = @($vhfRaw | ForEach-Object { if ($_ -match '"hDevice":"([^"]*)"') { $Matches[1] } } | Sort-Object -Unique)
 
   if ($result.idle_input_events -eq 0 -and $result.sendinput_exit_code -eq 0 -and $result.sendinput_input_events -gt 0 -and $vhfObserved -and $result.vhf_raw_events -gt 0 -and $result.vhf_application_events -gt 0) {
     $result.classification = 'vhf-report-observed-with-paired-controls'
