@@ -134,7 +134,9 @@ foreach ($entry in $orderedEntries) {
 
     $full = Join-Path $sourceRoot ($path -replace '/', [IO.Path]::DirectorySeparatorChar)
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Manifest-listed projected file is absent: $path" }
-    $item = Get-Item -LiteralPath $full
+    # On Unix, dot-prefixed projected files are surfaced as Hidden by
+    # PowerShell; -Force is required even when the literal path is known.
+    $item = Get-Item -LiteralPath $full -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse/symlink projected files are forbidden: $path" }
     if ([int64]$item.Length -ne [int64]$entry.bytes) { throw "Projected file byte count mismatch: $path" }
     $actualSha = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
