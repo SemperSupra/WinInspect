@@ -1,0 +1,17 @@
+{
+  "schema": "wininspect-virtual-input-conformance-subset/1",
+  "purpose": "Phase 1 Wine transport/provider qualification only; full canonical corpus remains private-authority data.",
+  "cases": [
+    "keyboard A make/break",
+    "left-shift+A make/break",
+    "six-key rollover A-F make/break",
+    "mouse X=127 Y=-127",
+    "left+right+middle press/release",
+    "wheel +127 and -127",
+    "combined buttons+movement+wheel",
+    "reject unsupported keyboard usage 0x32",
+    "reject mouse button mask 0x08",
+    "explicit release-all",
+    "held shift+A released by disconnect cleanup"
+  ]
+}
