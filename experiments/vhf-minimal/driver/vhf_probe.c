@@ -142,7 +142,7 @@ WinInspectVhfEvtDeviceAdd(
     }
 
     // Give the Actions harness time to start the common Win32 observer and controls.
-    WdfTimerStart(context->ReportTimer, WDF_REL_TIMEOUT_IN_SEC(15));
+    WdfTimerStart(context->ReportTimer, WDF_REL_TIMEOUT_IN_SEC(30));
 
     return STATUS_SUCCESS;
 }
