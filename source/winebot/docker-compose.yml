@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: PolyForm-NC-1.0.0
+# Copyright (c) 2026 Mark E. DeYoung
+#
+# Docker Compose for WinInspect Wine testing.
+# Builds and runs the daemon under Wine in a headless X11 environment.
+#
+# Usage:
+#   docker compose -f winebot/docker-compose.yml build
+#   docker compose -f winebot/docker-compose.yml up -d
+#   ./build_msvc/Release/wininspect.exe health --tcp localhost:1985
+#   docker compose -f winebot/docker-compose.yml down
+
+services:
+  wininspect-wine:
+    build:
+      context: ..
+      dockerfile: winebot/Dockerfile
+      args:
+        BINARY_DIR: build_msvc/Release
+    image: wininspect-wine-test
+    container_name: wininspect-wine
+    ports:
+      - "127.0.0.1:1985:1985"   # TCP daemon protocol, host-loopback only
+      - "8088:8088"   # HTTP API (optional)
+    environment:
+      - DISPLAY=:99
+      - WINEDLLOVERRIDES=winemenubuilder.exe=d
+      - WINEDEBUG=-all  # suppress Wine debug output
+    command: ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24", "wine", "wininspectd.exe", "--headless", "--bind", "0.0.0.0", "--allow-unauthenticated-nonloopback"]
+    healthcheck:
+      test: ["CMD-SHELL", "wine wininspect.exe health --tcp 127.0.0.1:1985 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

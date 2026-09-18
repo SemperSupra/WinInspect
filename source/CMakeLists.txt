@@ -67,7 +67,10 @@ target_include_directories(wininspect_core PRIVATE
 )
 
 if (WIN32)
-  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp dxgi d3d11 ws2_32 advapi32 crypt32)
+  # Link Cabinet explicitly for both MSVC and MinGW/Clang. compress.cpp uses
+  # the Windows Compression API; #pragma comment(lib, ...) is MSVC-only and
+  # does not satisfy cross-toolchain links.
+  target_link_libraries(wininspect_core PUBLIC ole32 oleaut32 uuid bcrypt winhttp dxgi d3d11 ws2_32 advapi32 crypt32 cabinet)
   if(WININSPECT_USE_OPENSSL AND OpenSSL_FOUND)
     target_link_libraries(wininspect_core PUBLIC OpenSSL::Crypto OpenSSL::SSL)
   endif()

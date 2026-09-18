@@ -26,7 +26,7 @@ namespace wininspectd {
 
     void start(std::atomic<bool>* running, const wininspect::NetworkConfig& cfg,
                const std::string& auth_keys = "", bool read_only = false, bool admin_logs = false,
-               bool no_clipboard = false);
+               bool no_clipboard = false, bool allow_unauthenticated_nonloopback = false);
 
     /// Start TLS-wrapped TCP listener on cfg.tls_port.
     /// Accepts connections, performs TLS 1.3 handshake, then dispatches

@@ -321,6 +321,7 @@ int main(int argc, char** argv)
   std::string key_pem_str;  // Shared key PEM for HTTPS + TLS TCP
   std::string allow_str, deny_str;
   bool require_auth = false;
+  bool allow_unauthenticated_nonloopback = false;
   int max_snaps = 1000;
   int max_conns = 32;
   int max_sessions = 256;
@@ -384,6 +385,8 @@ int main(int argc, char** argv)
       deny_str = argv[++i];
     if (std::string(argv[i]) == "--require-auth")
       require_auth = true;
+    if (std::string(argv[i]) == "--allow-unauthenticated-nonloopback")
+      allow_unauthenticated_nonloopback = true;
     if (std::string(argv[i]) == "--admin-logs")
       admin_logs = true;
     if (std::string(argv[i]) == "--no-clipboard")
@@ -525,15 +528,32 @@ int main(int argc, char** argv)
   if (env.count("wine_version"))
     LOG_INFO("Wine Version: " + env.at("wine_version").as_str());
 
-  // Read auth keys file once at startup (cache content, not path)
+  // Read auth keys file once at startup (cache content, not path).
+  // Supplying an auth file is explicit security intent: never downgrade to
+  // unauthenticated TCP because the file is missing or empty.
   std::string auth_keys_data;
   if (!auth_keys.empty()) {
     std::ifstream kf(auth_keys);
+    if (!kf) {
+      LOG_ERROR("Cannot read authorized keys file: " + auth_keys);
+      return 1;
+    }
     std::stringstream ks;
     ks << kf.rdbuf();
     auth_keys_data = ks.str();
+    if (auth_keys_data.find_first_not_of(" \t\r\n") == std::string::npos) {
+      LOG_ERROR("Authorized keys file is empty: " + auth_keys);
+      return 1;
+    }
     LOG_INFO("Loaded " + std::to_string(auth_keys_data.size()) + " bytes of authorized keys from " +
              auth_keys);
+  }
+  if (require_auth && auth_keys_data.empty()) {
+    LOG_ERROR("--require-auth requires a readable, non-empty --auth-keys file.");
+    return 1;
+  }
+  if (allow_unauthenticated_nonloopback && auth_keys_data.empty()) {
+    LOG_WARN("Unauthenticated non-loopback TCP explicitly enabled by operator.");
   }
 
   // ── Background Threads ──────────────────────────────────────────────────────
@@ -744,9 +764,11 @@ int main(int argc, char** argv)
     // Tray mode: start TCP in background, run message loop
     LOG_INFO("Starting TCP Server (background) for tray mode...");
     bg_threads.emplace_back(
-        [running, tcp, &net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard]() {
+        [running, tcp, &net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard,
+         allow_unauthenticated_nonloopback]() {
           try {
-            tcp->start(running.get(), net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
+            tcp->start(running.get(), net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard,
+                       allow_unauthenticated_nonloopback);
           }
           catch (...) {
           }
@@ -788,7 +810,8 @@ int main(int argc, char** argv)
     // Headless mode: start TCP on main thread (blocking)
     LOG_INFO("Starting TCP Server (blocking main thread)...");
     try {
-      tcp->start(running.get(), net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard);
+      tcp->start(running.get(), net_cfg, auth_keys_data, read_only, admin_logs, no_clipboard,
+                 allow_unauthenticated_nonloopback);
     }
     catch (...) {
       LOG_ERROR("TCP Server fatal error.");

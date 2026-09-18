@@ -1,12 +1,78 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "projectionPolicyVersion": 1,
   "sourceAuthority": "private-development",
-  "sourceCommitSha": "e11fb014e7fca5ddc6e450975f4db45913b452d3",
+  "projectionPolicySha256": "a1f4f206c3a2c7f2600ce096d41448fb27f3a341d8e75068e8da9b2cff169697",
+  "projectionDigestSha256": "6b3bfb9b133469779c67aa10eb2b4965fcc35f733f1f5ca03dd6e79ef234d404",
+  "fileCount": 128,
   "authoritativeCandidate": true,
-  "projectionDigestSha256": "4ad5e2c29613c79ebe7f3a46aa6a6b071457d4f93b3b7cb43f86642429118257",
-  "fileCount": 146,
   "files": [
+    {
+      "path": ".clang-format",
+      "sha256": "2617c44e8916978dcf01063de35aca2cc227d26d0ec0c3e37d4ee88416c815bf",
+      "bytes": 513,
+      "executable": false
+    },
+    {
+      "path": ".clang-tidy",
+      "sha256": "eebe4dca43cb92a7a5a5cc44239e93dfb33259b70b2f0d9a09215a91fc7371f7",
+      "bytes": 1389,
+      "executable": false
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "230649379f4862220cc873b8f471f031a6b91704384695da49d8b04fa7d6402d",
+      "bytes": 673,
+      "executable": false
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "9b8cb6574c86b2f3be4036e027df4cc80d55846fc09bd71a4608186345119adb",
+      "bytes": 400,
+      "executable": false
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "3b7cd94b2e825280d176e2982a64e38ed21855318ea81cd52d60f9679f06e86d",
+      "bytes": 7109,
+      "executable": false
+    },
+    {
+      "path": "COMMERCIAL_LICENSE.md",
+      "sha256": "df8b42788e5f724e1bf151372bc41a57baeaef8a421c30de4e1f4302044b04cb",
+      "bytes": 1799,
+      "executable": false
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "47f6894f7fcb7c55c66226d69e64feb613d5f5c49f11716938945997d3a569a9",
+      "bytes": 4600,
+      "executable": false
+    },
+    {
+      "path": "PRIVACY.md",
+      "sha256": "9737bae7247c1856e5d9e67167ef4c990ade856e4a19eea281e131d94c8b3391",
+      "bytes": 7107,
+      "executable": false
+    },
+    {
+      "path": "README.md",
+      "sha256": "ad7feac54037600299d10bfed2e816a9928fe80dd3311c363f0e16de446fde3c",
+      "bytes": 5188,
+      "executable": false
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "4eda291d3e530b94785802eab8f84895fc7fde1c0d4c6c271be05b832440951e",
+      "bytes": 2486,
+      "executable": false
+    },
+    {
+      "path": "assets/brand/README.md",
+      "sha256": "e55ecc90f42d462073a95dcd81f2f5364b12b24d2755f42e38826bcd803a9540",
+      "bytes": 1402,
+      "executable": false
+    },
     {
       "path": "assets/brand/ico/strix-agent-cursor.cur",
       "sha256": "625baf57bd188834ceaa3d36d0b42fe2c6ec8c15bbaf443e187984b4549ca908",
@@ -17,12 +83,6 @@
       "path": "assets/brand/ico/strix.ico",
       "sha256": "a8de2bf2aabbd1e364b6d039ff8f2effa3acb298d28d5f23d988324a3af9cd2c",
       "bytes": 659,
-      "executable": false
-    },
-    {
-      "path": "assets/brand/README.md",
-      "sha256": "e55ecc90f42d462073a95dcd81f2f5364b12b24d2755f42e38826bcd803a9540",
-      "bytes": 1402,
       "executable": false
     },
     {
@@ -63,8 +123,14 @@
     },
     {
       "path": "clients/cli/src/cli.cpp",
-      "sha256": "ed98f9b9cc6ef21a15202d830fc1721198a0f3158c267cc847ec233d9254c6e7",
-      "bytes": 73955,
+      "sha256": "174ad811d381ad91b5e3c44e4a1bd326e089215a66217460b87cdcc85ae8eb4b",
+      "bytes": 76971,
+      "executable": false
+    },
+    {
+      "path": "clients/cli/src/tcp_endpoint.hpp",
+      "sha256": "9166a300d922e1347a32f756c73108b994fdfe0b3e1572576a7c232407f63a26",
+      "bytes": 1965,
       "executable": false
     },
     {
@@ -98,18 +164,6 @@
       "executable": false
     },
     {
-      "path": "clients/gui/tests/main.cpp",
-      "sha256": "460118137404e980f0fa7b82b1b3bcee18e8e02d2821a93973dbd331c753365a",
-      "bytes": 158,
-      "executable": false
-    },
-    {
-      "path": "clients/gui/tests/test_viewmodel.cpp",
-      "sha256": "443bd843be20bb316c1cb0e4a861996ecdb905517887ff239a88d2df9b811266",
-      "bytes": 2754,
-      "executable": false
-    },
-    {
       "path": "clients/gui/viewmodel/viewmodel.cpp",
       "sha256": "8e3b72f4999759bf3edf935553d6471c8b81c9fa2b63e1d06224fa5d330a20c2",
       "bytes": 2782,
@@ -140,12 +194,6 @@
       "executable": false
     },
     {
-      "path": "clients/mcp/src/daemon-client.test.ts",
-      "sha256": "0ff7737922d4459dbddaff951a0bc83f2d0a7dff6555cd790d771504313bee94",
-      "bytes": 1141,
-      "executable": false
-    },
-    {
       "path": "clients/mcp/src/daemon-client.ts",
       "sha256": "d25c2bd2c1ed1be69e6be0a1e75aedc6cfa9d0276aea2505c6125deb08cacd43",
       "bytes": 3453,
@@ -155,18 +203,6 @@
       "path": "clients/mcp/src/index.ts",
       "sha256": "af9dd00fee059b95a5ec34c4bae6c74e088a0a34b04ed56a8a3e280c0450c6d7",
       "bytes": 4475,
-      "executable": false
-    },
-    {
-      "path": "clients/mcp/src/integration.test.ts",
-      "sha256": "a3e514c91ec2bc60dae7d2a3d21d9fd0babfd067f87a9b4d8fe23c2242fed2b0",
-      "bytes": 8169,
-      "executable": false
-    },
-    {
-      "path": "clients/mcp/src/tools.test.ts",
-      "sha256": "36ff4ec27aea94f9f26570a58c16d555f32865f310a45e47e16c47d3a2a05718",
-      "bytes": 1278,
       "executable": false
     },
     {
@@ -200,27 +236,21 @@
       "executable": false
     },
     {
-      "path": "clients/sdk-python/pyproject.toml",
-      "sha256": "23b6b5f05acb4a27c355b66bbd64475a08630d46fa79de5a331d6bd0376c8b4f",
-      "bytes": 1148,
-      "executable": false
-    },
-    {
       "path": "clients/sdk-python/README.md",
       "sha256": "2aa560ac35fa263a4fe710d835dadea9955f4576163a085f6bfed606b89dec70",
       "bytes": 1803,
       "executable": false
     },
     {
-      "path": "clients/sdk-python/setup.py",
-      "sha256": "8faa7fe84273c5aba97499657160314f81ab4c571058daaec869d0052834fa06",
-      "bytes": 1304,
+      "path": "clients/sdk-python/pyproject.toml",
+      "sha256": "23b6b5f05acb4a27c355b66bbd64475a08630d46fa79de5a331d6bd0376c8b4f",
+      "bytes": 1148,
       "executable": false
     },
     {
-      "path": "clients/sdk-python/tests/test_client.py",
-      "sha256": "4935518380bdf9be15538959127cdaf639e5cc19f4546bb4769581f8f1375c22",
-      "bytes": 4396,
+      "path": "clients/sdk-python/setup.py",
+      "sha256": "8faa7fe84273c5aba97499657160314f81ab4c571058daaec869d0052834fa06",
+      "bytes": 1304,
       "executable": false
     },
     {
@@ -260,12 +290,6 @@
       "executable": false
     },
     {
-      "path": "clients/sdk-typescript/src/index.test.ts",
-      "sha256": "00e985ad77d8bbb6c1cbb8c36bc2fb714bda54d1cd7cfefe1be427d132d1741b",
-      "bytes": 762,
-      "executable": false
-    },
-    {
       "path": "clients/sdk-typescript/src/index.ts",
       "sha256": "d898d450454c7c5ee1e484e4a05bbe0022a7a2e55ebe9fcff5a1e08e3b7d29ea",
       "bytes": 7441,
@@ -281,12 +305,6 @@
       "path": "clients/sdk-typescript/vitest.config.ts",
       "sha256": "af67939299fba200de3753d37c487c37424cbcc38c386ea0c063e2a0e8cd6115",
       "bytes": 148,
-      "executable": false
-    },
-    {
-      "path": "CMakeLists.txt",
-      "sha256": "a66522260afe248356b23f2b756882667aee9854cd2f18cc4c9760108ce2ed71",
-      "bytes": 7089,
       "executable": false
     },
     {
@@ -435,8 +453,8 @@
     },
     {
       "path": "core/src/compress.cpp",
-      "sha256": "3b099f48f64e4279ed3d48db60503bac0a16ba2cfe8612f92f2f4dd488b9e2ee",
-      "bytes": 4231,
+      "sha256": "899b702e270faf65472a28f910e7b68c623f73777bff59f05f22a927135a996b",
+      "bytes": 4326,
       "executable": false
     },
     {
@@ -513,134 +531,8 @@
     },
     {
       "path": "core/src/win32_backend.cpp",
-      "sha256": "8b1e0feee519bcdfb0492ae1e4d1d2ebde76ee12e2c996a06b9b9d01e752916a",
-      "bytes": 75408,
-      "executable": false
-    },
-    {
-      "path": "core/tests/benchmarks.cpp",
-      "sha256": "a6ea5b8f021e41ab69601da89344d8106370b6ed8cdcd78000c226ff4138dfd7",
-      "bytes": 6536,
-      "executable": false
-    },
-    {
-      "path": "core/tests/main.cpp",
-      "sha256": "460118137404e980f0fa7b82b1b3bcee18e8e02d2821a93973dbd331c753365a",
-      "bytes": 158,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_cli_contract.cpp",
-      "sha256": "70cdb8b5b142274986b855906bb092772a3bc35d8b61125c898bec63b8717d8b",
-      "bytes": 7617,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_config.cpp",
-      "sha256": "e27bad6f66eb0819b9b1af2734eed97cdeb59c4b763d302bd5a6452b0262ba8e",
-      "bytes": 6737,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_contract_methods.cpp",
-      "sha256": "5a11a9aa6ae3a6e16b2a87bec9a429e22eb8fd36f3c22ae363ebbb97bfbeea52",
-      "bytes": 24466,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_control.cpp",
-      "sha256": "3fc0f84c9cd494c5b876c7d89a7407ecfa5a1d374af24051c4de8fbcbcc63473",
-      "bytes": 5574,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_core_idempotence.cpp",
-      "sha256": "4410fb2b91f4b7381f327f335127ef173b8b840a05496353d4a3075d4add0e11",
-      "bytes": 1431,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_credential.cpp",
-      "sha256": "5ead376b703125166bb34257261f7f74b28d1ed2d604c89a86b4ca8b355b7b35",
-      "bytes": 4089,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_crypto.cpp",
-      "sha256": "1675a71e359723f703dc46f95867142aff10f6bfc6a5c3c5e75c972315e3fa5d",
-      "bytes": 2624,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_fuzz.cpp",
-      "sha256": "ce1411ba38201a8549e892620aed711fbe30c822f10a20bc50be4e6bef444b5b",
-      "bytes": 8079,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_http.cpp",
-      "sha256": "758b3ae026eae94a1a1e9c7c974d89aab2ce6a8daa62f1d4138ec04edf9785ab",
-      "bytes": 9343,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_injection.cpp",
-      "sha256": "b2d5cd0032a4e25571a2261d6027bf360b5d75041f11d6a4b212924c99ffd2b2",
-      "bytes": 2745,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_mdns.cpp",
-      "sha256": "6fb495dceae0e81cdf6c6fb061b83147a2553c94a75543b5e796785accee78f5",
-      "bytes": 6249,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_metrics.cpp",
-      "sha256": "a4b8aa9e8d2424bf4ab59fc90853909f2b3b9b745b9e606425292d74b8fcb097",
-      "bytes": 5561,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_properties.cpp",
-      "sha256": "a04de653aff46ca930f9e977af9fb06dfa78d8f000b97a65c1ba6bcdd88d0673",
-      "bytes": 7573,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_rendezvous.cpp",
-      "sha256": "e3e7f671b28e0872b2ef9cb52e18467ebab0966ffc14ffb08bfdbfe178da1243",
-      "bytes": 6157,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_stress.cpp",
-      "sha256": "2dd079701f5a5244b21677c4e90f05019c696aa79f02284a2d0ce71eb5708ccb",
-      "bytes": 8071,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_tcp_protocol.cpp",
-      "sha256": "0ff6642bb288d05cdaf2a1e3f4bd9b1962a4272fa9500fb6fd7594a0bbd4f65e",
-      "bytes": 6074,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_tls.cpp",
-      "sha256": "64afcebb04babbd2a2e6ac61e31db7c3d687ba67561541e8b0f4221623d322c2",
-      "bytes": 7613,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_trace_replay.cpp",
-      "sha256": "69c18ff3174aaa73b39a9db47cde025af3af6187d0ec46d2ffcea9e9cf709fac",
-      "bytes": 10257,
-      "executable": false
-    },
-    {
-      "path": "core/tests/test_uia.cpp",
-      "sha256": "929761556f6ecacb29264f379f9a0bc673b4de3c538a252178977b9fc242aa0c",
-      "bytes": 2476,
+      "sha256": "2f0c02937cc10edabdc9120c8af26dd70a00ccb784b1488ae0cd10ebdc630cec",
+      "bytes": 75634,
       "executable": false
     },
     {
@@ -657,8 +549,8 @@
     },
     {
       "path": "daemon/include/network_config.hpp",
-      "sha256": "3b9b22a20f5f6f705983a2a48dfab58f79048bb1153b52efe17dcf8d8455fef6",
-      "bytes": 1276,
+      "sha256": "44bdfeb3cdfeb591c8fff4086d4ede374a96094fc83e88c831a23a568e829e3e",
+      "bytes": 1703,
       "executable": false
     },
     {
@@ -705,20 +597,20 @@
     },
     {
       "path": "daemon/src/network_config.cpp",
-      "sha256": "fba80afda8d998e6c4dce30308dfce83d529e778d0ca04a8ef6e686530756158",
-      "bytes": 6382,
-      "executable": false
-    },
-    {
-      "path": "daemon/src/pipe_win32.cpp",
-      "sha256": "b941d43b3152ee5f6ab7eaeca2a0c3cdb3437c499064d4acfc8421cb2e6e6492",
-      "bytes": 1421,
+      "sha256": "61b67360e7a464b23e599eff5b79743df2454199a0d0334fea798b3f8eeb3c3e",
+      "bytes": 5770,
       "executable": false
     },
     {
       "path": "daemon/src/pipe.hpp",
       "sha256": "3674a57415d101ab85f6ff0a7aae27126fd04a608350665ab6634b46308b5ebc",
       "bytes": 479,
+      "executable": false
+    },
+    {
+      "path": "daemon/src/pipe_win32.cpp",
+      "sha256": "b941d43b3152ee5f6ab7eaeca2a0c3cdb3437c499064d4acfc8421cb2e6e6492",
+      "bytes": 1421,
       "executable": false
     },
     {
@@ -740,33 +632,27 @@
       "executable": false
     },
     {
+      "path": "daemon/src/server.cpp",
+      "sha256": "5acc98aa269d03014e9679bd7135eda87491cb53ea45b5ae6f32b6e3965e5823",
+      "bytes": 30946,
+      "executable": false
+    },
+    {
       "path": "daemon/src/server_state.hpp",
       "sha256": "53d78658f697f25c64ebb1c88837cfefa5979c4875484faeb54ccea601336fe2",
       "bytes": 5311,
       "executable": false
     },
     {
-      "path": "daemon/src/server.cpp",
-      "sha256": "6e34c5c1161767fe82f556007f4df4637a611520e18162a71d7ee81e87681846",
-      "bytes": 29914,
-      "executable": false
-    },
-    {
       "path": "daemon/src/tcp_server.cpp",
-      "sha256": "a3c90af99709eee168e9b349010305ca1890cdadccc1359daef5f573a304e05b",
-      "bytes": 20310,
+      "sha256": "9cc78081cf47c084cfd134288b5fa392bd25ece4961168fc707e7fc751008878",
+      "bytes": 21005,
       "executable": false
     },
     {
       "path": "daemon/src/tcp_server.hpp",
-      "sha256": "e6b5b3e2071e389919eab6e2f4c25eda9e47a7a30eaba35f40baea9ce6f5f085",
-      "bytes": 1417,
-      "executable": false
-    },
-    {
-      "path": "daemon/src/test_discovery.cpp",
-      "sha256": "6541747072388cecfa77a8c73c7650cdc652e7aaa70f0c703c2a598fd5b13e59",
-      "bytes": 2233,
+      "sha256": "0eb643b839b98ffcc7142bf6d8c2bdf16f74d1f37e17ccba0bf323aec0283d2f",
+      "bytes": 1465,
       "executable": false
     },
     {
@@ -800,9 +686,9 @@
       "executable": false
     },
     {
-      "path": "LICENSE",
-      "sha256": "47f6894f7fcb7c55c66226d69e64feb613d5f5c49f11716938945997d3a569a9",
-      "bytes": 4600,
+      "path": "protocol/schema_v1.json",
+      "sha256": "4caa149ffcf721b27206ea05851125dd7795196c4475b00dd1c4e18eecee5c67",
+      "bytes": 2355,
       "executable": false
     },
     {
@@ -830,33 +716,15 @@
       "executable": false
     },
     {
-      "path": "scripts/build-portableapps.sh",
-      "sha256": "fa4bdd54ae69c1dee87b7fc08a61baee886ec04537d84100cc9f9b08c0ee10c9",
-      "bytes": 4281,
-      "executable": false
-    },
-    {
       "path": "scripts/Test-InstallerLifecycle.ps1",
       "sha256": "3ef75940e2774c4085623dd6d653ebceca365cf1cb1000b775ab59a49da874ca",
       "bytes": 7716,
       "executable": false
     },
     {
-      "path": "third_party/doctest/doctest.h",
-      "sha256": "0fd13be22e0a3ec1a4c8787f393fb1ab69994af61031e95168e784a6ad343972",
-      "bytes": 6301,
-      "executable": false
-    },
-    {
-      "path": "third_party/rapidcheck/rapidcheck.h",
-      "sha256": "353e0fe611f1eb52461a2b109df10ba816e98b9756fc68ff4ae173499ec59820",
-      "bytes": 1073,
-      "executable": false
-    },
-    {
-      "path": "third_party/rapidcheck/rapidcheck.hpp",
-      "sha256": "792deaa0bf95a31b0d930c92f333814a3183d18c031c7a87e43c397fc51d4f8b",
-      "bytes": 1491,
+      "path": "scripts/build-portableapps.sh",
+      "sha256": "fa4bdd54ae69c1dee87b7fc08a61baee886ec04537d84100cc9f9b08c0ee10c9",
+      "bytes": 4281,
       "executable": false
     },
     {
@@ -881,6 +749,30 @@
       "path": "tools/wininspect.nsi",
       "sha256": "2d9ad2c48127b158a662c5d0d3b94d1b5efa3484576830dcf54c0d3ef8517f96",
       "bytes": 22170,
+      "executable": false
+    },
+    {
+      "path": "winebot/Dockerfile",
+      "sha256": "5d63ca6c649750b4911f136b1063abc3278d7647e9012b8dacf6ee2334ec7e1a",
+      "bytes": 1624,
+      "executable": false
+    },
+    {
+      "path": "winebot/README.md",
+      "sha256": "a8c42b0d4ee8b8edb5ea45409a3b93ecf1c4194193843b84da2c0444af5ce71e",
+      "bytes": 1886,
+      "executable": false
+    },
+    {
+      "path": "winebot/docker-compose.yml",
+      "sha256": "0f2f805cd849a9bc0806b4b95b431bbb61b8633032dce44c6310688f56bdca06",
+      "bytes": 1293,
+      "executable": false
+    },
+    {
+      "path": "winebot/docker-entrypoint.sh",
+      "sha256": "ffe834ca87175a49871e24d9b4cfa610c49cdf85b8b7067c86bdf30170b7ee86",
+      "bytes": 1138,
       "executable": false
     }
   ]

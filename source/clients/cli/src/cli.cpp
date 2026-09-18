@@ -11,6 +11,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <algorithm>
+#include <climits>
+
 #include "wininspect/core.hpp"
 #include "wininspect/tinyjson.hpp"
 #include "wininspect/compress.hpp"
@@ -22,6 +25,7 @@
 #include <fstream>
 
 #include "wininspect/crypto.hpp"
+#include "tcp_endpoint.hpp"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Advapi32.lib") // For CryptGenRandom
@@ -33,6 +37,34 @@ struct Conn
   HANDLE hPipe = INVALID_HANDLE_VALUE;
   SOCKET s = INVALID_SOCKET;
   bool is_tcp = false;
+
+  static bool socket_send_all(SOCKET socket, const void* data, size_t size)
+  {
+    const auto* cursor = static_cast<const char*>(data);
+    while (size > 0) {
+      const int chunk = static_cast<int>(std::min<size_t>(size, INT_MAX));
+      const int sent = ::send(socket, cursor, chunk, 0);
+      if (sent <= 0)
+        return false;
+      cursor += sent;
+      size -= static_cast<size_t>(sent);
+    }
+    return true;
+  }
+
+  static bool socket_recv_all(SOCKET socket, void* data, size_t size)
+  {
+    auto* cursor = static_cast<char*>(data);
+    while (size > 0) {
+      const int chunk = static_cast<int>(std::min<size_t>(size, INT_MAX));
+      const int received = ::recv(socket, cursor, chunk, 0);
+      if (received <= 0)
+        return false;
+      cursor += received;
+      size -= static_cast<size_t>(received);
+    }
+    return true;
+  }
 
   void close()
   {
@@ -52,20 +84,20 @@ struct Conn
 
   bool send(const std::string& m)
   {
+    if (m.empty() || m.size() > wininspect::MAX_MESSAGE_SIZE)
+      return false;
     if (is_tcp) {
-      uint32_t len = htonl((uint32_t)m.size());
-      if (::send(s, (const char*)&len, 4, 0) <= 0)
-        return false;
-      if (::send(s, m.data(), (int)len, 0) <= 0)
-        return false;
-      return true;
+      const uint32_t payload_size = static_cast<uint32_t>(m.size());
+      const uint32_t network_size = htonl(payload_size);
+      return socket_send_all(s, &network_size, sizeof(network_size)) &&
+             socket_send_all(s, m.data(), payload_size);
     }
     else {
       DWORD written;
       uint32_t len = (uint32_t)m.size();
-      if (!WriteFile(hPipe, &len, 4, &written, nullptr))
+      if (!WriteFile(hPipe, &len, sizeof(len), &written, nullptr) || written != sizeof(len))
         return false;
-      if (!WriteFile(hPipe, m.data(), (DWORD)len, &written, nullptr))
+      if (!WriteFile(hPipe, m.data(), len, &written, nullptr) || written != len)
         return false;
       return true;
     }
@@ -75,8 +107,7 @@ struct Conn
   {
     if (is_tcp) {
       uint32_t len;
-      int r = ::recv(s, (char*)&len, 4, 0);
-      if (r <= 0)
+      if (!socket_recv_all(s, &len, sizeof(len)))
         return false;
       len = ntohl(len);
 
@@ -91,8 +122,7 @@ struct Conn
         return false;
 
       m.resize(len);
-      r = ::recv(s, m.data(), (int)len, 0);
-      if (r <= 0)
+      if (!socket_recv_all(s, m.data(), len))
         return false;
 
       // Decompress if compression flag was set
@@ -102,6 +132,8 @@ struct Conn
           return false;
         uint32_t raw_size;
         memcpy(&raw_size, m.data(), 4);
+        if (raw_size == 0 || raw_size > wininspect::MAX_MESSAGE_SIZE)
+          return false;
         std::vector<uint8_t> compressed(m.begin() + 4, m.end());
         auto decompressed = wininspect::decompress(compressed, raw_size);
         if (decompressed.empty())
@@ -113,10 +145,12 @@ struct Conn
     else {
       DWORD read;
       uint32_t len;
-      if (!ReadFile(hPipe, &len, 4, &read, nullptr))
+      if (!ReadFile(hPipe, &len, sizeof(len), &read, nullptr) || read != sizeof(len))
+        return false;
+      if (len == 0 || len > wininspect::MAX_MESSAGE_SIZE)
         return false;
       m.resize(len);
-      if (!ReadFile(hPipe, m.data(), (DWORD)len, &read, nullptr))
+      if (!ReadFile(hPipe, m.data(), len, &read, nullptr) || read != len)
         return false;
       return true;
     }
@@ -207,32 +241,68 @@ static bool connect_daemon(Conn& conn, bool tcp, const std::string& host, int po
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
       return false;
 
-    conn.s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (conn.s == INVALID_SOCKET)
-      return false;
-
-    u_long mode = 1;
-    ioctlsocket(conn.s, FIONBIO, &mode);
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((u_short)port);
-    inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
-
-    connect(conn.s, (sockaddr*)&addr, sizeof(addr));
-
-    fd_set write_fds;
-    FD_ZERO(&write_fds);
-    FD_SET(conn.s, &write_fds);
-    timeval tv{2, 0};
-
-    if (select(0, NULL, &write_fds, NULL, &tv) <= 0) {
-      closesocket(conn.s);
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    addrinfo* addresses = nullptr;
+    const std::string service = std::to_string(port);
+    if (getaddrinfo(host.c_str(), service.c_str(), &hints, &addresses) != 0) {
+      WSACleanup();
       return false;
     }
 
-    mode = 0;
-    ioctlsocket(conn.s, FIONBIO, &mode);
+    for (const addrinfo* address = addresses; address != nullptr; address = address->ai_next) {
+      SOCKET candidate = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+      if (candidate == INVALID_SOCKET)
+        continue;
+
+      u_long mode = 1;
+      if (ioctlsocket(candidate, FIONBIO, &mode) != 0) {
+        closesocket(candidate);
+        continue;
+      }
+
+      const int result =
+          connect(candidate, address->ai_addr, static_cast<int>(address->ai_addrlen));
+      if (result == SOCKET_ERROR) {
+        const int error = WSAGetLastError();
+        if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS && error != WSAEINVAL) {
+          closesocket(candidate);
+          continue;
+        }
+
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        FD_SET(candidate, &write_fds);
+        timeval timeout{2, 0};
+        if (select(0, nullptr, &write_fds, nullptr, &timeout) <= 0) {
+          closesocket(candidate);
+          continue;
+        }
+        int socket_error = 0;
+        int error_size = sizeof(socket_error);
+        if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&socket_error),
+                       &error_size) != 0 ||
+            socket_error != 0) {
+          closesocket(candidate);
+          continue;
+        }
+      }
+
+      mode = 0;
+      if (ioctlsocket(candidate, FIONBIO, &mode) != 0) {
+        closesocket(candidate);
+        continue;
+      }
+      conn.s = candidate;
+      break;
+    }
+    freeaddrinfo(addresses);
+    if (conn.s == INVALID_SOCKET) {
+      WSACleanup();
+      return false;
+    }
 
     conn.is_tcp = true;
     if (!perform_auth(conn)) {
@@ -414,7 +484,8 @@ static void pretty_print_value(std::ostream& os, const Value& v, int indent = 0)
     auto& o = v.as_obj();
     bool first = true;
     for (auto& [k, val] : o) {
-      if (!first) os << "\n";
+      if (!first)
+        os << "\n";
       first = false;
       os << pad << k << ": ";
       pretty_print_value(os, val, indent + 2);
@@ -423,7 +494,8 @@ static void pretty_print_value(std::ostream& os, const Value& v, int indent = 0)
   else if (v.is_arr()) {
     auto& a = v.as_arr();
     for (size_t i = 0; i < a.size(); ++i) {
-      if (i > 0) os << "\n";
+      if (i > 0)
+        os << "\n";
       os << pad << "[" << (i + 1) << "] ";
       pretty_print_value(os, a[i], indent + 2);
     }
@@ -434,8 +506,7 @@ static void pretty_print_value(std::ostream& os, const Value& v, int indent = 0)
 }
 
 /// Pretty-print a daemon response. Override for specific methods.
-static void pretty_print_result(std::ostream& os, const std::string& cmd,
-                                 const Object& result)
+static void pretty_print_result(std::ostream& os, const std::string& cmd, const Object& result)
 {
   // ── Special-case formatters for common commands ──────────────────────────
   auto find = [&](const std::string& key) -> const Value* {
@@ -454,17 +525,17 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto title = wo.find("title");
           auto cls = wo.find("class");
           auto rect = wo.find("rect");
-          os << (hwnd != wo.end() && hwnd->second.is_str() ? hwnd->second.as_str() : "?")
-             << "  \"" << (title != wo.end() && title->second.is_str() ? title->second.as_str() : "")
-             << "\"  [" << (cls != wo.end() && cls->second.is_str() ? cls->second.as_str() : "") << "]";
+          os << (hwnd != wo.end() && hwnd->second.is_str() ? hwnd->second.as_str() : "?") << "  \""
+             << (title != wo.end() && title->second.is_str() ? title->second.as_str() : "")
+             << "\"  [" << (cls != wo.end() && cls->second.is_str() ? cls->second.as_str() : "")
+             << "]";
           if (rect != wo.end() && rect->second.is_obj()) {
             auto& r = rect->second.as_obj();
             auto x = r.find("x"), y = r.find("y"), w_ = r.find("width"), h = r.find("height");
-            os << "  (" << (x != r.end() ? std::to_string((int)x->second.as_num()) : "?")
-               << "," << (y != r.end() ? std::to_string((int)y->second.as_num()) : "?")
-               << " " << (w_ != r.end() ? std::to_string((int)w_->second.as_num()) : "?")
-               << "x" << (h != r.end() ? std::to_string((int)h->second.as_num()) : "?")
-               << ")";
+            os << "  (" << (x != r.end() ? std::to_string((int)x->second.as_num()) : "?") << ","
+               << (y != r.end() ? std::to_string((int)y->second.as_num()) : "?") << " "
+               << (w_ != r.end() ? std::to_string((int)w_->second.as_num()) : "?") << "x"
+               << (h != r.end() ? std::to_string((int)h->second.as_num()) : "?") << ")";
           }
           os << "\n";
         }
@@ -486,8 +557,9 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto& mo = m.as_obj();
           auto hwnd = mo.find("hwnd");
           auto title = mo.find("title");
-          os << (hwnd != mo.end() && hwnd->second.is_str() ? hwnd->second.as_str() : "?")
-             << "  \"" << (title != mo.end() && title->second.is_str() ? title->second.as_str() : "") << "\"\n";
+          os << (hwnd != mo.end() && hwnd->second.is_str() ? hwnd->second.as_str() : "?") << "  \""
+             << (title != mo.end() && title->second.is_str() ? title->second.as_str() : "")
+             << "\"\n";
         }
       }
     }
@@ -504,31 +576,44 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
     auto license = find("license");
     auto os_info = find("os");
     auto arch = find("arch");
-    if (name) os << "Name:       " << (name->is_str() ? name->as_str() : "?") << "\n";
-    if (version) os << "Version:    " << (version->is_str() ? version->as_str() : "?") << "\n";
-    if (uuid) os << "UUID:       " << (uuid->is_str() ? uuid->as_str() : "?") << "\n";
-    if (hostname) os << "Hostname:   " << (hostname->is_str() ? hostname->as_str() : "?") << "\n";
-    if (os_info) os << "OS:         " << (os_info->is_str() ? os_info->as_str() : "?") << "\n";
-    if (arch) os << "Arch:       " << (arch->is_str() ? arch->as_str() : "?") << "\n";
-    if (deployment) os << "Deployment: " << (deployment->is_str() ? deployment->as_str() : "?") << "\n";
-    if (license) os << "License:    " << (license->is_str() ? license->as_str() : "?") << "\n";
+    if (name)
+      os << "Name:       " << (name->is_str() ? name->as_str() : "?") << "\n";
+    if (version)
+      os << "Version:    " << (version->is_str() ? version->as_str() : "?") << "\n";
+    if (uuid)
+      os << "UUID:       " << (uuid->is_str() ? uuid->as_str() : "?") << "\n";
+    if (hostname)
+      os << "Hostname:   " << (hostname->is_str() ? hostname->as_str() : "?") << "\n";
+    if (os_info)
+      os << "OS:         " << (os_info->is_str() ? os_info->as_str() : "?") << "\n";
+    if (arch)
+      os << "Arch:       " << (arch->is_str() ? arch->as_str() : "?") << "\n";
+    if (deployment)
+      os << "Deployment: " << (deployment->is_str() ? deployment->as_str() : "?") << "\n";
+    if (license)
+      os << "License:    " << (license->is_str() ? license->as_str() : "?") << "\n";
   }
   else if (cmd == "daemon.status") {
     auto version = find("version");
     auto state = find("daemon_state");
     auto features = find("features");
-    if (version) os << "Version: " << (version->is_str() ? version->as_str() : "?") << "\n";
-    if (state) os << "State:   " << (state->is_str() ? state->as_str() : "?") << "\n";
+    if (version)
+      os << "Version: " << (version->is_str() ? version->as_str() : "?") << "\n";
+    if (state)
+      os << "State:   " << (state->is_str() ? state->as_str() : "?") << "\n";
     if (features && features->is_obj()) {
       os << "Features:\n";
       for (auto& [k, v] : features->as_obj()) {
-        os << "  " << k << ": " << (v.is_bool() ? (v.as_bool() ? "available" : "unavailable") : "?") << "\n";
+        os << "  " << k << ": " << (v.is_bool() ? (v.as_bool() ? "available" : "unavailable") : "?")
+           << "\n";
       }
     }
     auto deployment = find("deployment");
     auto license = find("license");
-    if (deployment) os << "Deployment: " << (deployment->is_str() ? deployment->as_str() : "?") << "\n";
-    if (license) os << "License:    " << (license->is_str() ? license->as_str() : "?") << "\n";
+    if (deployment)
+      os << "Deployment: " << (deployment->is_str() ? deployment->as_str() : "?") << "\n";
+    if (license)
+      os << "License:    " << (license->is_str() ? license->as_str() : "?") << "\n";
   }
   else if (cmd == "process.list") {
     auto arr = find("processes");
@@ -539,9 +624,12 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto pid = po.find("pid");
           auto name = po.find("name");
           auto mem = po.find("memory_kb");
-          if (pid != po.end()) os << (int)pid->second.as_num() << "  ";
-          if (name != po.end()) os << (name->second.is_str() ? name->second.as_str() : "?");
-          if (mem != po.end()) os << "  (" << (int)mem->second.as_num() << " KB)";
+          if (pid != po.end())
+            os << (int)pid->second.as_num() << "  ";
+          if (name != po.end())
+            os << (name->second.is_str() ? name->second.as_str() : "?");
+          if (mem != po.end())
+            os << "  (" << (int)mem->second.as_num() << " KB)";
           os << "\n";
         }
       }
@@ -554,9 +642,12 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
     auto controller = find("current_controller");
     auto controller_id = find("controller_id");
     auto mode = find("mode");
-    if (controller) os << "Controller: " << (controller->is_str() ? controller->as_str() : "?") << "\n";
-    if (controller_id) os << "ID:         " << (controller_id->is_str() ? controller_id->as_str() : "?") << "\n";
-    if (mode) os << "Mode:       " << (mode->is_str() ? mode->as_str() : "?") << "\n";
+    if (controller)
+      os << "Controller: " << (controller->is_str() ? controller->as_str() : "?") << "\n";
+    if (controller_id)
+      os << "ID:         " << (controller_id->is_str() ? controller_id->as_str() : "?") << "\n";
+    if (mode)
+      os << "Mode:       " << (mode->is_str() ? mode->as_str() : "?") << "\n";
   }
   else if (cmd == "daemon.capabilities") {
     for (auto& [k, v] : result) {
@@ -579,9 +670,10 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
   else if (cmd == "screen.getPixel") {
     auto r = find("r"), g = find("g"), b = find("b"), hex = find("hex");
     if (r && g && b)
-      os << "RGB: (" << (int)r->as_num() << ", " << (int)g->as_num() << ", "
-         << (int)b->as_num() << ")\n";
-    if (hex) os << "Hex: " << (hex->is_str() ? hex->as_str() : "?") << "\n";
+      os << "RGB: (" << (int)r->as_num() << ", " << (int)g->as_num() << ", " << (int)b->as_num()
+         << ")\n";
+    if (hex)
+      os << "Hex: " << (hex->is_str() ? hex->as_str() : "?") << "\n";
   }
   else if (cmd == "daemon.metrics") {
     for (auto& [k, v] : result) {
@@ -623,16 +715,20 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
   else if (cmd == "image.match") {
     auto matches = find("matches");
     auto count = find("count");
-    if (count) os << "Matches: " << (int)count->as_num() << "\n";
+    if (count)
+      os << "Matches: " << (int)count->as_num() << "\n";
     if (matches && matches->is_arr()) {
       for (auto& m : matches->as_arr()) {
         if (m.is_obj()) {
           auto& mo = m.as_obj();
           os << "  ";
           for (auto& [k, v] : mo) {
-            if (v.is_num()) os << k << "=" << (int)v.as_num() << " ";
-            else if (v.is_str()) os << k << "=" << v.as_str() << " ";
-            else if (v.is_bool()) os << k << "=" << (v.as_bool() ? "yes" : "no") << " ";
+            if (v.is_num())
+              os << k << "=" << (int)v.as_num() << " ";
+            else if (v.is_str())
+              os << k << "=" << v.as_str() << " ";
+            else if (v.is_bool())
+              os << k << "=" << (v.as_bool() ? "yes" : "no") << " ";
           }
           os << "\n";
         }
@@ -648,9 +744,12 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto type = eo.find("type");
           auto source = eo.find("source_hwnd");
           auto ts = eo.find("timestamp");
-          if (ts != eo.end()) os << "[" << (int)ts->second.as_num() << "ms] ";
-          if (type != eo.end()) os << (type->second.is_str() ? type->second.as_str() : "?");
-          if (source != eo.end()) os << " hwnd=" << (source->second.is_str() ? source->second.as_str() : "?");
+          if (ts != eo.end())
+            os << "[" << (int)ts->second.as_num() << "ms] ";
+          if (type != eo.end())
+            os << (type->second.is_str() ? type->second.as_str() : "?");
+          if (source != eo.end())
+            os << " hwnd=" << (source->second.is_str() ? source->second.as_str() : "?");
           os << "\n";
         }
       }
@@ -665,36 +764,52 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto name = so.find("name");
           auto display = so.find("display_name");
           auto state = so.find("state");
-          if (name != so.end()) os << (name->second.is_str() ? name->second.as_str() : "?");
-          if (display != so.end()) os << "  \"" << (display->second.is_str() ? display->second.as_str() : "") << "\"";
-          if (state != so.end()) os << "  [" << (state->second.is_str() ? state->second.as_str() : "?") << "]";
+          if (name != so.end())
+            os << (name->second.is_str() ? name->second.as_str() : "?");
+          if (display != so.end())
+            os << "  \"" << (display->second.is_str() ? display->second.as_str() : "") << "\"";
+          if (state != so.end())
+            os << "  [" << (state->second.is_str() ? state->second.as_str() : "?") << "]";
           os << "\n";
         }
       }
     }
   }
   else if (cmd == "screen.desktopInfo") {
-    auto w = find("width"), h = find("height"), dpi = find("dpi"),
-         bpp = find("bits_per_pixel"), monitors = find("monitor_count");
-    if (w && h) os << "Resolution: " << (int)w->as_num() << "x" << (int)h->as_num() << "\n";
-    if (dpi) os << "DPI:       " << (int)dpi->as_num() << "\n";
-    if (bpp) os << "BPP:       " << (int)bpp->as_num() << "\n";
-    if (monitors) os << "Monitors:  " << (int)monitors->as_num() << "\n";
+    auto w = find("width"), h = find("height"), dpi = find("dpi"), bpp = find("bits_per_pixel"),
+         monitors = find("monitor_count");
+    if (w && h)
+      os << "Resolution: " << (int)w->as_num() << "x" << (int)h->as_num() << "\n";
+    if (dpi)
+      os << "DPI:       " << (int)dpi->as_num() << "\n";
+    if (bpp)
+      os << "BPP:       " << (int)bpp->as_num() << "\n";
+    if (monitors)
+      os << "Monitors:  " << (int)monitors->as_num() << "\n";
   }
   else if (cmd == "reg.read") {
     auto value = find("value");
     auto type = find("type");
-    if (value && value->is_str()) os << "Value: " << value->as_str() << "\n";
-    else if (value) { os << "Value: "; pretty_print_value(os, *value, 0); os << "\n"; }
-    if (type) os << "Type:  " << (type->is_str() ? type->as_str() : "?") << "\n";
+    if (value && value->is_str())
+      os << "Value: " << value->as_str() << "\n";
+    else if (value) {
+      os << "Value: ";
+      pretty_print_value(os, *value, 0);
+      os << "\n";
+    }
+    if (type)
+      os << "Type:  " << (type->is_str() ? type->as_str() : "?") << "\n";
   }
   else if (cmd == "file.getInfo") {
     auto size = find("size");
     auto modified = find("modified");
     auto is_dir = find("is_directory");
-    if (size) os << "Size:    " << (long long)size->as_num() << " bytes\n";
-    if (modified) os << "Modified: " << (modified->is_str() ? modified->as_str() : "?") << "\n";
-    if (is_dir) os << "Type:    " << (is_dir->as_bool() ? "directory" : "file") << "\n";
+    if (size)
+      os << "Size:    " << (long long)size->as_num() << " bytes\n";
+    if (modified)
+      os << "Modified: " << (modified->is_str() ? modified->as_str() : "?") << "\n";
+    if (is_dir)
+      os << "Type:    " << (is_dir->as_bool() ? "directory" : "file") << "\n";
   }
   else if (cmd == "screen.pixelSearch") {
     auto found = find("found");
@@ -704,7 +819,8 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
       os << (found->as_bool() ? "Found" : "Not found");
       if (found->as_bool() && x && y)
         os << " at (" << (int)x->as_num() << ", " << (int)y->as_num() << ")";
-      if (count) os << " (" << (int)count->as_num() << " matches)";
+      if (count)
+        os << " (" << (int)count->as_num() << " matches)";
       os << "\n";
     }
   }
@@ -722,10 +838,14 @@ static void pretty_print_result(std::ostream& os, const std::string& cmd,
           auto ctrl = eo.find("controller");
           auto method = eo.find("method");
           auto ok = eo.find("ok");
-          if (ts != eo.end()) os << "[" << (ts->second.is_str() ? ts->second.as_str() : "?") << "] ";
-          if (ctrl != eo.end()) os << (ctrl->second.is_str() ? ctrl->second.as_str() : "?") << " ";
-          if (method != eo.end()) os << (method->second.is_str() ? method->second.as_str() : "?");
-          if (ok != eo.end()) os << " " << (ok->second.as_bool() ? "OK" : "FAIL");
+          if (ts != eo.end())
+            os << "[" << (ts->second.is_str() ? ts->second.as_str() : "?") << "] ";
+          if (ctrl != eo.end())
+            os << (ctrl->second.is_str() ? ctrl->second.as_str() : "?") << " ";
+          if (method != eo.end())
+            os << (method->second.is_str() ? method->second.as_str() : "?");
+          if (ok != eo.end())
+            os << " " << (ok->second.as_bool() ? "OK" : "FAIL");
           os << "\n";
         }
       }
@@ -757,21 +877,18 @@ int main(int argc, char** argv)
     }
     else if (std::string(argv[i]) == "--tcp") {
       use_tcp = true;
-      // Only consume next arg if it looks like a host:port or IP address
-      if (i + 1 < argc) {
+      // A value is optional; when present it may be a DNS name or an IPv4/IPv6 endpoint.
+      if (i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) {
         std::string next = argv[i + 1];
-        // Peek: starts with digit, colon, or bracket (IPv6) → it's an address
-        if (!next.empty() && (std::isdigit((unsigned char)next[0]) || next[0] == '[' ||
-                              next.find(':') != std::string::npos)) {
-          std::string host_port = argv[++i];
-          size_t colon = host_port.find(':');
-          if (colon != std::string::npos) {
-            tcp_host = host_port.substr(0, colon);
-            tcp_port = std::stoi(host_port.substr(colon + 1));
+        if (!next.empty()) {
+          wininspect::cli::TcpEndpoint endpoint;
+          if (!wininspect::cli::parse_tcp_endpoint(argv[++i], static_cast<uint16_t>(tcp_port),
+                                                   endpoint)) {
+            std::cerr << "Invalid TCP endpoint. Use host:port or [IPv6]:port.\n";
+            return 2;
           }
-          else {
-            tcp_host = host_port;
-          }
+          tcp_host = endpoint.host;
+          tcp_port = endpoint.port;
         }
       }
     }
@@ -850,7 +967,10 @@ int main(int argc, char** argv)
           bool ok = (ok_it != obj.end() && ok_it->second.is_bool() && ok_it->second.as_bool());
           if (!ok) {
             auto err = obj.find("error_message");
-            std::cout << "Error: " << (err != obj.end() && err->second.is_str() ? err->second.as_str() : "unknown") << "\n";
+            std::cout << "Error: "
+                      << (err != obj.end() && err->second.is_str() ? err->second.as_str()
+                                                                   : "unknown")
+                      << "\n";
           }
           else if (result_it != obj.end() && result_it->second.is_obj()) {
             pretty_print_result(std::cout, method, result_it->second.as_obj());
@@ -1640,8 +1760,8 @@ int main(int argc, char** argv)
       std::wstring cmdLine = L"\"" + daemonPath + L"\" --headless";
       STARTUPINFOW si = {sizeof(si)};
       PROCESS_INFORMATION pi;
-      if (CreateProcessW(daemonPath.c_str(), &cmdLine[0], nullptr, nullptr, FALSE,
-                         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      if (CreateProcessW(daemonPath.c_str(), &cmdLine[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                         nullptr, nullptr, &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         std::cout << "Daemon started.\n";
@@ -1696,13 +1816,14 @@ int main(int argc, char** argv)
       GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
       std::wstring dir = modulePath;
       auto pos = dir.find_last_of(L"\\");
-      if (pos != std::wstring::npos) dir = dir.substr(0, pos + 1);
+      if (pos != std::wstring::npos)
+        dir = dir.substr(0, pos + 1);
       std::wstring daemonPath = dir + L"wininspectd.exe";
       std::wstring cmdLine = L"\"" + daemonPath + L"\" --headless";
       STARTUPINFOW si = {sizeof(si)};
       PROCESS_INFORMATION pi;
-      if (CreateProcessW(daemonPath.c_str(), &cmdLine[0], nullptr, nullptr, FALSE,
-                         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+      if (CreateProcessW(daemonPath.c_str(), &cmdLine[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                         nullptr, nullptr, &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         std::cout << "Daemon restarted.\n";
