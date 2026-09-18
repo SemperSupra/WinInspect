@@ -1,7 +1,9 @@
 #include <windows.h>
-#include <ntstatus.h>
 #include <wdf.h>
 #include <vhf.h>
+
+#define WININSPECT_STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#define WININSPECT_STATUS_INVALID_HANDLE ((NTSTATUS)0xC0000008L)
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD WinInspectEvtDeviceAdd;
@@ -106,7 +108,7 @@ NTSTATUS WinInspectEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT D
 
     fileHandle = WdfIoTargetWdmGetTargetFileHandle(context->VhfIoTarget);
     if (fileHandle == NULL || fileHandle == INVALID_HANDLE_VALUE) {
-        return STATUS_INVALID_HANDLE;
+        return WININSPECT_STATUS_INVALID_HANDLE;
     }
 
     VHF_CONFIG_INIT(&vhfConfig,
@@ -129,7 +131,7 @@ NTSTATUS WinInspectEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT D
         return status;
     }
 
-    return STATUS_SUCCESS;
+    return WININSPECT_STATUS_SUCCESS;
 }
 
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath)
