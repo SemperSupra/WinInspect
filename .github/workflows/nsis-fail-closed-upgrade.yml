@@ -1,0 +1,225 @@
+name: NSIS fail-closed upgrade qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nsis-fail-closed-upgrade.yml'
+      - 'experiments/nsis-fail-closed-upgrade.patch'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  locked-file-upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # pull_request normally checks out GitHub's synthetic merge commit. This
+          # experiment's transform is bound to the candidate branch bytes, so use
+          # the exact PR head instead; workflow_dispatch falls back to github.sha.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record treatment identity
+        shell: pwsh
+        run: |
+          $checkedOutSha = (git rev-parse HEAD).Trim()
+          [ordered]@{
+            runner = '${{ matrix.runner }}'
+            requestedArchitecture = '${{ matrix.arch }}'
+            os = [System.Environment]::OSVersion.VersionString
+            osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            sha = $checkedOutSha
+            repair = 'existing-NSIS-product-file writeability preflight before mutation'
+          } | ConvertTo-Json | Set-Content treatment.json -Encoding utf8NoBOM
+
+      - name: Build release subjects
+        shell: pwsh
+        run: |
+          cmake -S source -B source/build -A ${{ matrix.arch }} -DWININSPECT_BUILD_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build source/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
+
+      - name: Build baseline A and repaired B installers
+        shell: pwsh
+        run: |
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE 'source\build\Release'
+          $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source\dist\failclosed'
+          $stageA = Join-Path $distRoot 'stage-a'
+          $stageB = Join-Path $distRoot 'stage-b'
+          New-Item -ItemType Directory -Force -Path $stageA,$stageB | Out-Null
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $src = Join-Path $buildRoot $name
+            if (-not (Test-Path $src -PathType Leaf)) { throw "Missing $src" }
+            Copy-Item $src (Join-Path $stageA $name) -Force
+            Copy-Item $src (Join-Path $stageB $name) -Force
+            [System.IO.File]::AppendAllText((Join-Path $stageB $name), "`r`nWININSPECT_FAILCLOSED_B_${{ matrix.arch }}_$name`r`n")
+          }
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis.exe -ErrorAction Stop).Source }
+
+          & $makensis '/DVERSION=failclosed-a' "/DBUILD_SRC=$stageA" "/DDIST_DIR=$distRoot" (Join-Path $env:GITHUB_WORKSPACE 'source\tools\wininspect.nsi')
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline A packaging failed.' }
+
+          git apply --check experiments/nsis-fail-closed-upgrade.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate patch no longer applies cleanly.' }
+          git apply experiments/nsis-fail-closed-upgrade.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate patch apply failed.' }
+
+          & $makensis '/DVERSION=failclosed-b' "/DBUILD_SRC=$stageB" "/DDIST_DIR=$distRoot" (Join-Path $env:GITHUB_WORKSPACE 'source\tools\wininspect.nsi')
+          if ($LASTEXITCODE -ne 0) { throw 'Repaired B packaging failed.' }
+
+      - name: Prove normal transition, process-in-use behavior, and locked-file fail-closed preservation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect'
+          $distRoot = Join-Path $env:GITHUB_WORKSPACE 'source\dist\failclosed'
+          $installerA = Join-Path $distRoot 'WinInspect-Installer-failclosed-a.exe'
+          $installerB = Join-Path $distRoot 'WinInspect-Installer-failclosed-b.exe'
+          $stageA = Join-Path $distRoot 'stage-a'
+          $stageB = Join-Path $distRoot 'stage-b'
+          $productNames = @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')
+
+          function Invoke-Installer([string]$path, [int]$timeoutSeconds = 45) {
+            $p = Start-Process $path -ArgumentList '/S' -PassThru
+            if (-not $p.WaitForExit($timeoutSeconds * 1000)) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              return [ordered]@{ exit = $null; timedOut = $true }
+            }
+            return [ordered]@{ exit = $p.ExitCode; timedOut = $false }
+          }
+          function Get-Hashes([string]$base) {
+            $o = [ordered]@{}
+            foreach ($name in $productNames) {
+              $o[$name] = (Get-FileHash -LiteralPath (Join-Path $base $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            return $o
+          }
+          function Hashes-Equal($left,$right) {
+            foreach ($name in $productNames) { if ($left[$name] -ne $right[$name]) { return $false } }
+            return $true
+          }
+          function Assert-State([string]$version,$expectedHashes) {
+            $actual = (Get-ItemProperty -LiteralPath $key -Name DisplayVersion -ErrorAction Stop).DisplayVersion
+            if ($actual -ne $version) { throw "Expected DisplayVersion $version, got $actual" }
+            $actualHashes = Get-Hashes $root
+            if (-not (Hashes-Equal $actualHashes $expectedHashes)) { throw "Installed hashes do not match expected $version product set." }
+            $cli = Join-Path $root 'wininspect.exe'
+            & $cli '--version' *> $null
+            if ($LASTEXITCODE -ne 0) { throw "Installed CLI unhealthy at $version." }
+          }
+          function Install-A {
+            $r = Invoke-Installer $installerA
+            if ($r.timedOut -or $r.exit -ne 0) { throw "A install failed: exit=$($r.exit), timeout=$($r.timedOut)" }
+            Assert-State 'failclosed-a' $hashA
+          }
+          function Cleanup {
+            $u = Join-Path $root 'uninstall.exe'
+            if (Test-Path $u) {
+              $p = Start-Process $u -ArgumentList '/S' -PassThru -Wait
+              if ($p.ExitCode -ne 0) { throw "Uninstall failed: $($p.ExitCode)" }
+              $deadline = [DateTime]::UtcNow.AddSeconds(15)
+              while ((Test-Path $root) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
+              if (Test-Path $root) { throw 'Uninstall did not converge to a clean install directory.' }
+            }
+          }
+
+          $hashA = Get-Hashes $stageA
+          $hashB = Get-Hashes $stageB
+          if (Hashes-Equal $hashA $hashB) { throw 'Treatment construction failed: A and B product sets are identical.' }
+
+          Cleanup
+          Install-A
+
+          $normal = Invoke-Installer $installerB
+          if ($normal.timedOut -or $normal.exit -ne 0) { throw "Normal A->B transition failed: exit=$($normal.exit), timeout=$($normal.timedOut)" }
+          Assert-State 'failclosed-b' $hashB
+
+          $rollback = Invoke-Installer $installerA
+          if ($rollback.timedOut -or $rollback.exit -ne 0) { throw "Normal B->A rollback failed: exit=$($rollback.exit), timeout=$($rollback.timedOut)" }
+          Assert-State 'failclosed-a' $hashA
+
+          $gui = Start-Process (Join-Path $root 'wininspect-gui.exe') -PassThru
+          Start-Sleep -Seconds 2
+          try {
+            $inUse = Invoke-Installer $installerB 30
+          } finally {
+            if (-not $gui.HasExited) { Stop-Process -Id $gui.Id -Force -ErrorAction SilentlyContinue }
+          }
+          if (-not $inUse.timedOut -and $inUse.exit -eq 0) {
+            Assert-State 'failclosed-b' $hashB
+            $inUseStatus = 'PASS_COMPLETED'
+            $back = Invoke-Installer $installerA
+            if ($back.timedOut -or $back.exit -ne 0) { throw 'Could not restore A after process-in-use completed transition.' }
+            Assert-State 'failclosed-a' $hashA
+          } elseif (-not $inUse.timedOut -and $inUse.exit -ne 0) {
+            Assert-State 'failclosed-a' $hashA
+            $inUseStatus = 'PASS_CLEANLY_BLOCKED'
+          } else {
+            throw 'Process-in-use transition timed out instead of completing or failing closed.'
+          }
+
+          $lockedResults = @()
+          foreach ($name in $productNames) {
+            Assert-State 'failclosed-a' $hashA
+            $lockedPath = Join-Path $root $name
+            $lock = [System.IO.File]::Open($lockedPath,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None)
+            try {
+              $r = Invoke-Installer $installerB 30
+            } finally {
+              $lock.Dispose()
+            }
+            if ($r.timedOut) { throw "Locked-$name transition timed out instead of failing closed." }
+            if ($r.exit -eq 0) { throw "Locked-$name transition incorrectly returned success." }
+            Assert-State 'failclosed-a' $hashA
+            $lockedResults += [ordered]@{ file = $name; exit = $r.exit; retainedVersion = 'failclosed-a'; retainedExactHashes = $true; status = 'PASS_FAIL_CLOSED' }
+          }
+
+          $checkedOutSha = (git rev-parse HEAD).Trim()
+          [ordered]@{
+            schemaVersion = 1
+            runner = '${{ matrix.runner }}'
+            architecture = '${{ matrix.arch }}'
+            sourceSha = $checkedOutSha
+            treatment = 'NSIS existing-install writeability preflight'
+            normalUpgrade = [ordered]@{ exit = $normal.exit; status = 'PASS' }
+            normalRollback = [ordered]@{ exit = $rollback.exit; exactHashesRestored = $true; status = 'PASS' }
+            processInUse = [ordered]@{ exit = $inUse.exit; timedOut = $inUse.timedOut; status = $inUseStatus }
+            lockedFileCases = $lockedResults
+            verdict = 'PASS'
+            scope = 'bounded static locked-file fail-closed preservation; does not prove crash/power-loss atomicity or eliminate all TOCTOU races'
+          } | ConvertTo-Json -Depth 8 | Set-Content "./nsis-failclosed-${{ matrix.arch }}.json" -Encoding utf8NoBOM
+
+          Cleanup
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: nsis-failclosed-${{ matrix.arch }}
+          path: |
+            treatment.json
+            nsis-failclosed-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 30
