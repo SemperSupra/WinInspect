@@ -1,0 +1,117 @@
+name: Phase 1 Wine local IPC qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/wine-local-ipc-qualification.yml'
+      - 'experiments/wine-local-ipc/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-local-ipc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  af-unix-peercred:
+    name: Wine AF_UNIX + Linux peer credentials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out public experiment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install minimal Wine and MinGW dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64
+          mkdir -p evidence
+          {
+            echo "experiment=wininspect-382-wine-af-unix-peercred"
+            echo "kernel=$(uname -r)"
+            echo "uid=$(id -u)"
+            wine --version
+            x86_64-w64-mingw32-gcc --version | head -1
+          } > evidence/environment.txt
+
+      - name: Build native server and Win32 client
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -O2 -Wall -Wextra -Werror experiments/wine-local-ipc/unix_peer_server.c -o evidence/unix-peer-server
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc \
+            experiments/wine-local-ipc/win32_unix_client.c -lws2_32 -o evidence/win32-unix-client.exe
+          sha256sum evidence/unix-peer-server evidence/win32-unix-client.exe > evidence/fixture-sha256.txt
+          x86_64-w64-mingw32-objdump -p evidence/win32-unix-client.exe | sed -n '/DLL Name/p' > evidence/client-imports.txt
+
+      - name: Qualify secure local IPC boundary
+        id: ipc
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-ipc-prefix"
+          mkdir -p "$WINEPREFIX"
+          wineboot -u > evidence/wineboot.txt 2>&1 || true
+
+          host_socket="$WINEPREFIX/drive_c/wininspect-uinput.sock"
+          allowed_uid="$(id -u)"
+          sudo "$PWD/evidence/unix-peer-server" "$host_socket" "$allowed_uid" > evidence/server.txt 2> evidence/server.err &
+          server_pid=$!
+          cleanup() {
+            sudo kill "$server_pid" 2>/dev/null || true
+            wineserver -k 2>/dev/null || true
+            sudo rm -f "$host_socket" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for _ in $(seq 1 50); do
+            if grep -q '^READY ' evidence/server.txt 2>/dev/null; then ready=true; break; fi
+            if ! sudo kill -0 "$server_pid" 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          if [ "$ready" != true ]; then
+            echo '{"classification":"unix-server-not-ready"}' > evidence/result.json
+            exit 1
+          fi
+
+          stat -c 'mode=%a uid=%u gid=%g path=%n' "$host_socket" > evidence/socket-stat.txt
+          set +e
+          wine "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
+          client_rc=$?
+          wait "$server_pid"
+          server_rc=$?
+          set -e
+
+          peer_uid="$(sed -n 's/.* uid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)"
+          socket_mode="$(awk -F'[ =]' '{for(i=1;i<=NF;i++) if($i=="mode") print $(i+1)}' evidence/socket-stat.txt)"
+          if [ "$client_rc" -eq 0 ] && [ "$server_rc" -eq 0 ] && [ "$peer_uid" = "$allowed_uid" ] && [ "$socket_mode" = "600" ]; then
+            classification='wine-win32-af-unix-peercred-pass'
+          elif [ "$client_rc" -ne 0 ]; then
+            classification='wine-win32-af-unix-client-boundary'
+          elif [ "$peer_uid" != "$allowed_uid" ]; then
+            classification='peer-credential-mismatch'
+          else
+            classification='af-unix-ipc-inconclusive'
+          fi
+          printf '{"classification":"%s","client_exit_code":%d,"server_exit_code":%d,"allowed_uid":"%s","peer_uid":"%s","socket_mode":"%s"}\n' \
+            "$classification" "$client_rc" "$server_rc" "$allowed_uid" "$peer_uid" "$socket_mode" > evidence/result.json
+          cat evidence/result.json
+          [ "$classification" = 'wine-win32-af-unix-peercred-pass' ]
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-wine-local-ipc
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
