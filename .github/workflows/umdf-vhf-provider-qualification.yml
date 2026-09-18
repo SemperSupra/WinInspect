@@ -56,10 +56,29 @@ jobs:
           New-Item -ItemType Directory -Force wds/hid/wininspect_umdf_vhf | Out-Null
           Copy-Item experiments/umdf-vhf-minimal/* wds/hid/wininspect_umdf_vhf/ -Force
 
-          Get-ChildItem wds/packages -Recurse -File -Filter VhfUm.lib -ErrorAction SilentlyContinue |
+          $vhfLibraries = @(Get-ChildItem wds/packages -Recurse -File -Filter VhfUm.lib -ErrorAction SilentlyContinue)
+          $vhfLibraries |
             Select-Object FullName,Length |
             ConvertTo-Json -Depth 4 |
             Set-Content evidence/vhfum-inventory.json -Encoding utf8
+
+          $vhfUm = $vhfLibraries |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Sort-Object FullName |
+            Select-Object -First 1
+          if (-not $vhfUm) { throw 'Pinned WDK restored but x64 VhfUm.lib was not found' }
+
+          $vhfUm.FullName | Set-Content evidence/vhfum-selected.txt -Encoding utf8
+
+          @"
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
+"@ | Set-Content wds/hid/wininspect_umdf_vhf/Directory.Build.props -Encoding utf8
 
       - name: Build direct UMDF2 VHF fixture
         id: build
