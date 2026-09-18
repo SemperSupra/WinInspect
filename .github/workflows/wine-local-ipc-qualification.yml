@@ -1,4 +1,4 @@
-name: Phase 1 Wine local privilege boundary
+name: Phase 1 Wine report protocol qualification
 
 on:
   pull_request:
@@ -12,12 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: wine-local-privilege-${{ github.event.pull_request.number || github.ref }}
+  group: wine-report-protocol-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  drop-priv-loopback:
-    name: Wine authenticated loopback + post-drop uinput
+  report-subset:
+    name: Wine report subset through unprivileged uinput provider
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install minimal dependencies and qualify uinput availability
+      - name: Install minimal dependencies and qualify uinput
         shell: bash
         run: |
           set -euo pipefail
@@ -36,7 +36,7 @@ jobs:
           ls -l /dev/uinput > evidence/uinput-device.txt
 
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64
+          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64 evtest
 
           wine_bin=$(command -v wine64 || command -v wine || find /usr/lib/wine -maxdepth 1 -type f -name wine64 -print -quit)
           if [ -z "$wine_bin" ]; then
@@ -45,7 +45,7 @@ jobs:
           fi
           echo "$wine_bin" > evidence/wine-bin.txt
           {
-            echo "experiment=wininspect-382-wine-drop-priv-uinput"
+            echo "experiment=wininspect-382-wine-report-subset"
             echo "kernel=$(uname -r)"
             echo "uid=$(id -u)"
             echo "gid=$(id -g)"
@@ -53,25 +53,25 @@ jobs:
             x86_64-w64-mingw32-gcc --version | head -1
           } > evidence/environment.txt
 
-      - name: Build drop-privilege server and Win32 client
+      - name: Build report provider and Win32 corpus client
         shell: bash
         run: |
           set -euo pipefail
-          gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-local-ipc/drop_priv_uinput_server.c             -o evidence/drop-priv-uinput-server
+          gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-local-ipc/drop_priv_report_server.c             -o evidence/drop-priv-report-server
 
-          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc             experiments/wine-local-ipc/win32_loopback_client.c             -lws2_32 -o evidence/win32-loopback-client.exe
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc             experiments/wine-local-ipc/win32_report_subset_client.c             -lws2_32 -o evidence/win32-report-subset-client.exe
 
-          sha256sum evidence/drop-priv-uinput-server evidence/win32-loopback-client.exe             > evidence/fixture-sha256.txt
-          x86_64-w64-mingw32-objdump -p evidence/win32-loopback-client.exe |
+          sha256sum evidence/drop-priv-report-server evidence/win32-report-subset-client.exe             experiments/wine-local-ipc/conformance-subset.json > evidence/fixture-sha256.txt
+          x86_64-w64-mingw32-objdump -p evidence/win32-report-subset-client.exe |
             sed -n '/DLL Name/p' > evidence/client-imports.txt
 
-      - name: Qualify post-drop uinput authority boundary
+      - name: Run representative report corpus with kernel observation
         id: treatment
         shell: bash
         continue-on-error: true
         run: |
           set -euo pipefail
-          export WINEPREFIX="$RUNNER_TEMP/wininspect-drop-priv-prefix"
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-report-prefix"
           mkdir -p "$WINEPREFIX"
           wine_bin=$(cat evidence/wine-bin.txt)
           "$wine_bin" wineboot.exe -u > evidence/wineboot.txt 2>&1 || true
@@ -80,27 +80,24 @@ jobs:
           gid=$(id -g)
           token=$(openssl rand -hex 32)
 
-          sudo "$PWD/evidence/drop-priv-uinput-server" "$uid" "$gid" "$token"             > evidence/server.txt 2> evidence/server.err &
+          sudo "$PWD/evidence/drop-priv-report-server" "$uid" "$gid" "$token"             > evidence/server.txt 2> evidence/server.err &
           server_pid=$!
 
           cleanup() {
             sudo kill "$server_pid" 2>/dev/null || true
+            if [ -n "${kbd_observer:-}" ]; then sudo kill "$kbd_observer" 2>/dev/null || true; fi
+            if [ -n "${mouse_observer:-}" ]; then sudo kill "$mouse_observer" 2>/dev/null || true; fi
           }
           trap cleanup EXIT
 
           ready=false
           for _ in $(seq 1 80); do
-            if grep -q '^READY ' evidence/server.txt 2>/dev/null; then
-              ready=true
-              break
-            fi
-            if ! sudo kill -0 "$server_pid" 2>/dev/null; then
-              break
-            fi
+            if grep -q '^READY ' evidence/server.txt 2>/dev/null; then ready=true; break; fi
+            if ! sudo kill -0 "$server_pid" 2>/dev/null; then break; fi
             sleep 0.1
           done
           if [ "$ready" != true ]; then
-            printf '{"classification":"drop-priv-server-not-ready"}\n' > evidence/result.json
+            echo '{"classification":"report-server-not-ready"}' > evidence/result.json
             exit 1
           fi
 
@@ -108,60 +105,103 @@ jobs:
           port=$(printf '%s\n' "$ready_line" | sed -n 's/.* port=\([0-9][0-9]*\).*/\1/p')
           server_euid=$(printf '%s\n' "$ready_line" | sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p')
           server_egid=$(printf '%s\n' "$ready_line" | sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p')
-          if [ -z "$port" ] || [ "$server_euid" != "$uid" ] || [ "$server_egid" != "$gid" ]; then
-            printf '{"classification":"privilege-drop-not-proven","server_euid":"%s","server_egid":"%s","expected_uid":"%s","expected_gid":"%s"}\n'               "$server_euid" "$server_egid" "$uid" "$gid" > evidence/result.json
+          if [ "$server_euid" != "$uid" ] || [ "$server_egid" != "$gid" ]; then
+            printf '{"classification":"privilege-drop-not-proven","euid":"%s","egid":"%s"}\n' "$server_euid" "$server_egid" > evidence/result.json
             exit 1
           fi
 
+          keyboard_event=''
+          mouse_event=''
+          for _ in $(seq 1 80); do
+            for namefile in /sys/class/input/event*/device/name; do
+              [ -f "$namefile" ] || continue
+              name=$(cat "$namefile")
+              event=$(basename "$(dirname "$(dirname "$namefile")")")
+              [ "$name" = 'WinInspect-L2-Keyboard' ] && keyboard_event="$event"
+              [ "$name" = 'WinInspect-L2-Mouse' ] && mouse_event="$event"
+            done
+            [ -n "$keyboard_event" ] && [ -n "$mouse_event" ] && break
+            sleep 0.1
+          done
+          printf 'keyboard_event=%s\nmouse_event=%s\n' "$keyboard_event" "$mouse_event" > evidence/event-devices.txt
+          if [ -z "$keyboard_event" ] || [ -z "$mouse_event" ]; then
+            echo '{"classification":"uinput-event-devices-not-found"}' > evidence/result.json
+            exit 1
+          fi
+
+          sudo timeout 20s evtest "/dev/input/$keyboard_event" > evidence/keyboard-evtest.txt 2>&1 &
+          kbd_observer=$!
+          sudo timeout 20s evtest "/dev/input/$mouse_event" > evidence/mouse-evtest.txt 2>&1 &
+          mouse_observer=$!
+          sleep 0.5
+
           set +e
-          timeout 20s "$wine_bin" "$PWD/evidence/win32-loopback-client.exe" "$port" "$token"             > evidence/client.txt 2> evidence/client.err
+          timeout 20s "$wine_bin" "$PWD/evidence/win32-report-subset-client.exe" "$port" "$token"             > evidence/client.txt 2> evidence/client.err
           client_rc=$?
 
           server_done=false
           for _ in $(seq 1 80); do
-            if ! sudo kill -0 "$server_pid" 2>/dev/null; then
-              server_done=true
-              break
-            fi
+            if ! sudo kill -0 "$server_pid" 2>/dev/null; then server_done=true; break; fi
             sleep 0.1
           done
-          if [ "$server_done" != true ]; then
-            sudo kill "$server_pid" 2>/dev/null || true
-          fi
+          if [ "$server_done" != true ]; then sudo kill "$server_pid" 2>/dev/null || true; fi
           wait "$server_pid"
           server_rc=$?
+
+          sleep 0.5
+          sudo kill "$kbd_observer" "$mouse_observer" 2>/dev/null || true
+          wait "$kbd_observer" 2>/dev/null || true
+          wait "$mouse_observer" 2>/dev/null || true
           set -e
 
-          post_drop_input=$(sed -n 's/.*post_drop_input=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
-          result_euid=$(sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
-          result_egid=$(sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
-          keyboard_destroy=$(sed -n 's/.*keyboard_destroy=\(-*[0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
-          mouse_destroy=$(sed -n 's/.*mouse_destroy=\(-*[0-9][0-9]*\).*/\1/p' evidence/server.txt | tail -1)
+          result_line=$(grep '^RESULT ' evidence/server.txt | tail -1)
+          accepted=$(printf '%s\n' "$result_line" | sed -n 's/.* accepted=\([0-9][0-9]*\).*/\1/p')
+          rejected=$(printf '%s\n' "$result_line" | sed -n 's/.* rejected=\([0-9][0-9]*\).*/\1/p')
+          disconnect_release=$(printf '%s\n' "$result_line" | sed -n 's/.* disconnect_release=\([0-9][0-9]*\).*/\1/p')
+          result_euid=$(printf '%s\n' "$result_line" | sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p')
+          result_egid=$(printf '%s\n' "$result_line" | sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p')
+
+          key_a_down=$(grep -Ec '\(KEY_A\), value 1' evidence/keyboard-evtest.txt || true)
+          key_a_up=$(grep -Ec '\(KEY_A\), value 0' evidence/keyboard-evtest.txt || true)
+          shift_down=$(grep -Ec '\(KEY_LEFTSHIFT\), value 1' evidence/keyboard-evtest.txt || true)
+          shift_up=$(grep -Ec '\(KEY_LEFTSHIFT\), value 0' evidence/keyboard-evtest.txt || true)
+          key_f_down=$(grep -Ec '\(KEY_F\), value 1' evidence/keyboard-evtest.txt || true)
+          key_f_up=$(grep -Ec '\(KEY_F\), value 0' evidence/keyboard-evtest.txt || true)
+          rel_x_max=$(grep -Ec '\(REL_X\), value 127' evidence/mouse-evtest.txt || true)
+          rel_y_min=$(grep -Ec '\(REL_Y\), value -127' evidence/mouse-evtest.txt || true)
+          btn_left=$(grep -Ec '\(BTN_LEFT\), value 1' evidence/mouse-evtest.txt || true)
+          btn_right=$(grep -Ec '\(BTN_RIGHT\), value 1' evidence/mouse-evtest.txt || true)
+          btn_middle=$(grep -Ec '\(BTN_MIDDLE\), value 1' evidence/mouse-evtest.txt || true)
+          wheel_pos=$(grep -Ec '\(REL_WHEEL\), value 127' evidence/mouse-evtest.txt || true)
+          wheel_neg=$(grep -Ec '\(REL_WHEEL\), value -127' evidence/mouse-evtest.txt || true)
 
           if [ "$client_rc" -eq 0 ] && [ "$server_rc" -eq 0 ] &&
-             [ "$post_drop_input" = "1" ] &&
+             [ "$accepted" = '15' ] && [ "$rejected" = '2' ] && [ "$disconnect_release" = '1' ] &&
              [ "$result_euid" = "$uid" ] && [ "$result_egid" = "$gid" ] &&
-             [ "$keyboard_destroy" = "0" ] && [ "$mouse_destroy" = "0" ]; then
-            classification='wine-loopback-auth-post-drop-uinput-pass'
+             [ "$key_a_down" -ge 3 ] && [ "$key_a_up" -ge 3 ] &&
+             [ "$shift_down" -ge 2 ] && [ "$shift_up" -ge 2 ] &&
+             [ "$key_f_down" -ge 1 ] && [ "$key_f_up" -ge 1 ] &&
+             [ "$rel_x_max" -ge 1 ] && [ "$rel_y_min" -ge 1 ] &&
+             [ "$btn_left" -ge 1 ] && [ "$btn_right" -ge 1 ] && [ "$btn_middle" -ge 1 ] &&
+             [ "$wheel_pos" -ge 1 ] && [ "$wheel_neg" -ge 1 ]; then
+            classification='wine-report-subset-kernel-observed-pass'
           elif [ "$client_rc" -ne 0 ]; then
-            classification='wine-loopback-client-failed'
-          elif [ "$post_drop_input" != "1" ]; then
-            classification='post-drop-uinput-write-failed'
-          elif [ "$result_euid" != "$uid" ] || [ "$result_egid" != "$gid" ]; then
-            classification='privilege-drop-not-maintained'
+            classification='wine-report-client-failed'
+          elif [ "$server_rc" -ne 0 ]; then
+            classification='report-provider-failed'
           else
-            classification='drop-priv-uinput-inconclusive'
+            classification='report-kernel-observation-incomplete'
           fi
 
-          printf '{"classification":"%s","client_exit_code":%d,"server_exit_code":%d,"server_euid":"%s","server_egid":"%s","post_drop_input":"%s","keyboard_destroy":"%s","mouse_destroy":"%s"}\n'             "$classification" "$client_rc" "$server_rc" "$result_euid" "$result_egid"             "$post_drop_input" "$keyboard_destroy" "$mouse_destroy" > evidence/result.json
+          printf '{"classification":"%s","client_exit_code":%d,"server_exit_code":%d,"accepted":"%s","rejected":"%s","disconnect_release":"%s","key_a_down":%d,"key_a_up":%d,"shift_down":%d,"shift_up":%d,"key_f_down":%d,"key_f_up":%d,"rel_x_max":%d,"rel_y_min":%d,"btn_left":%d,"btn_right":%d,"btn_middle":%d,"wheel_pos":%d,"wheel_neg":%d}\n'             "$classification" "$client_rc" "$server_rc" "$accepted" "$rejected" "$disconnect_release"             "$key_a_down" "$key_a_up" "$shift_down" "$shift_up" "$key_f_down" "$key_f_up"             "$rel_x_max" "$rel_y_min" "$btn_left" "$btn_right" "$btn_middle" "$wheel_pos" "$wheel_neg"             > evidence/result.json
           cat evidence/result.json
-          [ "$classification" = 'wine-loopback-auth-post-drop-uinput-pass' ]
+          [ "$classification" = 'wine-report-subset-kernel-observed-pass' ]
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: phase1-wine-drop-priv-uinput
+          name: phase1-wine-report-subset
           path: evidence/
           if-no-files-found: error
           retention-days: 14
