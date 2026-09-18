@@ -1,0 +1,259 @@
+name: Affordance substrate qualification reps
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/affordance-substrate-reps.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: affordance-substrate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-windows:
+    name: Native Windows runtime evidence
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Record executor environment
+        shell: pwsh
+        run: |
+          Write-Host '=== EXECUTOR ==='
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | Format-List
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          Write-Host "SESSIONNAME=$env:SESSIONNAME"
+
+      - name: Build WinInspect and deterministic tests
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+
+      - name: Run projected deterministic tests on native Windows
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
+
+      - name: Apply demonstrated CLI framing correction for deeper qualification
+        shell: pwsh
+        run: |
+          $src='source/clients/cli/src/cli.cpp'; $s=Get-Content $src -Raw
+          $old='uint32_t len = htonl((uint32_t)m.size());'
+          if (-not $s.Contains($old)) { throw 'expected shared CLI defect not found' }
+          $s=$s.Replace($old,"uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);").Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+          Set-Content $src $s -NoNewline
+          cmake --build build --config Release --target wininspect --parallel 2
+
+      - name: Start actual WinInspect daemon on Windows loopback
+        shell: pwsh
+        run: |
+          $daemon = Resolve-Path 'build/Release/wininspectd.exe'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput 'wininspectd.out.log' -RedirectStandardError 'wininspectd.err.log'
+          "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
+          $listener = $null
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            if ($p.HasExited) {
+              Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
+              Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
+              throw "wininspectd exited early: $($p.ExitCode)"
+            }
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($listener) { break }
+          }
+          if (-not $listener) {
+            Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $p.Id | Format-Table -AutoSize
+            Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
+            Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
+            throw 'Could not discover WinInspect TCP listener from the daemon process.'
+          }
+          Write-Host "Listener: $($listener.LocalAddress):$($listener.LocalPort)"
+          Test-NetConnection 127.0.0.1 -Port 1985 -InformationLevel Detailed | Format-List
+          "WININSPECT_TARGET=127.0.0.1" >> $env:GITHUB_ENV
+
+      - name: Query actual Windows runtime capabilities
+        shell: pwsh
+        run: |
+          $cli = Resolve-Path 'build/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
+          Write-Host '=== HEALTH ==='
+          & $cli health --tcp $target
+          if ($LASTEXITCODE -ne 0) { throw 'health failed' }
+          Write-Host '=== IDENTITY ==='
+          & $cli identity --tcp $target
+          if ($LASTEXITCODE -ne 0) { throw 'identity failed' }
+          Write-Host '=== CAPABILITIES ==='
+          & $cli capabilities --tcp $target
+          if ($LASTEXITCODE -ne 0) { throw 'capabilities failed' }
+
+      - name: Probe read-only native sensors
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $cli = Resolve-Path 'build/Release/wininspect.exe'
+          $target = "$env:WININSPECT_TARGET`:1985"
+          Write-Host '=== TOP WINDOWS ==='
+          & $cli top --tcp $target
+          Write-Host "QUAL_SENSOR top_exit=$LASTEXITCODE"
+          Write-Host '=== BOUNDED CAPTURE SENSOR ATTEMPT ==='
+          & $cli capture 0 0 64 64 --tcp $target
+          Write-Host "QUAL_SENSOR capture_exit=$LASTEXITCODE"
+
+      - name: Collect daemon diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content wininspectd.out.log -ErrorAction SilentlyContinue
+          Get-Content wininspectd.err.log -ErrorAction SilentlyContinue
+          if ($env:WININSPECTD_PID) { Stop-Process -Id $env:WININSPECTD_PID -Force -ErrorAction SilentlyContinue }
+
+  wine:
+    name: Wine runtime evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout public projected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install Wine and MinGW
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake wine64 xvfb
+          wine --version
+          x86_64-w64-mingw32-g++ --version | head -1
+
+      - name: Cross-build actual WinInspect Windows binaries
+        run: |
+          # Experiment-only source portability repairs isolated by this lane.
+          # They let runtime qualification continue while authoritative private source catches up.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          core = Path('source/core/src/core.cpp')
+          s = core.read_text()
+          if '#include <cstring>' not in s:
+              s = s.replace('#include <cctype>\n', '#include <cctype>\n#include <cstring>\n', 1)
+          s = s.replace('dispatch_["daemon.notify"] = [this]', 'dispatch_["daemon.notify"] = []')
+          core.write_text(s)
+
+          comp = Path('source/core/src/compress.cpp')
+          s = comp.read_text()
+          s = s.replace('Compress(compressor, data.data(), data.size()', 'Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()')
+          s = s.replace('Decompress(decompressor, data.data(), data.size()', 'Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()')
+          comp.write_text(s)
+
+          net = Path('source/core/src/network_config.cpp')
+          s = net.read_text()
+          old = '''    char* appdata = nullptr;\n    size_t sz = 0;\n    if (_dupenv_s(&appdata, &sz, "APPDATA") == 0 && appdata) {\n      std::string dir = std::string(appdata) + "\\\\WinInspect";\n      free(appdata);\n      return dir;\n    }\n    return std::string(getenv("USERPROFILE")) + "\\\\.config\\\\wininspect";'''
+          new = '''    const char* appdata = getenv("APPDATA");\n    if (appdata && appdata[0])\n      return std::string(appdata) + "\\\\WinInspect";\n    const char* profile = getenv("USERPROFILE");\n    if (profile && profile[0])\n      return std::string(profile) + "\\\\.config\\\\wininspect";\n    return ".\\\\.config\\\\wininspect";'''
+          if old not in s:
+              raise SystemExit('expected _dupenv_s block not found')
+          net.write_text(s.replace(old, new, 1))
+
+          cm = Path('source/CMakeLists.txt')
+          s = cm.read_text()
+          s = s.replace('advapi32 crypt32)', 'advapi32 crypt32 cabinet)', 1)
+          s = s.replace('    resources/wininspect.rc\n', '')
+          cm.write_text(s)
+
+          cli = Path('source/clients/cli/src/cli.cpp')
+          s = cli.read_text()
+          old = 'uint32_t len = htonl((uint32_t)m.size());'
+          if old not in s:
+              raise SystemExit('expected shared CLI framing defect not found')
+          s = s.replace(old, 'uint32_t payload_len = (uint32_t)m.size();\n      uint32_t len = htonl(payload_len);', 1)
+          s = s.replace('if (::send(s, m.data(), (int)len, 0) <= 0)', 'if (::send(s, m.data(), (int)payload_len, 0) <= 0)', 1)
+          cli.write_text(s)
+          PY
+          cmake -S source -B build-mingw \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build-mingw -j2
+          ls -l build-mingw/wininspectd.exe build-mingw/wininspect.exe
+
+      - name: Initialize persistent Wine display and prefix
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-affordance
+          WINEDEBUG: -all
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 &
+          echo $! > xvfb.pid
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+          sleep 2
+          wineboot --init
+          echo '=== WINE EXECUTOR ==='
+          wine --version
+          uname -a
+
+      - name: Start actual WinInspect daemon under Wine on loopback
+        env:
+          WINEDEBUG: -all
+        run: |
+          wine build-mingw/wininspectd.exe --headless --bind 127.0.0.1 >wine-daemon.log 2>&1 &
+          echo $! > wine-daemon.pid
+          sleep 8
+          kill -0 "$(cat wine-daemon.pid)"
+          grep -F 'TCP Server listening on [127.0.0.1]:1985' wine-daemon.log
+          echo "WININSPECT_TARGET=127.0.0.1" >> "$GITHUB_ENV"
+          (echo > /dev/tcp/127.0.0.1/1985) 2>/dev/null && echo 'Host TCP reachability: PASS'
+
+      - name: Query actual Wine runtime capabilities
+        env:
+          WINEDEBUG: -all
+        run: |
+          TARGET="${WININSPECT_TARGET}:1985"
+          echo '=== HEALTH ==='
+          wine build-mingw/wininspect.exe health --tcp "$TARGET"
+          echo '=== IDENTITY ==='
+          wine build-mingw/wininspect.exe identity --tcp "$TARGET"
+          echo '=== CAPABILITIES ==='
+          wine build-mingw/wininspect.exe capabilities --tcp "$TARGET"
+
+      - name: Probe read-only Wine sensors
+        env:
+          WINEDEBUG: -all
+        continue-on-error: true
+        run: |
+          TARGET="${WININSPECT_TARGET}:1985"
+          echo '=== TOP WINDOWS ==='
+          wine build-mingw/wininspect.exe top --tcp "$TARGET"
+          echo "QUAL_SENSOR top_exit=$?"
+          echo '=== BOUNDED CAPTURE SENSOR ATTEMPT ==='
+          wine build-mingw/wininspect.exe capture 0 0 64 64 --tcp "$TARGET"
+          echo "QUAL_SENSOR capture_exit=$?"
+
+      - name: Collect Wine daemon diagnostics
+        if: always()
+        run: |
+          cat wine-daemon.log 2>/dev/null || true
+          cat xvfb.log 2>/dev/null || true
+          if test -f wine-daemon.pid; then kill "$(cat wine-daemon.pid)" 2>/dev/null || true; fi
+          if test -f xvfb.pid; then kill "$(cat xvfb.pid)" 2>/dev/null || true; fi
+
+  evidence-boundary:
+    name: Evidence boundary
+    runs-on: ubuntu-latest
+    needs: [native-windows, wine]
+    if: always()
+    steps:
+      - name: State qualification boundary
+        run: |
+          echo 'These jobs execute actual WinInspect binaries on a GitHub-hosted Windows VM and under actual Wine on Linux.'
+          echo 'Windows evidence is scoped to the hosted Windows runner environment; Wine evidence is scoped to the Wine/Xvfb environment.'
+          echo 'Neither result is generalized to other Windows versions, sessions, Wine versions, targets, or mechanisms without bridging evidence.'
