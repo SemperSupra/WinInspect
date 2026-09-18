@@ -1,0 +1,212 @@
+name: Phase 1 UMDF2 VHF provider qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/umdf-vhf-provider-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: umdf-vhf-provider-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  umdf-vhf-control:
+    name: Microsoft UMDF2 VHF control
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 30
+    env:
+      DMF_SHA: f9da490cd6e7a216f431ad245255548ab020d4f0
+      HARDWARE_ID: 'ROOT\VirtualHidDeviceVhfDmfU'
+    steps:
+      - name: Check out public experiment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Inventory runner and clone pinned Microsoft DMF
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          [ordered]@{
+            experiment = 'wininspect-382-umdf2-vhf-control'
+            commit = $env:GITHUB_SHA
+            dmf_sha = $env:DMF_SHA
+            windows_caption = $os.Caption
+            windows_version = $os.Version
+            windows_build = $os.BuildNumber
+            process_is_admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          } | ConvertTo-Json -Depth 5 | Set-Content evidence/runner.json -Encoding utf8
+
+          git clone --filter=blob:none https://github.com/microsoft/DMF.git dmf
+          if ($LASTEXITCODE -ne 0) { throw "DMF clone failed: $LASTEXITCODE" }
+          git -C dmf checkout $env:DMF_SHA
+          if ($LASTEXITCODE -ne 0) { throw "DMF pinned checkout failed: $LASTEXITCODE" }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          if (-not $vs) { throw 'Visual Studio installation not found' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          msbuild -version | Set-Content evidence/msbuild-version.txt
+          Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Lib' -Recurse -File -Filter VhfUm.lib -ErrorAction SilentlyContinue |
+            Select-Object FullName,Length | ConvertTo-Json -Depth 4 | Set-Content evidence/vhfum-inventory.json -Encoding utf8
+
+      - name: Build only DMF UMDF dependencies and official VHF sample
+        id: build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+
+          $projects = @(
+            'dmf\Dmf\Solution\DmfU\DmfU.vcxproj',
+            'dmf\Dmf\Solution\DmfUModules.Template\DmfUModules.Template.vcxproj',
+            'dmf\DmfSamples\VirtualHidDeviceVhfDmf\User\VHidMini2VhfDmfU.vcxproj'
+          )
+          $records = @()
+          foreach ($project in $projects) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($project)
+            $log = "evidence/build-$name.txt"
+            & msbuild.exe $project /m:1 /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal *> $log
+            $code = $LASTEXITCODE
+            $records += [pscustomobject]@{ project = $project; exit_code = $code }
+            if ($code -ne 0) { break }
+          }
+          $records | ConvertTo-Json -Depth 4 | Set-Content evidence/build-result.json -Encoding utf8
+
+          $dll = Get-ChildItem dmf -Recurse -File -Filter 'VirtualHidDeviceVhfDmfU.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+          $inf = Get-ChildItem dmf -Recurse -File -Filter 'VirtualHidDeviceVhfDmfU.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+          [ordered]@{
+            dll = if ($dll) { $dll.FullName } else { $null }
+            inf = if ($inf) { $inf.FullName } else { $null }
+          } | ConvertTo-Json | Set-Content evidence/output-locations.json -Encoding utf8
+
+          if (-not $dll -or -not $inf -or ($records | Where-Object exit_code -ne 0)) { exit 1 }
+
+      - name: Sign package, create root device, and observe VHF child
+        if: steps.build.outcome == 'success'
+        id: runtime
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            published_name = $null
+            source_instance_id = $null
+            child_ids = @()
+          }
+          $locations = Get-Content evidence/output-locations.json | ConvertFrom-Json
+          $pkg = New-Item -ItemType Directory -Force evidence/package
+          Copy-Item $locations.dll (Join-Path $pkg 'VirtualHidDeviceVhfDmfU.dll') -Force
+          Copy-Item $locations.inf (Join-Path $pkg 'VirtualHidDeviceVhfDmfU.inf') -Force
+
+          $inf2cat = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -File -Filter Inf2Cat.exe -ErrorAction SilentlyContinue |
+            Where-Object FullName -match '\\x64\\Inf2Cat\.exe$' |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $inf2cat) { throw 'Inf2Cat.exe not found' }
+          & $inf2cat /driver:$($pkg.FullName) /os:10_X64 | Set-Content evidence/inf2cat.txt
+          if ($LASTEXITCODE -ne 0) {
+            $result.classification = 'inf2cat-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $cat = Join-Path $pkg 'wudf.cat'
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
+          Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -File -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object FullName -match '\\x64\\signtool\.exe$' |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat | Set-Content evidence/sign-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog signing failed' }
+
+          $stage = & pnputil.exe /add-driver (Join-Path $pkg 'VirtualHidDeviceVhfDmfU.inf') 2>&1
+          $stageCode = $LASTEXITCODE
+          $stage | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stage -join [Environment]::NewLine), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-umdf-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
+            Where-Object FullName -match '\\x64\\devcon\.exe$' |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devcon) {
+            $result.classification = 'hosted-runner-devcon-unavailable'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $install = & $devcon install (Join-Path $pkg 'VirtualHidDeviceVhfDmfU.inf') $env:HARDWARE_ID 2>&1
+          $installCode = $LASTEXITCODE
+          $install | Set-Content evidence/devcon-install.txt
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+            ($ids -join ';') -match 'VirtualHidDeviceVhfDmfU'
+          })
+          $result.source_instance_id = if ($source) { $source[0].InstanceId } else { $null }
+          if ($result.source_instance_id) {
+            $result.child_ids = @((Get-PnpDeviceProperty -InstanceId $result.source_instance_id -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue).Data)
+          }
+          $source | Select-Object Status,Class,FriendlyName,InstanceId,Problem | ConvertTo-Json -Depth 5 | Set-Content evidence/source.json -Encoding utf8
+          $result.child_ids | ConvertTo-Json -Depth 4 | Set-Content evidence/child-ids.json -Encoding utf8
+
+          $sourceOk = [bool]($source | Where-Object Status -eq 'OK')
+          $childOk = $false
+          foreach ($child in @($result.child_ids)) {
+            $dev = Get-PnpDevice -InstanceId $child -ErrorAction SilentlyContinue
+            if ($dev -and $dev.Status -eq 'OK' -and $dev.Class -eq 'HIDClass') { $childOk = $true }
+          }
+
+          if ($sourceOk -and $childOk) {
+            $result.classification = 'microsoft-umdf2-vhf-source-and-child-started'
+          } elseif ($sourceOk) {
+            $result.classification = 'umdf2-source-started-vhf-child-not-observed'
+          } elseif ($installCode -ne 0) {
+            $result.classification = 'umdf2-devcon-install-failed'
+          } else {
+            $result.classification = 'umdf2-source-not-ok'
+          }
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json -Encoding utf8
+          Get-Content evidence/runtime-result.json
+          if ($result.classification -ne 'microsoft-umdf2-vhf-source-and-child-started') { exit 1 }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/runtime-result.json) {
+            $r = Get-Content evidence/runtime-result.json | ConvertFrom-Json
+            if ($r.source_instance_id) { pnputil.exe /remove-device $r.source_instance_id | Out-File evidence/cleanup-device.txt }
+            if ($r.published_name) { pnputil.exe /delete-driver $r.published_name /uninstall /force | Out-File evidence/cleanup-driver.txt }
+          }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=WinInspect UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -eq 'CN=WinInspect UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq 'CN=WinInspect UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-umdf-vhf-control
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
