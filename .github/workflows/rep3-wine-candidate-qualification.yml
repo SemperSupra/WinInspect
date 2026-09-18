@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   wine-container:
@@ -30,28 +31,37 @@ jobs:
           ./scripts/Test-ProjectedSourcePathSafety.ps1
           ./scripts/Test-ProjectedSource.ps1
 
-      - name: Install MinGW cross-compiler
+      - name: Acquire exact hosted-built PE subjects
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq mingw-w64 cmake
+          artifact_id=10572095395
+          expected_zip_sha=f474fd6fceb06f6913cb50726e55bf56f2ae579541afbb9de8ebc63c443f1956
 
-      - name: Cross-compile projected source
-        run: |
-          cmake -S source -B build-mingw \
-            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
-            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-            -DWININSPECT_BUILD_TESTS=OFF \
-            -DWININSPECT_USE_OPENSSL=OFF \
-            -DCMAKE_SYSTEM_NAME=Windows
-          cmake --build build-mingw -j2
-          test -f build-mingw/wininspectd.exe
-          test -f build-mingw/wininspect.exe
-          test -f build-mingw/wininspect-gui.exe
+          curl --fail --silent --show-error --location \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/SemperSupra/WinInspect/actions/artifacts/$artifact_id/zip" \
+            -o hosted-candidate.zip
 
-      - name: Build projected Wine image
+          actual_zip_sha=$(sha256sum hosted-candidate.zip | awk '{print $1}')
+          test "$actual_zip_sha" = "$expected_zip_sha"
+
+          mkdir -p hosted-candidate
+          unzip -q hosted-candidate.zip -d hosted-candidate
+
+          test "$(sha256sum hosted-candidate/build/Release/wininspectd.exe | awk '{print $1}')" = "7bdc1d1e828b9b9c717e0afcf34dda8db416dbc13658c7fc8bb03a135f6525fb"
+          test "$(sha256sum hosted-candidate/build/Release/wininspect.exe | awk '{print $1}')" = "1de134f440cc2cc587d0259f035b665d52d8b1d88dde6bdaa1b8070e83b52289"
+          test "$(sha256sum hosted-candidate/build/Release/wininspect-gui.exe | awk '{print $1}')" = "68fdd312c0055ccdef52d917b130995be6e4bd0769567498c346c50dd6075653"
+
+      - name: Build projected Wine image with exact hosted subjects
         run: |
           mkdir -p source/dist/wine-bin
-          cp build-mingw/wininspectd.exe build-mingw/wininspect.exe build-mingw/wininspect-gui.exe source/dist/wine-bin/
+          cp hosted-candidate/build/Release/wininspectd.exe \
+             hosted-candidate/build/Release/wininspect.exe \
+             hosted-candidate/build/Release/wininspect-gui.exe \
+             source/dist/wine-bin/
           docker build -t wininspect-rep3-wine \
             -f source/winebot/Dockerfile \
             --build-arg BINARY_DIR=dist/wine-bin \
@@ -145,6 +155,9 @@ jobs:
                       "container_bind": "0.0.0.0:1985",
                       "operator_exception": "--allow-unauthenticated-nonloopback",
                       "capabilities": result,
+                      "subject_artifact_id": 10572095395,
+                      "subject_artifact_zip_sha256": "f474fd6fceb06f6913cb50726e55bf56f2ae579541afbb9de8ebc63c443f1956",
+                      "wininspectd_sha256": "7bdc1d1e828b9b9c717e0afcf34dda8db416dbc13658c7fc8bb03a135f6525fb",
                       "native_interactive_acceptance": "not_claimed",
                   }, fh, indent=2, sort_keys=True)
               print(json.dumps(result, indent=2, sort_keys=True))
