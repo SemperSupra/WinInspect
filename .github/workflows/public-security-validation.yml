@@ -265,6 +265,8 @@ jobs:
           else
             : > evidence/active-window-properties.txt
           fi
+          DISPLAY=:99 xprop -root _NET_ACTIVE_WINDOW > evidence/active-window-before-uinput.txt 2>&1 || true
+          DISPLAY=:99 xwininfo -root -tree > evidence/window-tree-before-uinput.txt 2>&1 || true
           before_uinput=$(wc -l < evidence/probe.jsonl)
           timeout 5s xinput test-xi2 --root > evidence/xinput2-uinput.txt 2>&1 &
           xi2_pid=$!
