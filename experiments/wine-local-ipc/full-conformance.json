@@ -1,0 +1,1212 @@
+{
+  "schema": "wininspect-virtual-input-conformance/1",
+  "source_manifest": "config/virtual-input-capabilities.json",
+  "keyboard": [
+    {
+      "id": "kbd-usage-04",
+      "kind": "keyboard_usage",
+      "usage": 4,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-05",
+      "kind": "keyboard_usage",
+      "usage": 5,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-06",
+      "kind": "keyboard_usage",
+      "usage": 6,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-07",
+      "kind": "keyboard_usage",
+      "usage": 7,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-08",
+      "kind": "keyboard_usage",
+      "usage": 8,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-09",
+      "kind": "keyboard_usage",
+      "usage": 9,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0a",
+      "kind": "keyboard_usage",
+      "usage": 10,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0b",
+      "kind": "keyboard_usage",
+      "usage": 11,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0c",
+      "kind": "keyboard_usage",
+      "usage": 12,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0d",
+      "kind": "keyboard_usage",
+      "usage": 13,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0e",
+      "kind": "keyboard_usage",
+      "usage": 14,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-0f",
+      "kind": "keyboard_usage",
+      "usage": 15,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-10",
+      "kind": "keyboard_usage",
+      "usage": 16,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-11",
+      "kind": "keyboard_usage",
+      "usage": 17,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-12",
+      "kind": "keyboard_usage",
+      "usage": 18,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-13",
+      "kind": "keyboard_usage",
+      "usage": 19,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-14",
+      "kind": "keyboard_usage",
+      "usage": 20,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-15",
+      "kind": "keyboard_usage",
+      "usage": 21,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-16",
+      "kind": "keyboard_usage",
+      "usage": 22,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-17",
+      "kind": "keyboard_usage",
+      "usage": 23,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-18",
+      "kind": "keyboard_usage",
+      "usage": 24,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-19",
+      "kind": "keyboard_usage",
+      "usage": 25,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1a",
+      "kind": "keyboard_usage",
+      "usage": 26,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1b",
+      "kind": "keyboard_usage",
+      "usage": 27,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1c",
+      "kind": "keyboard_usage",
+      "usage": 28,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1d",
+      "kind": "keyboard_usage",
+      "usage": 29,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1e",
+      "kind": "keyboard_usage",
+      "usage": 30,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-1f",
+      "kind": "keyboard_usage",
+      "usage": 31,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-20",
+      "kind": "keyboard_usage",
+      "usage": 32,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-21",
+      "kind": "keyboard_usage",
+      "usage": 33,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-22",
+      "kind": "keyboard_usage",
+      "usage": 34,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-23",
+      "kind": "keyboard_usage",
+      "usage": 35,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-24",
+      "kind": "keyboard_usage",
+      "usage": 36,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-25",
+      "kind": "keyboard_usage",
+      "usage": 37,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-26",
+      "kind": "keyboard_usage",
+      "usage": 38,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-27",
+      "kind": "keyboard_usage",
+      "usage": 39,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-28",
+      "kind": "keyboard_usage",
+      "usage": 40,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-29",
+      "kind": "keyboard_usage",
+      "usage": 41,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2a",
+      "kind": "keyboard_usage",
+      "usage": 42,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2b",
+      "kind": "keyboard_usage",
+      "usage": 43,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2c",
+      "kind": "keyboard_usage",
+      "usage": 44,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2d",
+      "kind": "keyboard_usage",
+      "usage": 45,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2e",
+      "kind": "keyboard_usage",
+      "usage": 46,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-2f",
+      "kind": "keyboard_usage",
+      "usage": 47,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-30",
+      "kind": "keyboard_usage",
+      "usage": 48,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-31",
+      "kind": "keyboard_usage",
+      "usage": 49,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-33",
+      "kind": "keyboard_usage",
+      "usage": 51,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-34",
+      "kind": "keyboard_usage",
+      "usage": 52,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-35",
+      "kind": "keyboard_usage",
+      "usage": 53,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-36",
+      "kind": "keyboard_usage",
+      "usage": 54,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-37",
+      "kind": "keyboard_usage",
+      "usage": 55,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-38",
+      "kind": "keyboard_usage",
+      "usage": 56,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-39",
+      "kind": "keyboard_usage",
+      "usage": 57,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3a",
+      "kind": "keyboard_usage",
+      "usage": 58,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3b",
+      "kind": "keyboard_usage",
+      "usage": 59,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3c",
+      "kind": "keyboard_usage",
+      "usage": 60,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3d",
+      "kind": "keyboard_usage",
+      "usage": 61,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3e",
+      "kind": "keyboard_usage",
+      "usage": 62,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-3f",
+      "kind": "keyboard_usage",
+      "usage": 63,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-40",
+      "kind": "keyboard_usage",
+      "usage": 64,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-41",
+      "kind": "keyboard_usage",
+      "usage": 65,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-42",
+      "kind": "keyboard_usage",
+      "usage": 66,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-43",
+      "kind": "keyboard_usage",
+      "usage": 67,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-44",
+      "kind": "keyboard_usage",
+      "usage": 68,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-45",
+      "kind": "keyboard_usage",
+      "usage": 69,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-46",
+      "kind": "keyboard_usage",
+      "usage": 70,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-47",
+      "kind": "keyboard_usage",
+      "usage": 71,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-48",
+      "kind": "keyboard_usage",
+      "usage": 72,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-49",
+      "kind": "keyboard_usage",
+      "usage": 73,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4a",
+      "kind": "keyboard_usage",
+      "usage": 74,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4b",
+      "kind": "keyboard_usage",
+      "usage": 75,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4c",
+      "kind": "keyboard_usage",
+      "usage": 76,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4d",
+      "kind": "keyboard_usage",
+      "usage": 77,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4e",
+      "kind": "keyboard_usage",
+      "usage": 78,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-4f",
+      "kind": "keyboard_usage",
+      "usage": 79,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-50",
+      "kind": "keyboard_usage",
+      "usage": 80,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-51",
+      "kind": "keyboard_usage",
+      "usage": 81,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-52",
+      "kind": "keyboard_usage",
+      "usage": 82,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-64",
+      "kind": "keyboard_usage",
+      "usage": 100,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-68",
+      "kind": "keyboard_usage",
+      "usage": 104,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-69",
+      "kind": "keyboard_usage",
+      "usage": 105,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6a",
+      "kind": "keyboard_usage",
+      "usage": 106,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6b",
+      "kind": "keyboard_usage",
+      "usage": 107,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6c",
+      "kind": "keyboard_usage",
+      "usage": 108,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6d",
+      "kind": "keyboard_usage",
+      "usage": 109,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6e",
+      "kind": "keyboard_usage",
+      "usage": 110,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-6f",
+      "kind": "keyboard_usage",
+      "usage": 111,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-70",
+      "kind": "keyboard_usage",
+      "usage": 112,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-71",
+      "kind": "keyboard_usage",
+      "usage": 113,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-72",
+      "kind": "keyboard_usage",
+      "usage": 114,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-usage-73",
+      "kind": "keyboard_usage",
+      "usage": 115,
+      "phases": [
+        "make",
+        "observe",
+        "break"
+      ]
+    },
+    {
+      "id": "kbd-mod-left_control",
+      "kind": "modifier",
+      "modifier": "left_control",
+      "mask": 1
+    },
+    {
+      "id": "kbd-mod-left_shift",
+      "kind": "modifier",
+      "modifier": "left_shift",
+      "mask": 2
+    },
+    {
+      "id": "kbd-mod-left_alt",
+      "kind": "modifier",
+      "modifier": "left_alt",
+      "mask": 4
+    },
+    {
+      "id": "kbd-mod-left_gui",
+      "kind": "modifier",
+      "modifier": "left_gui",
+      "mask": 8
+    },
+    {
+      "id": "kbd-mod-right_control",
+      "kind": "modifier",
+      "modifier": "right_control",
+      "mask": 16
+    },
+    {
+      "id": "kbd-mod-right_shift",
+      "kind": "modifier",
+      "modifier": "right_shift",
+      "mask": 32
+    },
+    {
+      "id": "kbd-mod-right_alt",
+      "kind": "modifier",
+      "modifier": "right_alt",
+      "mask": 64
+    },
+    {
+      "id": "kbd-mod-right_gui",
+      "kind": "modifier",
+      "modifier": "right_gui",
+      "mask": 128
+    },
+    {
+      "id": "kbd-mod-left-ctrl-shift",
+      "kind": "modifier_combo",
+      "mask": 3
+    },
+    {
+      "id": "kbd-mod-left-ctrl-alt",
+      "kind": "modifier_combo",
+      "mask": 5
+    },
+    {
+      "id": "kbd-mod-left-right-shift",
+      "kind": "modifier_combo",
+      "mask": 34
+    },
+    {
+      "id": "kbd-mod-all",
+      "kind": "modifier_combo",
+      "mask": 255
+    },
+    {
+      "id": "kbd-rollover-0",
+      "kind": "rollover",
+      "ordinary_key_count": 0,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-1",
+      "kind": "rollover",
+      "ordinary_key_count": 1,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-2",
+      "kind": "rollover",
+      "ordinary_key_count": 2,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-3",
+      "kind": "rollover",
+      "ordinary_key_count": 3,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-4",
+      "kind": "rollover",
+      "ordinary_key_count": 4,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-5",
+      "kind": "rollover",
+      "ordinary_key_count": 5,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-6",
+      "kind": "rollover",
+      "ordinary_key_count": 6,
+      "expect": "accept"
+    },
+    {
+      "id": "kbd-rollover-overflow",
+      "kind": "rollover",
+      "ordinary_key_count": 7,
+      "expect": "reject_or_clean_failure"
+    },
+    {
+      "id": "kbd-unsupported-32",
+      "kind": "unsupported_usage",
+      "usage": 50,
+      "expect": "reject"
+    },
+    {
+      "id": "kbd-duplicate-usage",
+      "kind": "duplicate_usage",
+      "expect": "deterministic"
+    },
+    {
+      "id": "kbd-held-disconnect",
+      "kind": "disconnect_cleanup",
+      "held": [
+        "left_shift",
+        "0x04"
+      ],
+      "expect": "release_all"
+    }
+  ],
+  "mouse": [
+    {
+      "id": "mouse-x--127",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": -127,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-x--1",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": -1,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-x-0",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-x-1",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 1,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-x-127",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 127,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-y--127",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": -127,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-y--1",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": -1,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-y-0",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 0,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-y-1",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 1,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-y-127",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 127,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-diagonal-max",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 127,
+      "dy": -127,
+      "wheel": 0
+    },
+    {
+      "id": "mouse-left",
+      "kind": "mouse_buttons",
+      "buttons": 1
+    },
+    {
+      "id": "mouse-right",
+      "kind": "mouse_buttons",
+      "buttons": 2
+    },
+    {
+      "id": "mouse-middle",
+      "kind": "mouse_buttons",
+      "buttons": 4
+    },
+    {
+      "id": "mouse-all-buttons",
+      "kind": "mouse_buttons",
+      "buttons": 7
+    },
+    {
+      "id": "mouse-wheel-pos-max",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 0,
+      "wheel": 127
+    },
+    {
+      "id": "mouse-wheel-neg-max",
+      "kind": "mouse_report",
+      "buttons": 0,
+      "dx": 0,
+      "dy": 0,
+      "wheel": -127
+    },
+    {
+      "id": "mouse-combined",
+      "kind": "mouse_report",
+      "buttons": 3,
+      "dx": 17,
+      "dy": -11,
+      "wheel": 1
+    },
+    {
+      "id": "mouse-invalid-buttons",
+      "kind": "mouse_invalid",
+      "buttons": 8,
+      "dx": 0,
+      "dy": 0,
+      "wheel": 0,
+      "expect": "reject"
+    },
+    {
+      "id": "mouse-invalid-x-overflow",
+      "kind": "mouse_invalid",
+      "buttons": 0,
+      "dx": 128,
+      "dy": 0,
+      "wheel": 0,
+      "expect": "reject"
+    },
+    {
+      "id": "mouse-held-disconnect",
+      "kind": "disconnect_cleanup",
+      "held": [
+        "left_button"
+      ],
+      "expect": "release_all"
+    }
+  ]
+}
