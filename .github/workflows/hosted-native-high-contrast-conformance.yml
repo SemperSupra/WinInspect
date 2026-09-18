@@ -1,0 +1,102 @@
+name: Hosted native GUI High Contrast conformance
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'experiments/Normalize-HostedNativeHighContrast.ps1'
+      - 'scripts/Invoke-HostedNativeHighContrastConformance.ps1'
+      - '.github/workflows/hosted-native-high-contrast-conformance.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  high-contrast:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            cmake_arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply exact HCI and High Contrast candidate
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeHciRepair.ps1
+          ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
+          ./experiments/Normalize-HostedNativeHighContrast.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'High Contrast candidate introduced whitespace errors.' }
+
+      - name: Configure GUI
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI build failed.' }
+
+      - name: Exercise Windows High Contrast system palette
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
+          ./scripts/Invoke-HostedNativeHighContrastConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/high-contrast.json'
+
+      - name: Emit High Contrast summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path 'evidence/high-contrast.json') {
+            $h = Get-Content 'evidence/high-contrast.json' -Raw | ConvertFrom-Json
+            @"
+          ### Hosted native High Contrast — ${{ matrix.name }}
+
+          - status: `$($h.status)`
+          - High Contrast active during probe: `$($h.high_contrast_active)`
+          - active Windows tab matched `COLOR_HIGHLIGHT`: `$($h.active_windows_tab.matches_system_highlight)`
+          - inactive Dashboard tab matched `COLOR_WINDOW`: `$($h.inactive_dashboard_tab.matches_system_window)`
+          - original runner state restored: `$($h.restored)`
+
+          This is hosted-native Windows High Contrast rendering evidence. It does not replace Narrator or controlled interactive native-Windows acceptance.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### Hosted native High Contrast — ${{ matrix.name }}`n`nNo High Contrast evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload High Contrast evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-high-contrast-${{ matrix.name }}
+          path: evidence/high-contrast.json
+          if-no-files-found: warn
+          retention-days: 14

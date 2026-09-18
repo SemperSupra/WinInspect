@@ -1,0 +1,172 @@
+name: Hosted native GUI convergence
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'experiments/Apply-HostedNativeFullHciCandidate.ps1'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'experiments/Normalize-HostedNativeHighContrast.ps1'
+      - 'experiments/Normalize-HostedNativeDpiScaling.ps1'
+      - 'experiments/Normalize-HostedNativeAllPanelDpi.ps1'
+      - 'scripts/Invoke-HostedNativeGuiObservation.ps1'
+      - 'scripts/Invoke-AxeWindowsConformance.ps1'
+      - 'scripts/Invoke-HostedNativeKeyboardConformance.ps1'
+      - 'scripts/Invoke-HostedNativeHighContrastConformance.ps1'
+      - 'scripts/Invoke-HostedNativeDpiConformance.ps1'
+      - 'scripts/Invoke-HostedNativeFocusVisibilityConformance.ps1'
+      - '.github/workflows/hosted-native-convergence.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  converge:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            cmake_arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout exact PR projection
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Compose full hosted-native HCI candidate
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeFullHciCandidate.ps1
+
+      - name: Record exact candidate receipt
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          $changed = @(git diff --name-only)
+          $files = @()
+          foreach ($path in $changed) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+              $files += [ordered]@{
+                path = $path
+                sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+              }
+            }
+          }
+          [ordered]@{
+            schema_version = 1
+            checkout_sha = (git rev-parse HEAD).Trim()
+            pr_head_sha = '${{ github.event.pull_request.head.sha }}'
+            base_sha = '${{ github.event.pull_request.base.sha }}'
+            runner = '${{ matrix.runner }}'
+            cmake_arch = '${{ matrix.cmake_arch }}'
+            changed_files = $files
+            transform_order = @(
+              'Apply-HostedNativeHciRepair.ps1',
+              'Normalize-HostedNativeHciLayout.ps1',
+              'Normalize-HostedNativeKeyboardAccess.ps1',
+              'Normalize-HostedNativeAccessibleNames.ps1',
+              'Normalize-HostedNativeHighContrast.ps1',
+              'Normalize-HostedNativeDpiScaling.ps1',
+              'Normalize-HostedNativeAllPanelDpi.ps1'
+            )
+            timestamp_utc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content evidence/candidate-receipt.json -Encoding utf8
+          Get-Content evidence/candidate-receipt.json
+
+      - name: Configure GUI
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build composed GUI once
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI build failed.' }
+
+      - name: Observe composed GUI
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
+          ./scripts/Invoke-HostedNativeGuiObservation.ps1 -GuiPath $gui.FullName -OutputDirectory 'evidence/observation'
+
+      - name: Run Axe.Windows across all realized panels
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          ./scripts/Invoke-AxeWindowsConformance.ps1 -GuiPath $gui.FullName -OutputDirectory 'evidence/axe-windows'
+
+      - name: Exercise all-panel native keyboard traversal
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          ./scripts/Invoke-HostedNativeKeyboardConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/keyboard-conformance.json'
+
+      - name: Exercise High Contrast rendering
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          ./scripts/Invoke-HostedNativeHighContrastConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/high-contrast.json'
+
+      - name: Exercise reversible all-panel DPI transitions
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          ./scripts/Invoke-HostedNativeDpiConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/dpi-conformance.json'
+
+      - name: Verify visible keyboard focus rendering
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          ./scripts/Invoke-HostedNativeFocusVisibilityConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/focus-visibility.json'
+
+      - name: Emit convergence receipt
+        if: always()
+        shell: pwsh
+        run: |
+          $candidate = if (Test-Path evidence/candidate-receipt.json) { Get-Content evidence/candidate-receipt.json -Raw | ConvertFrom-Json } else { $null }
+          $axe = if (Test-Path evidence/axe-windows/summary.json) { Get-Content evidence/axe-windows/summary.json -Raw | ConvertFrom-Json } else { $null }
+          $keyboard = if (Test-Path evidence/keyboard-conformance.json) { Get-Content evidence/keyboard-conformance.json -Raw | ConvertFrom-Json } else { $null }
+          $hc = if (Test-Path evidence/high-contrast.json) { Get-Content evidence/high-contrast.json -Raw | ConvertFrom-Json } else { $null }
+          $dpi = if (Test-Path evidence/dpi-conformance.json) { Get-Content evidence/dpi-conformance.json -Raw | ConvertFrom-Json } else { $null }
+          $focus = if (Test-Path evidence/focus-visibility.json) { Get-Content evidence/focus-visibility.json -Raw | ConvertFrom-Json } else { $null }
+          @"
+          ### Hosted-native composed-candidate convergence — ${{ matrix.name }}
+
+          - PR head: `$($candidate.pr_head_sha)`
+          - checkout projection: `$($candidate.checkout_sha)`
+          - Axe errors: `$($axe.error_count)`
+          - native keyboard: `$($keyboard.status)`
+          - High Contrast: `$($hc.status)`
+          - reversible all-panel DPI: `$($dpi.status)`
+          - visible focus: `$($focus.status)`
+
+          One transformed source tree was built once and exercised by independent hosted-native oracles. Axe.Windows owns semantic accessibility; the keyboard lane owns native focus/traversal. This remains hosted-native qualification evidence, not controlled interactive WinBot/native-desktop acceptance.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload convergence evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-convergence-${{ matrix.name }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
