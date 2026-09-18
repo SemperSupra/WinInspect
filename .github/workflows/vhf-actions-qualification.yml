@@ -287,58 +287,7 @@ jobs:
           if (-not $sys) { throw 'built SYS not found for handoff' }
 
           $devgen = Get-ChildItem wds/packages -Recurse -File -Filter devgen.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\x64\\devgen\.exe        shell: pwsh
-        run: |
-          $cleanup = @()
-          if (Test-Path evidence/vhf-start-result.json) {
-            $start = Get-Content evidence/vhf-start-result.json | ConvertFrom-Json
-            if ($start.source_instance_id) {
-              $lines = & pnputil.exe /remove-device $start.source_instance_id 2>&1
-              $cleanup += @($lines | ForEach-Object { "$_" })
-            }
-            if ($start.published_name) {
-              $lines = & pnputil.exe /delete-driver $start.published_name /uninstall /force 2>&1
-              $cleanup += @($lines | ForEach-Object { "$_" })
-            }
-          }
-          $cleanup | Set-Content evidence/cleanup.txt -Encoding utf8
-
-      - name: Summarize disposition
-        if: always()
-        shell: pwsh
-        run: |
-          $build = if (Test-Path evidence/vhf-build-result.json) { Get-Content evidence/vhf-build-result.json | ConvertFrom-Json } else { $null }
-          $start = if (Test-Path evidence/vhf-start-result.json) { Get-Content evidence/vhf-start-result.json | ConvertFrom-Json } else { $null }
-          $libs = if (Test-Path evidence/vhf-library-counts.json) { Get-Content evidence/vhf-library-counts.json | ConvertFrom-Json } else { $null }
-          [ordered]@{
-            experiment = 'wininspect-381-kmdf-vhf-exact-devnode'
-            discovery_only = $true
-            vhfkm_count = if ($libs) { $libs.vhfkm_count } else { $null }
-            vhfum_count = if ($libs) { $libs.vhfum_count } else { $null }
-            build = if ($build) { $build } else { 'not-recorded' }
-            source_start = if ($start) { $start.classification } else { 'not-attempted' }
-            input = if (Test-Path evidence/input-result.json) { Get-Content evidence/input-result.json | ConvertFrom-Json } else { 'not-attempted' }
-            next = if ((Test-Path evidence/input-result.json) -and ((Get-Content evidence/input-result.json | ConvertFrom-Json).classification -eq 'vhf-report-observed-with-paired-controls')) {
-              'Positive discovery. Next: two fresh equivalent-runner confirmations, then Windows 11 confirmation before product promotion.'
-            } elseif ($start -and $start.classification -eq 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') {
-              'VHF child is proven; stop at the exact report-observation boundary unless one causal variable changes.'
-            } elseif ($libs -and $libs.vhfum_count -gt 0) {
-              'Retain exact KMDF boundary; user-mode VHF library is present, so the pinned Microsoft DMF UMDF control remains earned.'
-            } else {
-              'Stop at the recorded boundary unless one causal variable changes.'
-            }
-          } | ConvertTo-Json -Depth 8 | Set-Content evidence/summary.json -Encoding utf8
-          Get-Content evidence/summary.json
-
-      - name: Upload VHF qualification evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: vhf-kmdf-exact-devnode
-          path: evidence/
-          if-no-files-found: error
-          retention-days: 14
- } |
+            Where-Object { $_.FullName -match '\\x64\\devgen\.exe$' } |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $devgen) { throw 'devgen.exe unavailable for handoff' }
 
@@ -352,17 +301,16 @@ jobs:
           Copy-Item .github/scripts/vhf-common-probe.ps1 (Join-Path $handoff 'vhf-common-probe.ps1') -Force
           Copy-Item .github/scripts/vhf-win11-confirm.ps1 (Join-Path $handoff 'Confirm-WinInspectVhf-Win11.ps1') -Force
 
-          $hashes = Get-ChildItem $handoff -File | ForEach-Object {
+          $hashes = @(Get-ChildItem $handoff -File | ForEach-Object {
             [ordered]@{
               file = $_.Name
               sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
               size = $_.Length
             }
-          }
+          })
           [ordered]@{
             schema = 'wininspect-vhf-win11-handoff/1'
             public_head = $env:GITHUB_SHA
-            driver_source_sha = $env:GITHUB_SHA
             common_probe_sha = $env:COMMON_PROBE_SHA
             windows_driver_samples_sha = $env:WDS_SHA
             generated_at = (Get-Date).ToUniversalTime().ToString('o')
@@ -370,7 +318,8 @@ jobs:
             files = $hashes
           } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $handoff 'handoff-manifest.json') -Encoding utf8
 
-          Get-FileHash (Join-Path $handoff '*') -Algorithm SHA256 |
+          Get-ChildItem $handoff -File |
+            Get-FileHash -Algorithm SHA256 |
             Select-Object Path,Hash |
             ConvertTo-Json -Depth 4 |
             Set-Content evidence/win11-handoff-hashes.json -Encoding utf8
