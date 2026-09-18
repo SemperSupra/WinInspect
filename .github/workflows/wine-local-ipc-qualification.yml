@@ -50,8 +50,12 @@ jobs:
           sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
           sudo wget -qO /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
           sudo apt-get update -qq
-          apt-cache policy wine-devel-amd64 > evidence/winehq-policy.txt
-          sudo apt-get install -y --no-install-recommends wine-devel-amd64
+          apt-cache policy wine-devel wine-devel-amd64 > evidence/winehq-policy.txt
+          sudo apt-get install -y --no-install-recommends wine-devel wine-devel-amd64
+          {
+            dpkg -L wine-devel
+            dpkg -L wine-devel-amd64
+          } | sort -u > evidence/winehq-package-files.txt
 
           wine_bin=''
           for candidate in /opt/wine-devel/bin/wine /opt/wine-devel/bin/wine64; do
