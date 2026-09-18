@@ -116,6 +116,8 @@ jobs:
             devgen_exit_code = $null
             install_exit_code = $null
             source_devices = @()
+            source_child_ids = @()
+            source_children = @()
             hid_children = @()
             cleanup = @()
           }
@@ -177,19 +179,64 @@ jobs:
           $installLines = & pnputil.exe /add-driver $inf.FullName /install 2>&1
           $result.install_exit_code = $LASTEXITCODE
           $installLines | Set-Content evidence/install.txt
-          Start-Sleep -Seconds 5
+          $childIds = @()
+          for ($i = 0; $i -lt 20; $i++) {
+            $childProperty = Get-PnpDeviceProperty -InstanceId $instanceId -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue
+            if ($childProperty -and $childProperty.Data) {
+              $childIds = @($childProperty.Data)
+              if ($childIds.Count -gt 0) { break }
+            }
+            Start-Sleep -Milliseconds 500
+          }
 
           $source = @(Get-PnpDevice -InstanceId $instanceId -ErrorAction SilentlyContinue |
             Select-Object Status,Class,FriendlyName,InstanceId,Problem,ProblemDescription)
-          $hid = @(Get-PnpDevice -PresentOnly -Class HIDClass -ErrorAction SilentlyContinue |
-            Where-Object { $_.InstanceId -match 'VID_1209&PID_0266' } |
-            Select-Object Status,Class,FriendlyName,InstanceId,Problem,ProblemDescription)
+          $children = @(
+            foreach ($childId in $childIds) {
+              $device = Get-PnpDevice -InstanceId $childId -ErrorAction SilentlyContinue
+              if ($device) {
+                $hardwareIds = @((Get-PnpDeviceProperty -InstanceId $childId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+                [pscustomobject]@{
+                  Status = $device.Status
+                  Class = $device.Class
+                  FriendlyName = $device.FriendlyName
+                  InstanceId = $device.InstanceId
+                  Problem = $device.Problem
+                  ProblemDescription = $device.ProblemDescription
+                  HardwareIds = $hardwareIds
+                }
+              }
+            }
+          )
+          $allHid = @(
+            Get-PnpDevice -PresentOnly -Class HIDClass -ErrorAction SilentlyContinue | ForEach-Object {
+              $hardwareIds = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+              [pscustomobject]@{
+                Status = $_.Status
+                FriendlyName = $_.FriendlyName
+                InstanceId = $_.InstanceId
+                Problem = $_.Problem
+                HardwareIds = $hardwareIds
+              }
+            }
+          )
+          $hid = @($children | Where-Object {
+            $_.Class -eq 'HIDClass' -or
+            (($_.HardwareIds -join ';') -match 'VID_1209.*PID_0266')
+          })
+
           $result.source_devices = $source
+          $result.source_child_ids = $childIds
+          $result.source_children = $children
           $result.hid_children = $hid
           $source | ConvertTo-Json -Depth 6 | Set-Content evidence/source-device.json -Encoding utf8
-          $hid | ConvertTo-Json -Depth 6 | Set-Content evidence/hid-child.json -Encoding utf8
-          (& pnputil.exe /enum-devices /instanceid $instanceId /drivers 2>&1) | Set-Content evidence/source-pnputil.txt
-          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 800 -ErrorAction SilentlyContinue | Set-Content evidence/setupapi-tail.txt
+          $childIds | ConvertTo-Json -Depth 4 | Set-Content evidence/source-child-ids.json -Encoding utf8
+          $children | ConvertTo-Json -Depth 8 | Set-Content evidence/source-children.json -Encoding utf8
+          $allHid | ConvertTo-Json -Depth 8 | Set-Content evidence/all-hid-devices.json -Encoding utf8
+          $hid | ConvertTo-Json -Depth 8 | Set-Content evidence/hid-child.json -Encoding utf8
+          (& pnputil.exe /enum-devices /instanceid $instanceId /relations /stack /services /drivers /properties 2>&1) | Set-Content evidence/source-pnputil.txt
+          (& pnputil.exe /enum-devicetree $instanceId /connected /services /stack /drivers 2>&1) | Set-Content evidence/source-device-tree.txt
+          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 1000 -ErrorAction SilentlyContinue | Set-Content evidence/setupapi-tail.txt
 
           $sourceOk = [bool]($source | Where-Object { $_.Status -eq 'OK' })
           $hidOk = [bool]($hid | Where-Object { $_.Status -eq 'OK' })
