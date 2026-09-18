@@ -1,4 +1,4 @@
-name: Phase 1 Wine 11 mouse Raw Input A/B
+name: Phase 2 Wine full virtual-input conformance
 
 on:
   pull_request:
@@ -6,20 +6,18 @@ on:
     paths:
       - '.github/workflows/wine-local-ipc-qualification.yml'
       - 'experiments/wine-local-ipc/**'
-      - 'experiments/wine-uinput/wine_input_probe.cpp'
-      - 'experiments/wine-uinput/sendinput_control.cpp'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: wine11-mouse-ab-${{ github.event.pull_request.number || github.ref }}
+  group: wine-full-conformance-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  wine-report-e2e:
-    name: Wine 11.17 mouse Raw Input A/B
+  full-conformance:
+    name: Canonical keyboard and mouse corpus through Wine
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
@@ -28,314 +26,187 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install only required fixtures
+      - name: Install bounded qualification dependencies
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p evidence
           sudo modprobe uinput
           test -c /dev/uinput
-
-          packages=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64-posix)
-          install=()
-          for pkg in "${packages[@]}"; do
-            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || install+=("$pkg")
-          done
-          if [ "${#install[@]}" -gt 0 ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends "${install[@]}"
-          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc gcc-mingw-w64-x86-64 evtest python3 wget
 
           sudo dpkg --add-architecture i386
           sudo install -d -m 0755 /etc/apt/keyrings
           sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
           sudo wget -qO /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
           sudo apt-get update -qq
-          apt-cache policy winehq-devel wine-devel wine-devel-amd64 wine-devel-i386 > evidence/winehq-policy.txt
           sudo apt-get install -y --install-recommends winehq-devel
-          {
-            dpkg -L winehq-devel
-            dpkg -L wine-devel
-            dpkg -L wine-devel-amd64
-            dpkg -L wine-devel-i386
-          } | sort -u > evidence/winehq-package-files.txt
 
           wine_bin=''
           for candidate in /opt/wine-devel/bin/wine /opt/wine-devel/bin/wine64; do
-            if [ -x "$candidate" ]; then
-              wine_bin="$candidate"
-              break
-            fi
+            if [ -x "$candidate" ]; then wine_bin="$candidate"; break; fi
           done
-          if [ -z "$wine_bin" ]; then
-            echo 'WineHQ development binary not found or not executable' >&2
-            ls -la /opt/wine-devel/bin > evidence/winehq-bin-list.txt 2>&1 || true
-            exit 2
-          fi
-          version=$("$wine_bin" --version)
+          test -n "$wine_bin"
           echo "$wine_bin" > evidence/wine-bin.txt
           {
-            echo "experiment=wininspect-382-wine11-mouse-ab"
+            echo "experiment=wininspect-382-phase2-full-conformance"
             echo "kernel=$(uname -r)"
             echo "uid=$(id -u)"
             echo "gid=$(id -g)"
-            echo "wine_bin=$wine_bin"
-            echo "wine_version=$version"
-            x86_64-w64-mingw32-g++ --version | head -1
+            "$wine_bin" --version
           } > evidence/environment.txt
-          printf '%s\n' "$version" | grep -Eq '^wine-11\.(1[4-9]|[2-9][0-9])' || {
-            echo "Expected Wine 11.14+ for raw-mouse A/B, got $version" >&2
-            exit 3
-          }
 
-      - name: Build provider, corpus client, and established Wine controls
+      - name: Build provider and generated Win32 corpus client
         shell: bash
         run: |
           set -euo pipefail
+          python3 experiments/wine-local-ipc/generate_full_conformance_client.py             experiments/wine-local-ipc/full-conformance.json             evidence/win32-full-conformance-client.c             evidence/generated-summary.json
+
+          python3 -m py_compile experiments/wine-local-ipc/verify_full_conformance.py
+
           gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-local-ipc/drop_priv_report_server.c             -o evidence/drop-priv-report-server
 
-          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc             experiments/wine-local-ipc/win32_report_subset_client.c             -lws2_32 -o evidence/win32-report-subset-client.exe
+          x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc             evidence/win32-full-conformance-client.c -lws2_32             -o evidence/win32-full-conformance-client.exe
 
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++             experiments/wine-uinput/wine_input_probe.cpp             -o evidence/wine_input_probe.exe -luser32
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++             experiments/wine-uinput/sendinput_control.cpp             -o evidence/sendinput_control.exe -luser32
+          sha256sum             experiments/wine-local-ipc/full-conformance.json             experiments/wine-local-ipc/drop_priv_report_server.c             evidence/win32-full-conformance-client.c             evidence/win32-full-conformance-client.exe             > evidence/fixture-sha256.txt
 
-          sha256sum evidence/drop-priv-report-server evidence/win32-report-subset-client.exe             evidence/wine_input_probe.exe evidence/sendinput_control.exe             experiments/wine-local-ipc/conformance-subset.json > evidence/fixture-sha256.txt
-
-      - name: Run idle, SendInput, and report-provider treatment in one Wine session
+      - name: Run full canonical corpus with evdev observation
         id: treatment
         shell: bash
         continue-on-error: true
         run: |
           set +e
-
           wine_bin=$(cat evidence/wine-bin.txt)
           export PATH="$(dirname "$wine_bin"):$PATH"
           export WINEARCH=win64
-          export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-full-conformance-prefix"
           export WINEDEBUG=-all
           rm -rf "$WINEPREFIX"
 
-          preflight='not-run'
-          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot-preflight.txt 2>&1
+          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot.txt 2>&1
           wineboot_rc=$?
           if [ "$wineboot_rc" -eq 0 ]; then
-            timeout 20s "$wine_bin" cmd /c exit > evidence/wine-cmd-preflight.txt 2>&1
+            timeout 20s "$wine_bin" cmd /c exit > evidence/wine-cmd.txt 2>&1
             winecmd_rc=$?
           else
             winecmd_rc=125
           fi
-          timeout 10s "$(dirname "$wine_bin")/wineserver" -w > evidence/wineserver-preflight.txt 2>&1
-          wineserver_rc=$?
-
-          printf 'wineboot_rc=%d\nwinecmd_rc=%d\nwineserver_rc=%d\n' "$wineboot_rc" "$winecmd_rc" "$wineserver_rc" > evidence/wine-preflight-status.txt
           if [ "$wineboot_rc" -ne 0 ] || [ "$winecmd_rc" -ne 0 ]; then
-            printf '{"classification":"wine11-prefix-preflight-failed","wineboot_exit_code":%d,"winecmd_exit_code":%d,"wineserver_exit_code":%d}\n'               "$wineboot_rc" "$winecmd_rc" "$wineserver_rc" > evidence/e2e-result.json
-            cat evidence/e2e-result.json
+            printf '{"classification":"wine-prefix-preflight-failed","wineboot_exit_code":%d,"winecmd_exit_code":%d}\n' "$wineboot_rc" "$winecmd_rc" > evidence/result.json
             exit 1
           fi
-
-          cat > evidence/xorg.conf <<'EOF'
-          Section "ServerFlags"
-              Option "AutoAddDevices" "true"
-              Option "AutoEnableDevices" "true"
-              Option "AllowMouseOpenFail" "true"
-              Option "DontVTSwitch" "true"
-          EndSection
-          Section "Device"
-              Identifier "DummyDevice"
-              Driver "dummy"
-              VideoRam 256000
-          EndSection
-          Section "Monitor"
-              Identifier "DummyMonitor"
-              HorizSync 5.0 - 1000.0
-              VertRefresh 5.0 - 200.0
-              Modeline "1024x768" 65.0 1024 1048 1184 1344 768 771 777 806
-          EndSection
-          Section "Screen"
-              Identifier "DummyScreen"
-              Device "DummyDevice"
-              Monitor "DummyMonitor"
-              DefaultDepth 24
-              SubSection "Display"
-                  Depth 24
-                  Modes "1024x768"
-              EndSubSection
-          EndSection
-          Section "ServerLayout"
-              Identifier "DummyLayout"
-              Screen "DummyScreen"
-          EndSection
-          EOF
 
           uid=$(id -u)
           gid=$(id -g)
           token=$(openssl rand -hex 32)
+
           sudo "$PWD/evidence/drop-priv-report-server" "$uid" "$gid" "$token"             > evidence/provider.txt 2> evidence/provider.err &
           provider_pid=$!
+          kbd_observer=''
+          mouse_observer=''
+          cleanup() {
+            sudo kill "$provider_pid" 2>/dev/null || true
+            [ -n "${kbd_observer:-}" ] && sudo kill "$kbd_observer" 2>/dev/null || true
+            [ -n "${mouse_observer:-}" ] && sudo kill "$mouse_observer" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
           ready=false
-          for _ in $(seq 1 80); do
+          for _ in $(seq 1 100); do
             grep -q '^READY ' evidence/provider.txt 2>/dev/null && { ready=true; break; }
             sudo kill -0 "$provider_pid" 2>/dev/null || break
             sleep 0.1
           done
           if [ "$ready" != true ]; then
-            echo '{"classification":"provider-not-ready"}' > evidence/e2e-result.json
+            echo '{"classification":"provider-not-ready"}' > evidence/result.json
             exit 1
           fi
+
           ready_line=$(grep '^READY ' evidence/provider.txt | tail -1)
           port=$(printf '%s\n' "$ready_line" | sed -n 's/.* port=\([0-9][0-9]*\).*/\1/p')
           peuid=$(printf '%s\n' "$ready_line" | sed -n 's/.* euid=\([0-9][0-9]*\).*/\1/p')
           pegid=$(printf '%s\n' "$ready_line" | sed -n 's/.* egid=\([0-9][0-9]*\).*/\1/p')
           if [ "$peuid" != "$uid" ] || [ "$pegid" != "$gid" ]; then
-            echo '{"classification":"provider-not-unprivileged"}' > evidence/e2e-result.json
+            echo '{"classification":"provider-not-unprivileged"}' > evidence/result.json
             exit 1
           fi
 
-          sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf"             -logfile "$PWD/evidence/Xorg.log" > evidence/xorg-stdout.txt 2>&1 &
-          xorg_pid=$!
-          openbox_pid=''
-          wine_pid=''
-          xi2_pid=''
-
-          cleanup() {
-            [ -n "${wine_pid:-}" ] && kill "$wine_pid" 2>/dev/null || true
-            command -v wineserver >/dev/null 2>&1 && wineserver -k 2>/dev/null || true
-            [ -n "${openbox_pid:-}" ] && kill "$openbox_pid" 2>/dev/null || true
-            [ -n "${xi2_pid:-}" ] && kill "$xi2_pid" 2>/dev/null || true
-            [ -n "${xorg_pid:-}" ] && sudo kill "$xorg_pid" 2>/dev/null || true
-            sudo kill "$provider_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          x_ready=false
-          for _ in $(seq 1 30); do
-            DISPLAY=:99 xset q >/dev/null 2>&1 && { x_ready=true; break; }
-            sleep 0.25
+          keyboard_event=''
+          mouse_event=''
+          for _ in $(seq 1 100); do
+            for namefile in /sys/class/input/event*/device/name; do
+              [ -f "$namefile" ] || continue
+              name=$(cat "$namefile")
+              event=$(basename "$(dirname "$(dirname "$namefile")")")
+              [ "$name" = 'WinInspect-L2-Keyboard' ] && keyboard_event="$event"
+              [ "$name" = 'WinInspect-L2-Mouse' ] && mouse_event="$event"
+            done
+            [ -n "$keyboard_event" ] && [ -n "$mouse_event" ] && break
+            sleep 0.1
           done
-          if [ "$x_ready" != true ]; then
-            echo '{"classification":"xorg-start-failed"}' > evidence/e2e-result.json
+          printf 'keyboard_event=%s\nmouse_event=%s\n' "$keyboard_event" "$mouse_event" > evidence/event-devices.txt
+          if [ -z "$keyboard_event" ] || [ -z "$mouse_event" ]; then
+            echo '{"classification":"uinput-event-devices-not-found"}' > evidence/result.json
             exit 1
           fi
 
-          export DISPLAY=:99
-          openbox --sm-disable > evidence/openbox.log 2>&1 &
-          openbox_pid=$!
-          sleep 1
+          sudo timeout 45s evtest "/dev/input/$keyboard_event" > evidence/keyboard-evtest.txt 2>&1 &
+          kbd_observer=$!
+          sudo timeout 45s evtest "/dev/input/$mouse_event" > evidence/mouse-evtest.txt 2>&1 &
+          mouse_observer=$!
+          sleep 0.5
 
-          xinput list > evidence/xinput-list.txt 2>&1
-          keyboard_xid=$(xinput list --id-only 'WinInspect-L2-Keyboard' 2>/dev/null || true)
-          mouse_xid=$(xinput list --id-only 'WinInspect-L2-Mouse' 2>/dev/null || true)
-          printf 'keyboard_xid=%s\nmouse_xid=%s\n' "$keyboard_xid" "$mouse_xid" > evidence/xinput-devices.txt
-          if [ -z "$keyboard_xid" ] || [ -z "$mouse_xid" ]; then
-            echo '{"classification":"xorg-did-not-consume-uinput-devices"}' > evidence/e2e-result.json
-            exit 1
-          fi
-
-          "$wine_bin" "$PWD/evidence/wine_input_probe.exe" > evidence/probe.jsonl 2> evidence/probe.stderr &
-          wine_pid=$!
-          probe_ready=false
-          for _ in $(seq 1 60); do
-            grep -q '"event":"probe_ready"' evidence/probe.jsonl 2>/dev/null && { probe_ready=true; break; }
-            kill -0 "$wine_pid" 2>/dev/null || break
-            sleep 0.25
-          done
-          if [ "$probe_ready" != true ]; then
-            echo '{"classification":"wine-probe-not-ready"}' > evidence/e2e-result.json
-            exit 1
-          fi
-
-          idle_start=$(wc -l < evidence/probe.jsonl)
-          sleep 2
-          idle_end=$(wc -l < evidence/probe.jsonl)
-          sed -n "$((idle_start+1)),${idle_end}p" evidence/probe.jsonl > evidence/phase-idle.jsonl
-
-          "$wine_bin" "$PWD/evidence/sendinput_control.exe" > evidence/sendinput-control.txt 2>&1
-          send_rc=$?
-          sleep 0.75
-          send_end=$(wc -l < evidence/probe.jsonl)
-          sed -n "$((idle_end+1)),${send_end}p" evidence/probe.jsonl > evidence/phase-sendinput.jsonl
-
-          "$wine_bin" "$PWD/evidence/sendinput_control.exe" --focus-only > evidence/focus-control.txt 2>&1
-          focus_rc=$?
-          sleep 0.25
-          xprop -root _NET_ACTIVE_WINDOW > evidence/active-window.txt 2>&1 || true
-          active_window=$(awk '{print $5}' evidence/active-window.txt 2>/dev/null)
-          host_focus_ok=0
-          if [ -n "${active_window:-}" ] && [ "$active_window" != "0x0" ]; then
-            xprop -id "$active_window" WM_NAME _NET_WM_NAME > evidence/active-window-properties.txt 2>&1 || true
-            grep -q 'WinInspect Input Probe' evidence/active-window-properties.txt && host_focus_ok=1
-          fi
-
-          before_treatment=$(wc -l < evidence/probe.jsonl)
-          timeout 12s xinput test-xi2 --root > evidence/xinput2-treatment.txt 2>&1 &
-          xi2_pid=$!
-          sleep 0.25
-
-          timeout 20s "$wine_bin" "$PWD/evidence/win32-report-subset-client.exe" "$port" "$token"             > evidence/report-client.txt 2> evidence/report-client.err
+          timeout 35s "$wine_bin" "$PWD/evidence/win32-full-conformance-client.exe" "$port" "$token"             > evidence/client.txt 2> evidence/client.err
           client_rc=$?
-          sleep 1
-          treatment_end=$(wc -l < evidence/probe.jsonl)
-          sed -n "$((before_treatment+1)),${treatment_end}p" evidence/probe.jsonl > evidence/phase-treatment.jsonl
 
+          provider_done=false
+          for _ in $(seq 1 100); do
+            if ! sudo kill -0 "$provider_pid" 2>/dev/null; then provider_done=true; break; fi
+            sleep 0.1
+          done
+          if [ "$provider_done" != true ]; then sudo kill "$provider_pid" 2>/dev/null || true; fi
           wait "$provider_pid"
           provider_rc=$?
-          sleep 0.25
-          kill "$xi2_pid" 2>/dev/null || true
-          wait "$xi2_pid" 2>/dev/null || true
 
-          idle_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-idle.jsonl || true)
-          send_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-sendinput.jsonl || true)
-          raw_keyboard=$(grep -Ec '"event":"raw_input".*"type":"keyboard"' evidence/phase-treatment.jsonl || true)
-          raw_mouse=$(grep -Ec '"event":"raw_input".*"type":"mouse"' evidence/phase-treatment.jsonl || true)
-          key_messages=$(grep -Ec '"event":"key_message"' evidence/phase-treatment.jsonl || true)
-          edit_changes=$(grep -Ec '"event":"edit_changed"' evidence/phase-treatment.jsonl || true)
-          xi2_keys=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-treatment.txt || true)
-          xi2_mouse=$(grep -Ec 'RawMotion|RawButtonPress|RawButtonRelease' evidence/xinput2-treatment.txt || true)
+          sleep 0.5
+          sudo kill "$kbd_observer" "$mouse_observer" 2>/dev/null || true
+          wait "$kbd_observer" 2>/dev/null || true
+          wait "$mouse_observer" 2>/dev/null || true
 
-          provider_result=$(grep '^RESULT ' evidence/provider.txt | tail -1)
-          accepted=$(printf '%s\n' "$provider_result" | sed -n 's/.* accepted=\([0-9][0-9]*\).*/\1/p')
-          rejected=$(printf '%s\n' "$provider_result" | sed -n 's/.* rejected=\([0-9][0-9]*\).*/\1/p')
-          disconnect_release=$(printf '%s\n' "$provider_result" | sed -n 's/.* disconnect_release=\([0-9][0-9]*\).*/\1/p')
+          python3 experiments/wine-local-ipc/verify_full_conformance.py             experiments/wine-local-ipc/full-conformance.json             experiments/wine-local-ipc/drop_priv_report_server.c             evidence/keyboard-evtest.txt evidence/mouse-evtest.txt             evidence/observation-result.json
+          observe_rc=$?
 
-          grep '"event":"raw_input"' evidence/phase-treatment.jsonl | grep -o '"hDevice":"[^"]*"' | sort -u > evidence/treatment-device-handles.txt || true
-          raw_handle_count=$(grep -c . evidence/treatment-device-handles.txt || true)
+          result_line=$(grep '^RESULT ' evidence/provider.txt | tail -1)
+          accepted=$(printf '%s\n' "$result_line" | sed -n 's/.* accepted=\([0-9][0-9]*\).*/\1/p')
+          rejected=$(printf '%s\n' "$result_line" | sed -n 's/.* rejected=\([0-9][0-9]*\).*/\1/p')
+          disconnect_release=$(printf '%s\n' "$result_line" | sed -n 's/.* disconnect_release=\([0-9][0-9]*\).*/\1/p')
+          expected_accepted=$(python3 -c 'import json;print(json.load(open("evidence/generated-summary.json"))["accepted"])')
+          expected_rejected=$(python3 -c 'import json;print(json.load(open("evidence/generated-summary.json"))["rejected"])')
 
-          if [ "$idle_events" -ne 0 ]; then
-            classification='idle-control-contaminated'
-          elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
-            classification='sendinput-control-invalid'
-          elif [ "$focus_rc" -ne 0 ] || [ "$host_focus_ok" -ne 1 ]; then
-            classification='host-focus-control-invalid'
-          elif [ "$client_rc" -ne 0 ] || [ "$provider_rc" -ne 0 ] || [ "$accepted" != '15' ] || [ "$rejected" != '2' ]; then
-            classification='report-treatment-provider-failed'
-          elif [ "$xi2_keys" -lt 4 ] || [ "$xi2_mouse" -lt 2 ]; then
-            classification='xorg-did-not-observe-report-treatment'
-          elif [ "$raw_keyboard" -lt 4 ] || [ "$raw_mouse" -lt 1 ]; then
-            classification='wine11-rawinput-did-not-observe-report-treatment'
-          elif [ "$edit_changes" -lt 1 ]; then
-            classification='wine-app-text-semantics-incomplete'
-          elif [ "$disconnect_release" != '1' ]; then
-            classification='disconnect-release-not-recorded'
+          if [ "$client_rc" -eq 0 ] && [ "$provider_rc" -eq 0 ] && [ "$observe_rc" -eq 0 ] &&
+             [ "$accepted" = "$expected_accepted" ] && [ "$rejected" = "$expected_rejected" ] &&
+             [ "$disconnect_release" = '1' ]; then
+            classification='wine-phase2-full-report-conformance-pass'
+          elif [ "$client_rc" -ne 0 ]; then
+            classification='full-conformance-client-failed'
+          elif [ "$provider_rc" -ne 0 ]; then
+            classification='full-conformance-provider-failed'
+          elif [ "$observe_rc" -ne 0 ]; then
+            classification='full-conformance-observation-failed'
           else
-            classification='wine11-mouse-rawinput-pass'
+            classification='full-conformance-count-mismatch'
           fi
 
-          key_message_observer_variance=0
-          if [ "$key_messages" -lt 2 ]; then
-            key_message_observer_variance=1
-          fi
-
-          printf '{"classification":"%s","idle_events":%d,"sendinput_exit_code":%d,"sendinput_events":%d,"focus_exit_code":%d,"host_focus_ok":%d,"report_client_exit_code":%d,"provider_exit_code":%d,"accepted":"%s","rejected":"%s","disconnect_release":"%s","xinput2_key_events":%d,"xinput2_mouse_events":%d,"wine_raw_keyboard":%d,"wine_raw_mouse":%d,"wine_key_messages":%d,"wine_edit_changes":%d,"wine_raw_device_handle_count":%d,"key_message_observer_variance":%d}\n'             "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok"             "$client_rc" "$provider_rc" "$accepted" "$rejected" "$disconnect_release"             "$xi2_keys" "$xi2_mouse" "$raw_keyboard" "$raw_mouse" "$key_messages" "$edit_changes" "$raw_handle_count" "$key_message_observer_variance"             > evidence/e2e-result.json
-          cat evidence/e2e-result.json
-          [ "$classification" = 'wine11-mouse-rawinput-pass' ]
+          printf '{"classification":"%s","client_exit_code":%d,"provider_exit_code":%d,"observation_exit_code":%d,"accepted":"%s","expected_accepted":"%s","rejected":"%s","expected_rejected":"%s","disconnect_release":"%s"}\n'             "$classification" "$client_rc" "$provider_rc" "$observe_rc" "$accepted" "$expected_accepted" "$rejected" "$expected_rejected" "$disconnect_release"             > evidence/result.json
+          cat evidence/result.json
+          [ "$classification" = 'wine-phase2-full-report-conformance-pass' ]
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: phase1-wine11-mouse-ab
+          name: phase2-wine-full-conformance
           path: evidence/
           if-no-files-found: error
           retention-days: 14
