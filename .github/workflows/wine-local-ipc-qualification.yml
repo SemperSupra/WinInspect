@@ -51,9 +51,10 @@ jobs:
           sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
           sudo wget -qO /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
           sudo apt-get update -qq
-          apt-cache policy wine-devel wine-devel-amd64 wine-devel-i386 > evidence/winehq-policy.txt
-          sudo apt-get install -y --no-install-recommends wine-devel wine-devel-amd64 wine-devel-i386
+          apt-cache policy winehq-devel wine-devel wine-devel-amd64 wine-devel-i386 > evidence/winehq-policy.txt
+          sudo apt-get install -y --install-recommends winehq-devel
           {
+            dpkg -L winehq-devel
             dpkg -L wine-devel
             dpkg -L wine-devel-amd64
             dpkg -L wine-devel-i386
@@ -106,6 +107,33 @@ jobs:
         continue-on-error: true
         run: |
           set +e
+
+          wine_bin=$(cat evidence/wine-bin.txt)
+          export PATH="$(dirname "$wine_bin"):$PATH"
+          export WINEARCH=win64
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
+          export WINEDEBUG=-all
+          rm -rf "$WINEPREFIX"
+
+          preflight='not-run'
+          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot-preflight.txt 2>&1
+          wineboot_rc=$?
+          if [ "$wineboot_rc" -eq 0 ]; then
+            timeout 20s "$wine_bin" cmd /c exit > evidence/wine-cmd-preflight.txt 2>&1
+            winecmd_rc=$?
+          else
+            winecmd_rc=125
+          fi
+          timeout 10s "$(dirname "$wine_bin")/wineserver" -w > evidence/wineserver-preflight.txt 2>&1
+          wineserver_rc=$?
+
+          printf 'wineboot_rc=%d\nwinecmd_rc=%d\nwineserver_rc=%d\n' "$wineboot_rc" "$winecmd_rc" "$wineserver_rc" > evidence/wine-preflight-status.txt
+          if [ "$wineboot_rc" -ne 0 ] || [ "$winecmd_rc" -ne 0 ]; then
+            printf '{"classification":"wine11-prefix-preflight-failed","wineboot_exit_code":%d,"winecmd_exit_code":%d,"wineserver_exit_code":%d}\n'               "$wineboot_rc" "$winecmd_rc" "$wineserver_rc" > evidence/e2e-result.json
+            cat evidence/e2e-result.json
+            exit 1
+          fi
+
           cat > evidence/xorg.conf <<'EOF'
           Section "ServerFlags"
               Option "AutoAddDevices" "true"
@@ -202,20 +230,6 @@ jobs:
           printf 'keyboard_xid=%s\nmouse_xid=%s\n' "$keyboard_xid" "$mouse_xid" > evidence/xinput-devices.txt
           if [ -z "$keyboard_xid" ] || [ -z "$mouse_xid" ]; then
             echo '{"classification":"xorg-did-not-consume-uinput-devices"}' > evidence/e2e-result.json
-            exit 1
-          fi
-
-          wine_bin=$(cat evidence/wine-bin.txt)
-          export PATH="$(dirname "$wine_bin"):$PATH"
-          export WINEARCH=win64
-          export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
-          export WINEDEBUG=-all
-          rm -rf "$WINEPREFIX"
-          "$wine_bin" cmd /c exit > evidence/wine-prefix-init.txt 2>&1
-          prefix_rc=$?
-          command -v wineserver >/dev/null 2>&1 && wineserver -w 2>/dev/null || true
-          if [ "$prefix_rc" -ne 0 ]; then
-            echo '{"classification":"wine-prefix-init-failed"}' > evidence/e2e-result.json
             exit 1
           fi
 
