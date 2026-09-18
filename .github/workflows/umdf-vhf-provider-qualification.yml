@@ -81,6 +81,19 @@ jobs:
           $wdfHeader = $wdfHeaders | Select-Object -Last 1
           if (-not $wdfHeader) { throw 'Pinned WDK restored but UMDF wdf.h was not found' }
           $wdfHeader.FullName | Set-Content evidence/wdf-header-selected.txt -Encoding utf8
+          $wdfVersion = $wdfHeader.Directory.Name
+
+          $wdfStubs = @(Get-ChildItem wds/packages -Recurse -File -Filter WdfDriverStubUm.lib -ErrorAction SilentlyContinue)
+          $wdfStubs |
+            Select-Object FullName,Length |
+            ConvertTo-Json -Depth 4 |
+            Set-Content evidence/wdf-stub-inventory.json -Encoding utf8
+          $versionPattern = [regex]::Escape($wdfVersion)
+          $wdfStub = $wdfStubs |
+            Where-Object { $_.FullName -match "[\\/]umdf[\\/]x64[\\/]$versionPattern[\\/]" } |
+            Select-Object -First 1
+          if (-not $wdfStub) { throw "Version-matched WdfDriverStubUm.lib not found for UMDF $wdfVersion" }
+          $wdfStub.FullName | Set-Content evidence/wdf-stub-selected.txt -Encoding utf8
 
           $props = @(
             '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">'
@@ -89,7 +102,7 @@ jobs:
             "      <AdditionalIncludeDirectories>$($wdfHeader.Directory.FullName);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>"
             '    </ClCompile>'
             '    <Link>'
-            "      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>"
+            "      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);$($wdfStub.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>"
             '    </Link>'
             '  </ItemDefinitionGroup>'
             '</Project>'
