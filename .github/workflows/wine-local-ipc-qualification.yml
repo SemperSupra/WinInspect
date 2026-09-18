@@ -53,9 +53,16 @@ jobs:
           apt-cache policy wine-devel-amd64 > evidence/winehq-policy.txt
           sudo apt-get install -y --no-install-recommends wine-devel-amd64
 
-          wine_bin=$(find /opt/wine-devel/bin -maxdepth 1 -type f \( -name wine -o -name wine64 \) -print 2>/dev/null | sort | head -1)
+          wine_bin=''
+          for candidate in /opt/wine-devel/bin/wine /opt/wine-devel/bin/wine64; do
+            if [ -x "$candidate" ]; then
+              wine_bin="$candidate"
+              break
+            fi
+          done
           if [ -z "$wine_bin" ]; then
-            echo 'WineHQ development binary not found' >&2
+            echo 'WineHQ development binary not found or not executable' >&2
+            ls -la /opt/wine-devel/bin > evidence/winehq-bin-list.txt 2>&1 || true
             exit 2
           fi
           version=$("$wine_bin" --version)
