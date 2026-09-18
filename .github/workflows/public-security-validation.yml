@@ -80,7 +80,7 @@ jobs:
             ls -l /dev/uinput || true
           } > evidence/environment.txt
 
-          missing=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils wine64)
+          missing=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox wine64)
           if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
             missing+=(g++-mingw-w64-x86-64-posix)
           fi
@@ -170,10 +170,12 @@ jobs:
 
           sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf" -logfile "$PWD/evidence/Xorg.log" > evidence/xorg-stdout.txt 2>&1 &
           xorg_pid=$!
+          openbox_pid=''
           wine_pid=''
           cleanup() {
             if [ -n "${wine_pid:-}" ] && [ "$wine_pid" -gt 1 ] 2>/dev/null; then kill "$wine_pid" 2>/dev/null || true; fi
             wineserver -k 2>/dev/null || true
+            if [ -n "${openbox_pid:-}" ] && [ "$openbox_pid" -gt 1 ] 2>/dev/null; then kill "$openbox_pid" 2>/dev/null || true; fi
             if [ -n "${xorg_pid:-}" ] && [ "$xorg_pid" -gt 1 ] 2>/dev/null; then sudo kill "$xorg_pid" 2>/dev/null || true; fi
           }
           trap cleanup EXIT
@@ -182,6 +184,19 @@ jobs:
           for _ in $(seq 1 20); do DISPLAY=:99 xset q >/dev/null 2>&1 && { x_ready=true; break; }; sleep 0.5; done
           if [ "$x_ready" != true ]; then
             echo '{"classification":"xorg-start-failed"}' > evidence/wine-result.json
+            exit 1
+          fi
+
+          DISPLAY=:99 openbox --sm-disable > evidence/openbox.log 2>&1 &
+          openbox_pid=$!
+          wm_ready=false
+          for _ in $(seq 1 20); do
+            active=$(DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true)
+            [ -n "$active" ] && [ "$active" != '_NET_SUPPORTING_WM_CHECK:  no such atom on any window.' ] && { wm_ready=true; break; }
+            sleep 0.25
+          done
+          if [ "$wm_ready" != true ]; then
+            echo '{"classification":"openbox-start-failed"}' > evidence/wine-result.json
             exit 1
           fi
 
@@ -240,7 +255,16 @@ jobs:
 
           "$wine_bin" "$PWD/evidence/sendinput_control.exe" --focus-only > evidence/focus-control.txt 2>&1
           focus_rc=$?
-          sleep 0.25
+          sleep 0.5
+          xprop -root _NET_ACTIVE_WINDOW > evidence/active-window.txt 2>&1 || true
+          active_window=$(awk '{print $5}' evidence/active-window.txt 2>/dev/null)
+          host_focus_ok=0
+          if [ -n "${active_window:-}" ] && [ "$active_window" != "0x0" ]; then
+            xprop -id "$active_window" WM_NAME _NET_WM_NAME > evidence/active-window-properties.txt 2>&1 || true
+            grep -q 'WinInspect Input Probe' evidence/active-window-properties.txt && host_focus_ok=1
+          else
+            : > evidence/active-window-properties.txt
+          fi
           before_uinput=$(wc -l < evidence/probe.jsonl)
           timeout 5s xinput test-xi2 --root > evidence/xinput2-uinput.txt 2>&1 &
           xi2_pid=$!
@@ -260,10 +284,12 @@ jobs:
           xi2_raw_key_events=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-uinput.txt || true)
           xi2_source_ids=$(awk '/device:/ {gsub(/[()]/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' evidence/xinput2-uinput.txt | sort -un | paste -sd, - || true)
 
-          if [ "$idle_events" -eq 0 ] && [ "$send_rc" -eq 0 ] && [ "$send_events" -gt 0 ] && [ "$focus_rc" -eq 0 ] && [ "$uinput_rc" -eq 0 ] && [ "$uinput_events" -gt 0 ]; then
+          if [ "$idle_events" -eq 0 ] && [ "$send_rc" -eq 0 ] && [ "$send_events" -gt 0 ] && [ "$focus_rc" -eq 0 ] && [ "$host_focus_ok" -eq 1 ] && [ "$uinput_rc" -eq 0 ] && [ "$uinput_events" -gt 0 ]; then
             classification='wine-received-uinput-keyboard-event-with-paired-controls'
+          elif [ "$focus_rc" -eq 0 ] && [ "$host_focus_ok" -ne 1 ]; then
+            classification='host-x-focus-control-invalid'
           elif [ "$uinput_rc" -eq 0 ] && [ "$xi2_raw_key_events" -gt 0 ] && [ "$uinput_events" -eq 0 ]; then
-            classification='xinput2-observed-uinput-but-wine-did-not'
+            classification='xinput2-observed-uinput-with-wine-window-active-but-wine-did-not'
           elif [ "$uinput_rc" -eq 0 ] && [ "$xi2_raw_key_events" -eq 0 ] && [ "$uinput_events" -eq 0 ]; then
             classification='uinput-attached-but-xinput2-event-not-observed'
           elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
@@ -274,8 +300,8 @@ jobs:
             classification='wine-uinput-phase-inconclusive'
           fi
 
-          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_names":"%s","xinput2_raw_key_events":%d,"xinput2_source_ids":"%s"}\n' \
-            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_names" "$xi2_raw_key_events" "$xi2_source_ids" > evidence/wine-result.json
+          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_names":"%s","xinput2_raw_key_events":%d,"xinput2_source_ids":"%s"}\n' \
+            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_names" "$xi2_raw_key_events" "$xi2_source_ids" > evidence/wine-result.json
           cat evidence/wine-result.json
           [ "$classification" = 'wine-received-uinput-keyboard-event-with-paired-controls' ]
 
@@ -316,6 +342,9 @@ jobs:
             evidence/xorg.conf
             evidence/Xorg.log
             evidence/xorg-stdout.txt
+            evidence/openbox.log
+            evidence/active-window.txt
+            evidence/active-window-properties.txt
             evidence/wine-prefix-init.txt
             evidence/probe.jsonl
             evidence/probe.stderr
