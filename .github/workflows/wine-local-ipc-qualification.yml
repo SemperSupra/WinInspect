@@ -1,4 +1,4 @@
-name: Phase 1 Wine end-to-end report qualification
+name: Phase 1 Wine 11 mouse Raw Input A/B
 
 on:
   pull_request:
@@ -14,12 +14,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: wine-report-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: wine11-mouse-ab-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   wine-report-e2e:
-    name: uinput to Xorg to Wine Raw Input and app outcome
+    name: Wine 11.17 mouse Raw Input A/B
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
@@ -36,7 +36,7 @@ jobs:
           sudo modprobe uinput
           test -c /dev/uinput
 
-          packages=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox wine64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64-posix)
+          packages=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64-posix)
           install=()
           for pkg in "${packages[@]}"; do
             dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || install+=("$pkg")
@@ -46,17 +46,33 @@ jobs:
             sudo apt-get install -y --no-install-recommends "${install[@]}"
           fi
 
-          wine_bin=$(command -v wine64 || command -v wine || find /usr/lib/wine -maxdepth 1 -type f -name wine64 -print -quit)
-          if [ -z "$wine_bin" ]; then exit 2; fi
+          sudo install -d -m 0755 /etc/apt/keyrings
+          sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -qO /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+          sudo apt-get update -qq
+          apt-cache policy wine-devel-amd64 > evidence/winehq-policy.txt
+          sudo apt-get install -y --no-install-recommends wine-devel-amd64
+
+          wine_bin=$(find /opt/wine-devel/bin -maxdepth 1 -type f \( -name wine -o -name wine64 \) -print 2>/dev/null | sort | head -1)
+          if [ -z "$wine_bin" ]; then
+            echo 'WineHQ development binary not found' >&2
+            exit 2
+          fi
+          version=$("$wine_bin" --version)
           echo "$wine_bin" > evidence/wine-bin.txt
           {
-            echo "experiment=wininspect-382-wine-report-e2e"
+            echo "experiment=wininspect-382-wine11-mouse-ab"
             echo "kernel=$(uname -r)"
             echo "uid=$(id -u)"
             echo "gid=$(id -g)"
-            "$wine_bin" --version
+            echo "wine_bin=$wine_bin"
+            echo "wine_version=$version"
             x86_64-w64-mingw32-g++ --version | head -1
           } > evidence/environment.txt
+          printf '%s\n' "$version" | grep -Eq '^wine-11\.(1[4-9]|[2-9][0-9])' || {
+            echo "Expected Wine 11.14+ for raw-mouse A/B, got $version" >&2
+            exit 3
+          }
 
       - name: Build provider, corpus client, and established Wine controls
         shell: bash
@@ -177,6 +193,7 @@ jobs:
           fi
 
           wine_bin=$(cat evidence/wine-bin.txt)
+          export PATH="$(dirname "$wine_bin"):$PATH"
           export WINEARCH=win64
           export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
           export WINEDEBUG=-all
@@ -269,24 +286,24 @@ jobs:
           elif [ "$xi2_keys" -lt 4 ] || [ "$xi2_mouse" -lt 2 ]; then
             classification='xorg-did-not-observe-report-treatment'
           elif [ "$raw_keyboard" -lt 4 ] || [ "$raw_mouse" -lt 1 ]; then
-            classification='wine-rawinput-did-not-observe-report-treatment'
+            classification='wine11-rawinput-did-not-observe-report-treatment'
           elif [ "$key_messages" -lt 2 ] || [ "$edit_changes" -lt 1 ]; then
             classification='wine-app-semantics-incomplete'
           elif [ "$disconnect_release" != '1' ]; then
             classification='disconnect-release-not-recorded'
           else
-            classification='wine-report-e2e-pass'
+            classification='wine11-mouse-rawinput-pass'
           fi
 
           printf '{"classification":"%s","idle_events":%d,"sendinput_exit_code":%d,"sendinput_events":%d,"focus_exit_code":%d,"host_focus_ok":%d,"report_client_exit_code":%d,"provider_exit_code":%d,"accepted":"%s","rejected":"%s","disconnect_release":"%s","xinput2_key_events":%d,"xinput2_mouse_events":%d,"wine_raw_keyboard":%d,"wine_raw_mouse":%d,"wine_key_messages":%d,"wine_edit_changes":%d,"wine_raw_device_handle_count":%d}\n'             "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok"             "$client_rc" "$provider_rc" "$accepted" "$rejected" "$disconnect_release"             "$xi2_keys" "$xi2_mouse" "$raw_keyboard" "$raw_mouse" "$key_messages" "$edit_changes" "$raw_handle_count"             > evidence/e2e-result.json
           cat evidence/e2e-result.json
-          [ "$classification" = 'wine-report-e2e-pass' ]
+          [ "$classification" = 'wine11-mouse-rawinput-pass' ]
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: phase1-wine-report-e2e
+          name: phase1-wine11-mouse-ab
           path: evidence/
           if-no-files-found: error
           retention-days: 14
