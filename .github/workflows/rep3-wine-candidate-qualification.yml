@@ -1,0 +1,183 @@
+name: Rep3 repaired candidate Wine qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rep3-wine-candidate-qualification.yml'
+      - 'source/**'
+      - '.projection/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wine-container:
+    name: Wine container bounded-TCP replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Revalidate sanitized projection
+        shell: pwsh
+        run: |
+          ./scripts/Test-PublicDeployPlane.ps1
+          ./scripts/Test-ProjectedSourcePathSafety.ps1
+          ./scripts/Test-ProjectedSource.ps1
+
+      - name: Install MinGW cross-compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake
+
+      - name: Cross-compile projected source
+        run: |
+          cmake -S source -B build-mingw \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DWININSPECT_BUILD_TESTS=OFF \
+            -DWININSPECT_USE_OPENSSL=OFF \
+            -DCMAKE_SYSTEM_NAME=Windows
+          cmake --build build-mingw -j2
+          test -f build-mingw/wininspectd.exe
+          test -f build-mingw/wininspect.exe
+          test -f build-mingw/wininspect-gui.exe
+
+      - name: Build projected Wine image
+        run: |
+          mkdir -p source/dist/wine-bin
+          cp build-mingw/wininspectd.exe build-mingw/wininspect.exe build-mingw/wininspect-gui.exe source/dist/wine-bin/
+          docker build -t wininspect-rep3-wine \
+            -f source/winebot/Dockerfile \
+            --build-arg BINARY_DIR=dist/wine-bin \
+            source
+
+      - name: Start explicit container exception with host-loopback publication
+        run: |
+          docker run -d --name wininspect-rep3-wine \
+            -p 127.0.0.1:1985:1985 \
+            wininspect-rep3-wine \
+            xvfb-run -a wine wininspectd.exe \
+              --headless \
+              --no-config \
+              --bind 0.0.0.0 \
+              --allow-unauthenticated-nonloopback \
+              --no-discovery \
+              --no-mdns
+
+          for i in $(seq 1 30); do
+            if python3 - <<'PY'
+          import socket
+          try:
+              with socket.create_connection(("127.0.0.1", 1985), timeout=1):
+                  raise SystemExit(0)
+          except OSError:
+              raise SystemExit(1)
+          PY
+            then
+              break
+            fi
+            sleep 1
+          done
+
+          python3 - <<'PY'
+          import socket
+          with socket.create_connection(("127.0.0.1", 1985), timeout=5):
+              pass
+          print("Wine TCP listener reachable through host loopback")
+          PY
+
+      - name: Prove host publication remains loopback-only
+        run: |
+          docker port wininspect-rep3-wine 1985/tcp | tee rep3-wine-port.txt
+          grep -Fx '127.0.0.1:1985' rep3-wine-port.txt
+
+          ss -ltn | tee rep3-wine-listeners.txt
+          grep -Eq '127\.0\.0\.1:1985[[:space:]]' rep3-wine-listeners.txt
+          if grep -Eq '(^|[[:space:]])0\.0\.0\.0:1985[[:space:]]|\[::\]:1985[[:space:]]' rep3-wine-listeners.txt; then
+            echo 'Port 1985 is exposed beyond host loopback.'
+            exit 1
+          fi
+
+      - name: Exercise framed TCP under Wine
+        run: |
+          python3 - <<'PY'
+          import json
+          import socket
+          import struct
+
+          def recv_exact(sock, n):
+              data = bytearray()
+              while len(data) < n:
+                  chunk = sock.recv(n - len(data))
+                  if not chunk:
+                      raise RuntimeError("connection closed while reading frame")
+                  data.extend(chunk)
+              return bytes(data)
+
+          def recv_frame(sock):
+              raw = struct.unpack("!I", recv_exact(sock, 4))[0]
+              length = raw & 0x7fffffff
+              return json.loads(recv_exact(sock, length).decode("utf-8"))
+
+          with socket.create_connection(("127.0.0.1", 1985), timeout=10) as sock:
+              hello = recv_frame(sock)
+              if hello.get("type") != "hello":
+                  raise RuntimeError(f"unexpected hello: {hello}")
+              req = {"id": "wine-capabilities", "method": "daemon.capabilities", "params": {}}
+              payload = json.dumps(req, separators=(",", ":")).encode("utf-8")
+              sock.sendall(struct.pack("!I", len(payload)) + payload)
+              resp = recv_frame(sock)
+              if not resp.get("ok"):
+                  raise RuntimeError(f"daemon.capabilities failed: {resp}")
+              result = resp.get("result", {})
+              if result.get("is_wine") is not True:
+                  raise RuntimeError(f"candidate did not identify Wine substrate: {result}")
+              with open("rep3-wine-evidence.json", "w", encoding="utf-8") as fh:
+                  json.dump({
+                      "evidence_class": "hosted-wine-container",
+                      "host_publication": "127.0.0.1:1985",
+                      "container_bind": "0.0.0.0:1985",
+                      "operator_exception": "--allow-unauthenticated-nonloopback",
+                      "capabilities": result,
+                      "native_interactive_acceptance": "not_claimed",
+                  }, fh, indent=2, sort_keys=True)
+              print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          docker logs wininspect-rep3-wine > rep3-wine-daemon.log 2>&1 || true
+          docker ps -a > rep3-wine-docker-ps.txt || true
+
+      - name: Upload Wine replay evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wininspect-rep3-wine-${{ github.sha }}
+          path: |
+            rep3-wine-evidence.json
+            rep3-wine-port.txt
+            rep3-wine-listeners.txt
+            rep3-wine-daemon.log
+            rep3-wine-docker-ps.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f wininspect-rep3-wine 2>/dev/null || true
+          docker rmi wininspect-rep3-wine 2>/dev/null || true
+
+      - name: Record evidence boundary
+        if: success()
+        run: |
+          echo 'Wine replay proved the explicit in-container non-loopback exception remains bounded by host-loopback publication and framed TCP remains callable.'
+          echo 'This is hosted Wine-container evidence only, not native WinBot interactive acceptance.'
