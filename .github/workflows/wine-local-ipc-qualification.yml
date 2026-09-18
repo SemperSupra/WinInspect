@@ -61,9 +61,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 experiments/wine-local-ipc/generate_full_conformance_client.py             experiments/wine-local-ipc/full-conformance.json             evidence/win32-full-conformance-client.c             evidence/generated-summary.json
+          python3 -m py_compile experiments/wine-local-ipc/generate_full_conformance_client.py experiments/wine-local-ipc/verify_full_conformance.py
 
-          python3 -m py_compile experiments/wine-local-ipc/verify_full_conformance.py
+          python3 experiments/wine-local-ipc/generate_full_conformance_client.py experiments/wine-local-ipc/full-conformance.json evidence/win32-full-conformance-client.c evidence/generated-summary.json
 
           gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-local-ipc/drop_priv_report_server.c             -o evidence/drop-priv-report-server
 
