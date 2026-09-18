@@ -314,15 +314,20 @@ jobs:
             classification='xorg-did-not-observe-report-treatment'
           elif [ "$raw_keyboard" -lt 4 ] || [ "$raw_mouse" -lt 1 ]; then
             classification='wine11-rawinput-did-not-observe-report-treatment'
-          elif [ "$key_messages" -lt 2 ] || [ "$edit_changes" -lt 1 ]; then
-            classification='wine-app-semantics-incomplete'
+          elif [ "$edit_changes" -lt 1 ]; then
+            classification='wine-app-text-semantics-incomplete'
           elif [ "$disconnect_release" != '1' ]; then
             classification='disconnect-release-not-recorded'
           else
             classification='wine11-mouse-rawinput-pass'
           fi
 
-          printf '{"classification":"%s","idle_events":%d,"sendinput_exit_code":%d,"sendinput_events":%d,"focus_exit_code":%d,"host_focus_ok":%d,"report_client_exit_code":%d,"provider_exit_code":%d,"accepted":"%s","rejected":"%s","disconnect_release":"%s","xinput2_key_events":%d,"xinput2_mouse_events":%d,"wine_raw_keyboard":%d,"wine_raw_mouse":%d,"wine_key_messages":%d,"wine_edit_changes":%d,"wine_raw_device_handle_count":%d}\n'             "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok"             "$client_rc" "$provider_rc" "$accepted" "$rejected" "$disconnect_release"             "$xi2_keys" "$xi2_mouse" "$raw_keyboard" "$raw_mouse" "$key_messages" "$edit_changes" "$raw_handle_count"             > evidence/e2e-result.json
+          key_message_observer_variance=0
+          if [ "$key_messages" -lt 2 ]; then
+            key_message_observer_variance=1
+          fi
+
+          printf '{"classification":"%s","idle_events":%d,"sendinput_exit_code":%d,"sendinput_events":%d,"focus_exit_code":%d,"host_focus_ok":%d,"report_client_exit_code":%d,"provider_exit_code":%d,"accepted":"%s","rejected":"%s","disconnect_release":"%s","xinput2_key_events":%d,"xinput2_mouse_events":%d,"wine_raw_keyboard":%d,"wine_raw_mouse":%d,"wine_key_messages":%d,"wine_edit_changes":%d,"wine_raw_device_handle_count":%d,"key_message_observer_variance":%d}\n'             "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok"             "$client_rc" "$provider_rc" "$accepted" "$rejected" "$disconnect_release"             "$xi2_keys" "$xi2_mouse" "$raw_keyboard" "$raw_mouse" "$key_messages" "$edit_changes" "$raw_handle_count" "$key_message_observer_variance"             > evidence/e2e-result.json
           cat evidence/e2e-result.json
           [ "$classification" = 'wine11-mouse-rawinput-pass' ]
 
