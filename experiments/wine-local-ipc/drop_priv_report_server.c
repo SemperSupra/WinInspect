@@ -28,13 +28,45 @@ static int emit_event(int fd, unsigned short type, unsigned short code, int valu
 }
 static int sync_device(int fd) { return emit_event(fd, EV_SYN, SYN_REPORT, 0); }
 
-static int usage_to_code(unsigned int usage) {
-    switch (usage) {
+static int usage_to_code(unsigned int u) {
+    switch (u) {
         case 0x04: return KEY_A; case 0x05: return KEY_B; case 0x06: return KEY_C;
         case 0x07: return KEY_D; case 0x08: return KEY_E; case 0x09: return KEY_F;
+        case 0x0a: return KEY_G; case 0x0b: return KEY_H; case 0x0c: return KEY_I;
+        case 0x0d: return KEY_J; case 0x0e: return KEY_K; case 0x0f: return KEY_L;
+        case 0x10: return KEY_M; case 0x11: return KEY_N; case 0x12: return KEY_O;
+        case 0x13: return KEY_P; case 0x14: return KEY_Q; case 0x15: return KEY_R;
+        case 0x16: return KEY_S; case 0x17: return KEY_T; case 0x18: return KEY_U;
+        case 0x19: return KEY_V; case 0x1a: return KEY_W; case 0x1b: return KEY_X;
+        case 0x1c: return KEY_Y; case 0x1d: return KEY_Z;
+        case 0x1e: return KEY_1; case 0x1f: return KEY_2; case 0x20: return KEY_3;
+        case 0x21: return KEY_4; case 0x22: return KEY_5; case 0x23: return KEY_6;
+        case 0x24: return KEY_7; case 0x25: return KEY_8; case 0x26: return KEY_9;
+        case 0x27: return KEY_0; case 0x28: return KEY_ENTER; case 0x29: return KEY_ESC;
+        case 0x2a: return KEY_BACKSPACE; case 0x2b: return KEY_TAB; case 0x2c: return KEY_SPACE;
+        case 0x2d: return KEY_MINUS; case 0x2e: return KEY_EQUAL; case 0x2f: return KEY_LEFTBRACE;
+        case 0x30: return KEY_RIGHTBRACE; case 0x31: return KEY_BACKSLASH;
+        case 0x33: return KEY_SEMICOLON; case 0x34: return KEY_APOSTROPHE;
+        case 0x35: return KEY_GRAVE; case 0x36: return KEY_COMMA; case 0x37: return KEY_DOT;
+        case 0x38: return KEY_SLASH; case 0x39: return KEY_CAPSLOCK;
+        case 0x3a: return KEY_F1; case 0x3b: return KEY_F2; case 0x3c: return KEY_F3;
+        case 0x3d: return KEY_F4; case 0x3e: return KEY_F5; case 0x3f: return KEY_F6;
+        case 0x40: return KEY_F7; case 0x41: return KEY_F8; case 0x42: return KEY_F9;
+        case 0x43: return KEY_F10; case 0x44: return KEY_F11; case 0x45: return KEY_F12;
+        case 0x46: return KEY_SYSRQ; case 0x47: return KEY_SCROLLLOCK; case 0x48: return KEY_PAUSE;
+        case 0x49: return KEY_INSERT; case 0x4a: return KEY_HOME; case 0x4b: return KEY_PAGEUP;
+        case 0x4c: return KEY_DELETE; case 0x4d: return KEY_END; case 0x4e: return KEY_PAGEDOWN;
+        case 0x4f: return KEY_RIGHT; case 0x50: return KEY_LEFT; case 0x51: return KEY_DOWN;
+        case 0x52: return KEY_UP;
+        case 0x64: return KEY_102ND;
+        case 0x68: return KEY_F13; case 0x69: return KEY_F14; case 0x6a: return KEY_F15;
+        case 0x6b: return KEY_F16; case 0x6c: return KEY_F17; case 0x6d: return KEY_F18;
+        case 0x6e: return KEY_F19; case 0x6f: return KEY_F20; case 0x70: return KEY_F21;
+        case 0x71: return KEY_F22; case 0x72: return KEY_F23; case 0x73: return KEY_F24;
         default: return -1;
     }
 }
+
 
 static const int modifier_codes[8] = {
     KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_LEFTALT, KEY_LEFTMETA,
@@ -103,9 +135,9 @@ static int create_keyboard(void) {
     if (fd < 0) return -1;
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 || ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0) goto fail;
     for (int bit = 0; bit < 8; ++bit) if (ioctl(fd, UI_SET_KEYBIT, modifier_codes[bit]) < 0) goto fail;
-    for (unsigned int usage = 0x04; usage <= 0x09; ++usage) {
+    for (unsigned int usage = 1; usage <= 0x73; ++usage) {
         int code = usage_to_code(usage);
-        if (code < 0 || ioctl(fd, UI_SET_KEYBIT, code) < 0) goto fail;
+        if (code >= 0 && ioctl(fd, UI_SET_KEYBIT, code) < 0) goto fail;
     }
     struct uinput_setup setup;
     memset(&setup, 0, sizeof(setup));
@@ -248,5 +280,5 @@ int main(int argc, char **argv) {
            accepted,rejected,client_result,keyboard_destroy,mouse_destroy,
            (unsigned long)geteuid(),(unsigned long)getegid());
     fflush(stdout);
-    return (client_result==0 && rejected==2 && keyboard_destroy==0 && mouse_destroy==0) ? 0 : 14;
+    return (client_result==0 && rejected==4 && keyboard_destroy==0 && mouse_destroy==0) ? 0 : 14;
 }
