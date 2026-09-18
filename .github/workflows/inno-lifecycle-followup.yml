@@ -1,0 +1,157 @@
+name: Inno lifecycle follow-up
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/inno-lifecycle-followup.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  windows-lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+            pe_machine: 34404
+          - runner: windows-11-arm
+            arch: arm64
+            pe_machine: 43620
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - name: Download exact first-rep installer artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: inno-universal-installers
+          path: dist
+          repository: SemperSupra/WinInspect
+          run-id: '35191437009'
+          github-token: ${{ github.token }}
+
+      - name: Qualify transitions and failure recovery
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinInspect_is1'
+          $expected = Get-Content dist/expected-hashes.json -Raw | ConvertFrom-Json -AsHashtable
+          $arch = '${{ matrix.arch }}'
+          $names = @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')
+
+          function Installer([string]$v) { return (Resolve-Path "dist/WinInspect-Inno-$v.exe").Path }
+          function Install([string]$v) {
+            $p = Start-Process (Installer $v) -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS' -PassThru -Wait
+            if ($p.ExitCode -ne 0) { throw "Install $v failed: $($p.ExitCode)" }
+          }
+          function Version { return (Get-ItemProperty -LiteralPath $reg -Name DisplayVersion -ErrorAction Stop).DisplayVersion }
+          function Assert-Hashes([string]$v) {
+            foreach ($name in $names) {
+              $actual = (Get-FileHash (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+              $want = [string]$expected['architectures'][$arch][$v][$name]
+              if ($actual -ne $want) { throw "$name hash mismatch for $arch/$v actual=$actual want=$want" }
+            }
+          }
+          function Machine([string]$path) {
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $pe = [BitConverter]::ToInt32($bytes,0x3c)
+            return [BitConverter]::ToUInt16($bytes,$pe+4)
+          }
+
+          # clean install + native payload + executable smoke
+          Install 'hosted-a'
+          if ((Version) -ne 'hosted-a') { throw 'A registration mismatch.' }
+          Assert-Hashes 'a'
+          if ((Machine (Join-Path $root 'wininspect.exe')) -ne ${{ matrix.pe_machine }}) { throw 'Installed native PE architecture mismatch.' }
+          & (Join-Path $root 'wininspect.exe') '--version' *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'Installed CLI launch failed.' }
+
+          # repeat install
+          Install 'hosted-a'
+          Assert-Hashes 'a'
+
+          # upgrade and exact rollback
+          Install 'hosted-b'
+          if ((Version) -ne 'hosted-b') { throw 'B registration mismatch.' }
+          Assert-Hashes 'b'
+          Install 'hosted-a'
+          if ((Version) -ne 'hosted-a') { throw 'A rollback registration mismatch.' }
+          Assert-Hashes 'a'
+
+          # exact historical falsifier shape: no-share lock on product binary.
+          $locked = [IO.File]::Open((Join-Path $root 'wininspect.exe'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+          $lockExit = $null
+          try {
+            $p = Start-Process (Installer 'hosted-b') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS' -PassThru -Wait
+            $lockExit = $p.ExitCode
+          } finally { $locked.Dispose() }
+          $lockVersion = Version
+          $lockHashesPreserved = $true
+          try { Assert-Hashes 'a' } catch { $lockHashesPreserved = $false; $lockHashError = $_.Exception.Message }
+
+          # preserve evidence before asserting so a red result remains legible.
+          $lockEvidence = [ordered]@{
+            exitCode = $lockExit
+            registeredVersion = $lockVersion
+            hashesPreserved = $lockHashesPreserved
+            hashError = $lockHashError
+          }
+          $lockEvidence | ConvertTo-Json | Set-Content "lock-$arch.json" -Encoding utf8NoBOM
+          Get-Content "lock-$arch.json"
+
+          if ($lockExit -eq 0) { throw 'Locked-binary upgrade incorrectly returned success.' }
+          if ($lockVersion -ne 'hosted-a') { throw "Locked-binary failure changed registered version to $lockVersion." }
+          if (-not $lockHashesPreserved) { throw "Locked-binary failure changed installed payload: $lockHashError" }
+
+          # corrupted package must be rejected without disturbing A.
+          Copy-Item (Installer 'hosted-b') dist/corrupt.exe -Force
+          $fs = [IO.File]::Open('dist/corrupt.exe',[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::None)
+          try { $fs.SetLength([Math]::Min(4096,$fs.Length)) } finally { $fs.Dispose() }
+          $badExit = $null; $badException = $null
+          try {
+            $bad = Start-Process (Resolve-Path dist/corrupt.exe).Path -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+            $badExit = $bad.ExitCode
+          } catch { $badException = $_.Exception.Message }
+          if (($null -eq $badException) -and $badExit -eq 0) { throw 'Corrupt installer was accepted.' }
+          if ((Version) -ne 'hosted-a') { throw 'Corrupt package changed registered version.' }
+          Assert-Hashes 'a'
+
+          # clean uninstall
+          $uninstaller = Join-Path $root 'unins000.exe'
+          $u = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+          if ($u.ExitCode -ne 0) { throw "Uninstall failed: $($u.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $reg) { throw 'Uninstall registration residue remains.' }
+          if (Test-Path $root) { throw 'Install directory residue remains.' }
+
+          [ordered]@{
+            schemaVersion=1
+            runner='${{ matrix.runner }}'
+            architecture=$arch
+            nativePE=$true
+            cleanInstall=$true
+            repeatInstall=$true
+            upgrade=$true
+            downgradeExact=$true
+            lockedBinaryExit=$lockExit
+            lockedBinaryFailClosed=$true
+            corruptPackageRejected=$true
+            uninstallClean=$true
+            scope='hosted Windows qualification only; not WinBot interactive acceptance'
+          } | ConvertTo-Json | Set-Content "evidence-$arch.json" -Encoding utf8NoBOM
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: inno-lifecycle-followup-${{ matrix.arch }}
+          path: |
+            lock-${{ matrix.arch }}.json
+            evidence-${{ matrix.arch }}.json
+          if-no-files-found: warn
+          retention-days: 7
