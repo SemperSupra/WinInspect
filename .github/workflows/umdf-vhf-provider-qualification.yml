@@ -49,6 +49,23 @@ jobs:
           git -C dmf checkout $env:DMF_SHA
           if ($LASTEXITCODE -ne 0) { throw "DMF pinned checkout failed: $LASTEXITCODE" }
 
+          # Reuse the exact WDK NuGet version already proven by the KMDF lane.
+          git clone --filter=blob:none --no-checkout https://github.com/microsoft/Windows-driver-samples.git wds
+          if ($LASTEXITCODE -ne 0) { throw "Windows-driver-samples clone failed: $LASTEXITCODE" }
+          git -C wds checkout 97429c5623590d52f001249460daf43e6749d777
+          if ($LASTEXITCODE -ne 0) { throw "Windows-driver-samples pinned checkout failed: $LASTEXITCODE" }
+          nuget restore wds/packages.config -PackagesDirectory wds/packages -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed: $LASTEXITCODE" }
+
+          $wdfHeaders = @(Get-ChildItem wds/packages -Recurse -File -Filter wdf.h -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]umdf[\\/]' } |
+            Sort-Object FullName -Descending)
+          $wdfHeaders | Select-Object FullName,Length | ConvertTo-Json -Depth 4 |
+            Set-Content evidence/wdf-header-inventory.json -Encoding utf8
+          if ($wdfHeaders.Count -lt 1) { throw 'UMDF wdf.h not found in pinned WDK NuGet packages' }
+          $wdfInclude = $wdfHeaders[0].Directory.FullName
+          Set-Content evidence/wdf-include.txt $wdfInclude
+
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -property installationPath
           if (-not $vs) { throw 'Visual Studio installation not found' }
@@ -73,6 +90,9 @@ jobs:
           # hosted image does not propagate that macro, so set the documented UMDF
           # version explicitly without adding kernel headers.
           $env:CL = '/DUMDF_VERSION_MAJOR=2'
+          $wdfInclude = Get-Content evidence/wdf-include.txt -Raw
+          $wdfInclude = $wdfInclude.Trim()
+          $env:INCLUDE = "$wdfInclude;$env:INCLUDE"
           $records = @()
 
           # Use Microsoft's own solution dependency graph for the DmfU library.
