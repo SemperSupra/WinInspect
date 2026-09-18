@@ -280,7 +280,8 @@ jobs:
           send_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-sendinput.jsonl || true)
           uinput_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-uinput.jsonl || true)
           uinput_raw=$(grep -Ec '"event":"raw_input".*"type":"keyboard"' evidence/phase-uinput.jsonl || true)
-          uinput_names=$(grep -o '"device_name":"[^"]*"' evidence/phase-uinput.jsonl | sort -u | tr '\n' ';' || true)
+          grep -o '"device_name":"[^"]*"' evidence/phase-uinput.jsonl | sort -u > evidence/uinput-device-names.txt || true
+          uinput_name_count=$(grep -c . evidence/uinput-device-names.txt || true)
           xi2_raw_key_events=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-uinput.txt || true)
           xi2_source_ids=$(awk '/device:/ {gsub(/[()]/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' evidence/xinput2-uinput.txt | sort -un | paste -sd, - || true)
 
@@ -300,8 +301,8 @@ jobs:
             classification='wine-uinput-phase-inconclusive'
           fi
 
-          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_names":"%s","xinput2_raw_key_events":%d,"xinput2_source_ids":"%s"}\n' \
-            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_names" "$xi2_raw_key_events" "$xi2_source_ids" > evidence/wine-result.json
+          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_name_count":%d,"xinput2_raw_key_events":%d,"xinput2_source_ids":"%s"}\n' \
+            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_name_count" "$xi2_raw_key_events" "$xi2_source_ids" > evidence/wine-result.json
           cat evidence/wine-result.json
           [ "$classification" = 'wine-received-uinput-keyboard-event-with-paired-controls' ]
 
@@ -356,6 +357,7 @@ jobs:
             evidence/focus-control.txt
             evidence/uinput-emitter.txt
             evidence/uinput-emitter.err
+            evidence/uinput-device-names.txt
             evidence/xinput2-uinput.txt
             evidence/wine-result.json
             evidence/summary.md
