@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     if ((unsigned long)cred.uid != allowed) {
-        (void)write(client, "ERR peer\n", 9);
+        if (write(client, "ERR peer\n", 9) < 0) perror("write peer error");
         close(client); unlink(path); close(fd); return 12;
     }
 
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     ssize_t n = read(client, buf, sizeof(buf)-1);
     if (n <= 0) { perror("read"); close(client); unlink(path); close(fd); return 13; }
     if (strcmp(buf, "PING\n") != 0) {
-        (void)write(client, "ERR command\n", 12);
+        if (write(client, "ERR command\n", 12) < 0) perror("write command error");
         close(client); unlink(path); close(fd); return 14;
     }
     if (write(client, "OK\n", 3) != 3) {
