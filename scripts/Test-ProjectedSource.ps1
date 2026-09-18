@@ -103,8 +103,16 @@ if ($entries.Count -eq 0 -or [int]$manifest.fileCount -ne $entries.Count) {
 
 $manifestPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $canonicalLines = [System.Collections.Generic.List[string]]::new()
-foreach ($entry in ($entries | Sort-Object path)) {
+$previousV2Path = $null
+$orderedEntries = if ($schemaVersion -eq 2) { @($entries) } else { @($entries | Sort-Object path) }
+foreach ($entry in $orderedEntries) {
     $path = Normalize-RelativePath -Path ([string]$entry.path)
+    if ($schemaVersion -eq 2) {
+        if ($null -ne $previousV2Path -and [StringComparer]::Ordinal.Compare([string]$previousV2Path, $path) -ge 0) {
+            throw 'Schema v2 manifest paths must be strictly ordinal-sorted.'
+        }
+        $previousV2Path = $path
+    }
     if (-not $manifestPaths.Add($path)) { throw "Duplicate projected-source manifest path: $path" }
     foreach ($forbiddenPrefix in @('.github/','.git/','.claude/','.githooks/','formal/','prompts/','private/','external/')) {
         if ($path.StartsWith($forbiddenPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -147,7 +155,11 @@ if ($actualPaths.Count -ne $manifestPaths.Count) {
     throw "Projected source file count differs from manifest: disk=$($actualPaths.Count) manifest=$($manifestPaths.Count)"
 }
 
-$canonicalText = (($canonicalLines | Sort-Object) -join "`n") + "`n"
+$canonicalText = if ($schemaVersion -eq 2) {
+    ($canonicalLines -join "`n") + "`n"
+} else {
+    (($canonicalLines | Sort-Object) -join "`n") + "`n"
+}
 $digestBytes = [Text.Encoding]::UTF8.GetBytes($canonicalText)
 $actualDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($digestBytes)).ToLowerInvariant()
 if ($actualDigest -ne ([string]$manifest.projectionDigestSha256).ToLowerInvariant()) {
