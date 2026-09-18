@@ -56,8 +56,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # E3: after three positive single-source reps, test whether two host sources remain distinct in Wine Raw Input.
   wine-uinput-w1:
-    name: Wine paired-control uinput discovery
+    name: Wine two-source uinput identity E3
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'experiment/379-wine-uinput-actions-preflight' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
