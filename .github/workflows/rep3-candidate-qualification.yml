@@ -1,0 +1,225 @@
+name: Rep3 repaired candidate hosted qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rep3-candidate-qualification.yml'
+      - 'source/**'
+      - '.projection/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-windows:
+    name: Hosted Windows TCP/UIA candidate evidence
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Revalidate sanitized projection
+        shell: pwsh
+        run: |
+          ./scripts/Test-PublicDeployPlane.ps1
+          ./scripts/Test-ProjectedSourcePathSafety.ps1
+          ./scripts/Test-ProjectedSource.ps1
+
+      - name: Build candidate
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+
+      - name: Start live UI target
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath notepad.exe -PassThru
+          if (-not $p) { throw 'Could not start Notepad target.' }
+          "TARGET_PID=$($p.Id)" >> $env:GITHUB_ENV
+          Start-Sleep -Seconds 2
+          if ($p.HasExited) { throw "Notepad target exited early: $($p.ExitCode)" }
+
+      - name: Start loopback-only WinInspect daemon
+        shell: pwsh
+        run: |
+          $daemon = Resolve-Path 'build/Release/wininspectd.exe'
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless','--bind','127.0.0.1','--no-discovery','--no-mdns','--log-file','rep3-daemon.log' -PassThru
+          "WININSPECTD_PID=$($p.Id)" >> $env:GITHUB_ENV
+          $listener = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            if ($p.HasExited) {
+              Get-Content rep3-daemon.log -ErrorAction SilentlyContinue
+              throw "wininspectd exited early: $($p.ExitCode)"
+            }
+            $listener = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($listener) { break }
+          }
+          if (-not $listener) {
+            Get-Content rep3-daemon.log -ErrorAction SilentlyContinue
+            throw 'Loopback WinInspect listener was not established.'
+          }
+          Write-Host "Loopback listener: $($listener.LocalAddress):$($listener.LocalPort)"
+
+      - name: Exercise framed TCP capability and real UIA inspection
+        shell: pwsh
+        run: |
+          @'
+          import json
+          import os
+          import socket
+          import struct
+          import time
+
+          target_pid = int(os.environ["TARGET_PID"])
+          seq = 0
+
+          def recv_exact(sock, n):
+              data = bytearray()
+              while len(data) < n:
+                  chunk = sock.recv(n - len(data))
+                  if not chunk:
+                      raise RuntimeError("connection closed while reading frame")
+                  data.extend(chunk)
+              return bytes(data)
+
+          def recv_frame(sock):
+              raw = struct.unpack("!I", recv_exact(sock, 4))[0]
+              length = raw & 0x7fffffff
+              payload = recv_exact(sock, length)
+              return json.loads(payload.decode("utf-8"))
+
+          with socket.create_connection(("127.0.0.1", 1985), timeout=10) as sock:
+              sock.settimeout(10)
+              hello = recv_frame(sock)
+              if hello.get("type") != "hello":
+                  raise RuntimeError(f"unexpected daemon hello: {hello}")
+
+              def call(method, params=None):
+                  global seq
+                  seq += 1
+                  req = {"id": f"rep3-{seq}", "method": method, "params": params or {}}
+                  payload = json.dumps(req, separators=(",", ":")).encode("utf-8")
+                  sock.sendall(struct.pack("!I", len(payload)) + payload)
+                  resp = recv_frame(sock)
+                  if not resp.get("ok"):
+                      raise RuntimeError(f"{method} failed: {resp}")
+                  return resp.get("result")
+
+              capabilities = call("daemon.capabilities")
+              features = capabilities.get("features", {})
+              if features.get("uia") is not True:
+                  raise RuntimeError(f"candidate still reports UIA unavailable: {capabilities}")
+
+              target_hwnd = None
+              target_info = None
+              for _ in range(20):
+                  for item in call("window.listTop"):
+                      hwnd = item.get("hwnd")
+                      if not hwnd:
+                          continue
+                      info = call("window.getInfo", {"hwnd": hwnd})
+                      if int(info.get("pid", 0)) == target_pid:
+                          target_hwnd = hwnd
+                          target_info = info
+                          break
+                  if target_hwnd:
+                      break
+                  time.sleep(0.5)
+
+              if not target_hwnd:
+                  raise RuntimeError(f"could not resolve live target HWND for pid={target_pid}")
+
+              elements = call("ui.inspect", {"hwnd": target_hwnd})
+              if not isinstance(elements, list) or not elements:
+                  raise RuntimeError(f"ui.inspect returned no live UIA elements for {target_hwnd}: {elements}")
+
+              evidence = {
+                  "evidence_class": "hosted-windows",
+                  "daemon_hello": {
+                      "version": hello.get("version"),
+                      "uuid": hello.get("uuid"),
+                      "name": hello.get("name"),
+                  },
+                  "capabilities": capabilities,
+                  "target": {
+                      "pid": target_pid,
+                      "hwnd": target_hwnd,
+                      "title": target_info.get("title"),
+                      "class_name": target_info.get("class_name"),
+                  },
+                  "uia_element_count_top_level": len(elements),
+                  "uia_first_element": elements[0],
+                  "semantic_inspect": "pass",
+                  "native_interactive_acceptance": "not_claimed",
+              }
+              with open("rep3-hosted-evidence.json", "w", encoding="utf-8") as fh:
+                  json.dump(evidence, fh, indent=2, sort_keys=True)
+              print(json.dumps(evidence, indent=2, sort_keys=True))
+          '@ | Set-Content -LiteralPath rep3_probe.py -Encoding utf8NoBOM
+
+          python rep3_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted framed-TCP/UIA probe failed.' }
+
+      - name: Bind exact candidate artifact identities
+        if: always()
+        shell: pwsh
+        run: |
+          $subjects = @(
+            'build/Release/wininspectd.exe',
+            'build/Release/wininspect.exe',
+            'build/Release/wininspect-gui.exe'
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+
+          $records = foreach ($path in $subjects) {
+            $item = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            [ordered]@{
+              path = $path
+              bytes = [int64]$item.Length
+              sha256 = $hash
+            }
+          }
+          [ordered]@{
+            public_candidate_commit = $env:GITHUB_SHA
+            projection_receipt = '.projection/source-manifest.json'
+            subjects = @($records)
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath rep3-candidate-artifacts.json -Encoding utf8NoBOM
+
+      - name: Upload exact hosted candidate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wininspect-rep3-candidate-${{ github.sha }}
+          path: |
+            build/Release/wininspectd.exe
+            build/Release/wininspect.exe
+            build/Release/wininspect-gui.exe
+            .projection/source-manifest.json
+            rep3-candidate-artifacts.json
+            rep3-hosted-evidence.json
+            rep3-daemon.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:TARGET_PID) { Stop-Process -Id $env:TARGET_PID -Force -ErrorAction SilentlyContinue }
+          if ($env:WININSPECTD_PID) { Stop-Process -Id $env:WININSPECTD_PID -Force -ErrorAction SilentlyContinue }
+
+      - name: Record evidence boundary
+        if: success()
+        shell: pwsh
+        run: |
+          Write-Host 'Hosted Windows proved the exact sanitized candidate builds, reports UIA callable over framed loopback TCP, and ui.inspect returns live target semantics.'
+          Write-Host 'This is hosted-windows evidence only. It does not claim WinBot Hyper-V native-interactive acceptance or authorize a public release.'
