@@ -5,6 +5,7 @@
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD WinInspectVhfEvtDeviceAdd;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP WinInspectVhfEvtCleanup;
+EVT_WDF_TIMER WinInspectVhfEvtReportTimer;
 
 static const UCHAR g_KeyboardReportDescriptor[] = {
     0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
@@ -19,6 +20,8 @@ static const UCHAR g_KeyboardReportDescriptor[] = {
 
 typedef struct _VHF_PROBE_CONTEXT {
     VHFHANDLE VhfHandle;
+    WDFTIMER ReportTimer;
+    ULONG ReportStage;
 } VHF_PROBE_CONTEXT, *PVHF_PROBE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(VHF_PROBE_CONTEXT, WinInspectVhfGetContext);
@@ -39,6 +42,43 @@ DriverEntry(
         WDF_NO_HANDLE);
 }
 
+VOID
+WinInspectVhfEvtReportTimer(
+    _In_ WDFTIMER Timer
+    )
+{
+    WDFDEVICE device = (WDFDEVICE)WdfTimerGetParentObject(Timer);
+    PVHF_PROBE_CONTEXT context = WinInspectVhfGetContext(device);
+    UCHAR report[8];
+    HID_XFER_PACKET packet;
+    NTSTATUS status;
+
+    if (context->VhfHandle == NULL || context->ReportStage > 1) {
+        return;
+    }
+
+    RtlZeroMemory(report, sizeof(report));
+    RtlZeroMemory(&packet, sizeof(packet));
+    packet.reportBuffer = report;
+    packet.reportBufferLen = sizeof(report);
+    packet.reportId = 0;
+
+    if (context->ReportStage == 0) {
+        report[2] = 0x04; // HID usage for the A key.
+        status = VhfReadReportSubmit(context->VhfHandle, &packet);
+        if (NT_SUCCESS(status)) {
+            context->ReportStage = 1;
+            WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(100));
+        }
+        return;
+    }
+
+    status = VhfReadReportSubmit(context->VhfHandle, &packet);
+    if (NT_SUCCESS(status)) {
+        context->ReportStage = 2;
+    }
+}
+
 NTSTATUS
 WinInspectVhfEvtDeviceAdd(
     _In_ WDFDRIVER Driver,
@@ -48,6 +88,8 @@ WinInspectVhfEvtDeviceAdd(
     NTSTATUS status;
     WDFDEVICE device;
     WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_OBJECT_ATTRIBUTES timerAttributes;
+    WDF_TIMER_CONFIG timerConfig;
     PVHF_PROBE_CONTEXT context;
     VHF_CONFIG vhfConfig;
 
@@ -63,6 +105,8 @@ WinInspectVhfEvtDeviceAdd(
 
     context = WinInspectVhfGetContext(device);
     context->VhfHandle = NULL;
+    context->ReportTimer = NULL;
+    context->ReportStage = 0;
 
     VHF_CONFIG_INIT(
         &vhfConfig,
@@ -85,6 +129,20 @@ WinInspectVhfEvtDeviceAdd(
         context->VhfHandle = NULL;
         return status;
     }
+
+    WDF_TIMER_CONFIG_INIT(&timerConfig, WinInspectVhfEvtReportTimer);
+    timerConfig.AutomaticSerialization = FALSE;
+    WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+    timerAttributes.ParentObject = device;
+    status = WdfTimerCreate(&timerConfig, &timerAttributes, &context->ReportTimer);
+    if (!NT_SUCCESS(status)) {
+        VhfDelete(context->VhfHandle, TRUE);
+        context->VhfHandle = NULL;
+        return status;
+    }
+
+    // Give the Actions harness time to start the common Win32 observer and controls.
+    WdfTimerStart(context->ReportTimer, WDF_REL_TIMEOUT_IN_SEC(15));
 
     return STATUS_SUCCESS;
 }
