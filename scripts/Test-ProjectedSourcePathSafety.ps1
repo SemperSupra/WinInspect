@@ -84,6 +84,51 @@ try {
     if (Test-Path -LiteralPath $v2Root) { Remove-Item -LiteralPath $v2Root -Recurse -Force }
 }
 
+# v2 canonicalization must be culture-independent. Ordinal ordering places
+# uppercase 'Z' before lowercase 'a'; culture-sensitive Sort-Object commonly
+# produces the opposite order.
+$ordinalRoot = Join-Path ([IO.Path]::GetTempPath()) ('winspect-v2-ordinal-' + [guid]::NewGuid().ToString('N'))
+try {
+    $sourceRoot = Join-Path $ordinalRoot 'source'
+    $manifestRoot = Join-Path $ordinalRoot '.projection'
+    New-Item -ItemType Directory -Force -Path $sourceRoot, $manifestRoot | Out-Null
+
+    $ordinalEntries = [System.Collections.Generic.List[object]]::new()
+    $ordinalCanonical = [System.Collections.Generic.List[string]]::new()
+    foreach ($relative in @('Z.txt', 'a.txt')) {
+        $file = Join-Path $sourceRoot $relative
+        [IO.File]::WriteAllText($file, "$relative`n", [Text.UTF8Encoding]::new($false))
+        $item = Get-Item -LiteralPath $file
+        $sha = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $ordinalEntries.Add([ordered]@{
+            path = $relative
+            sha256 = $sha
+            bytes = [int64]$item.Length
+            executable = $false
+        })
+        $ordinalCanonical.Add("$relative`t$($item.Length)`t$sha`tfalse")
+    }
+
+    $ordinalText = ($ordinalCanonical -join "`n") + "`n"
+    $ordinalDigest = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($ordinalText))
+    ).ToLowerInvariant()
+    [ordered]@{
+        schemaVersion = 2
+        projectionPolicyVersion = 1
+        sourceAuthority = 'private-development'
+        projectionPolicySha256 = ('b' * 64)
+        projectionDigestSha256 = $ordinalDigest
+        fileCount = 2
+        authoritativeCandidate = $true
+        files = @($ordinalEntries)
+    } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $manifestRoot 'source-manifest.json') -Encoding utf8NoBOM
+
+    & $validator -RepositoryRoot $ordinalRoot
+} finally {
+    if (Test-Path -LiteralPath $ordinalRoot) { Remove-Item -LiteralPath $ordinalRoot -Recurse -Force }
+}
+
 Assert-Rejected -RelativePath '.github/workflows/private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath '.github\workflows\private.yml' -ExpectedMessage 'Private/control-plane path is forbidden'
 Assert-Rejected -RelativePath '.claude/agent.md' -ExpectedMessage 'Private/control-plane path is forbidden'
