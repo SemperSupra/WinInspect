@@ -169,6 +169,194 @@ jobs:
           python rep3_probe.py
           if ($LASTEXITCODE -ne 0) { throw 'Hosted framed-TCP/UIA probe failed.' }
 
+
+      - name: Start deterministic semantic UIA target
+        shell: pwsh
+        run: |
+          $marker = Join-Path $env:GITHUB_WORKSPACE 'rep3-semantic-invoked.txt'
+          $env:SEMANTIC_MARKER = $marker
+          "SEMANTIC_MARKER=$marker" >> $env:GITHUB_ENV
+
+          @'
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          $form = New-Object System.Windows.Forms.Form
+          $form.Text = 'WinInspect Semantic Target'
+          $form.Width = 420
+          $form.Height = 220
+          $form.StartPosition = 'CenterScreen'
+
+          $button = New-Object System.Windows.Forms.Button
+          $button.Name = 'QualifyButton'
+          $button.Text = 'Invoke semantic action'
+          $button.Width = 220
+          $button.Height = 48
+          $button.Left = 80
+          $button.Top = 60
+          $button.AccessibleName = 'Qualify semantic action'
+          $button.Add_Click({
+              $form.Text = 'WinInspect Semantic Target - Invoked'
+              [IO.File]::WriteAllText($env:SEMANTIC_MARKER, 'invoked')
+          })
+
+          $form.Controls.Add($button)
+          [System.Windows.Forms.Application]::Run($form)
+          '@ | Set-Content -LiteralPath rep3-semantic-target.ps1 -Encoding utf8NoBOM
+
+          $p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',"$env:GITHUB_WORKSPACE\rep3-semantic-target.ps1" -PassThru
+          if (-not $p) { throw 'Could not start semantic UIA target.' }
+          "SEMANTIC_PID=$($p.Id)" >> $env:GITHUB_ENV
+
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Milliseconds 500
+            if ($p.HasExited) { throw "Semantic UIA target exited early: $($p.ExitCode)" }
+            $window = Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+            if ($window -and $window.MainWindowHandle -ne 0) { break }
+          }
+          if (-not $window -or $window.MainWindowHandle -eq 0) { throw 'Semantic UIA target did not establish a top-level window.' }
+
+      - name: Exercise UIA invoke with independent readback
+        shell: pwsh
+        run: |
+          @'
+          import json
+          import os
+          import socket
+          import struct
+          import time
+
+          target_pid = int(os.environ["SEMANTIC_PID"])
+          marker = os.environ["SEMANTIC_MARKER"]
+          seq = 1000
+
+          def recv_exact(sock, n):
+              data = bytearray()
+              while len(data) < n:
+                  chunk = sock.recv(n - len(data))
+                  if not chunk:
+                      raise RuntimeError("connection closed while reading frame")
+                  data.extend(chunk)
+              return bytes(data)
+
+          def recv_frame(sock):
+              raw = struct.unpack("!I", recv_exact(sock, 4))[0]
+              length = raw & 0x7fffffff
+              return json.loads(recv_exact(sock, length).decode("utf-8"))
+
+          def walk(nodes):
+              for node in nodes:
+                  yield node
+                  yield from walk(node.get("children", []))
+
+          with socket.create_connection(("127.0.0.1", 1985), timeout=10) as sock:
+              sock.settimeout(10)
+              hello = recv_frame(sock)
+              if hello.get("type") != "hello":
+                  raise RuntimeError(f"unexpected daemon hello: {hello}")
+
+              def call(method, params=None):
+                  global seq
+                  seq += 1
+                  req = {"id": f"semantic-{seq}", "method": method, "params": params or {}}
+                  payload = json.dumps(req, separators=(",", ":")).encode("utf-8")
+                  sock.sendall(struct.pack("!I", len(payload)) + payload)
+                  resp = recv_frame(sock)
+                  if not resp.get("ok"):
+                      raise RuntimeError(f"{method} failed: {resp}")
+                  return resp.get("result")
+
+              target_hwnd = None
+              for _ in range(20):
+                  for item in call("window.listTop"):
+                      hwnd = item.get("hwnd")
+                      if not hwnd:
+                          continue
+                      info = call("window.getInfo", {"hwnd": hwnd})
+                      if int(info.get("pid", 0)) == target_pid:
+                          target_hwnd = hwnd
+                          break
+                  if target_hwnd:
+                      break
+                  time.sleep(0.5)
+
+              if not target_hwnd:
+                  raise RuntimeError(f"could not resolve semantic target HWND for pid={target_pid}")
+
+              elements = call("ui.inspect", {"hwnd": target_hwnd})
+              button = next((e for e in walk(elements) if e.get("automation_id") == "QualifyButton"), None)
+              if not button:
+                  ids = sorted({e.get("automation_id") for e in walk(elements) if e.get("automation_id")})
+                  raise RuntimeError(f"QualifyButton AutomationId not exposed; observed ids={ids}")
+
+              result = call("ui.invoke", {"hwnd": target_hwnd, "automation_id": "QualifyButton"})
+              if result.get("invoked") is not True:
+                  raise RuntimeError(f"ui.invoke did not report success: {result}")
+
+              readback = None
+              for _ in range(20):
+                  readback = call("window.getInfo", {"hwnd": target_hwnd})
+                  if readback.get("title") == "WinInspect Semantic Target - Invoked":
+                      break
+                  time.sleep(0.25)
+
+              if not readback or readback.get("title") != "WinInspect Semantic Target - Invoked":
+                  raise RuntimeError(f"semantic action readback did not converge: {readback}")
+              if not os.path.exists(marker):
+                  raise RuntimeError("semantic target marker was not written by the invoked control")
+
+              evidence = {
+                  "method": "ui.invoke",
+                  "automation_id": "QualifyButton",
+                  "invoked": True,
+                  "readback_title": readback.get("title"),
+                  "marker": "present",
+                  "semantic_action": "pass",
+              }
+              with open("rep3-semantic-action-evidence.json", "w", encoding="utf-8") as fh:
+                  json.dump(evidence, fh, indent=2, sort_keys=True)
+              print(json.dumps(evidence, indent=2, sort_keys=True))
+          '@ | Set-Content -LiteralPath rep3_semantic_probe.py -Encoding utf8NoBOM
+
+          python rep3_semantic_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted UIA semantic-action probe failed.' }
+
+      - name: Prove TCP authority fails closed
+        shell: pwsh
+        run: |
+          $daemon = Resolve-Path 'build/Release/wininspectd.exe'
+
+          # Non-loopback + no auth keys must not establish a listener unless the
+          # operator explicitly supplies --allow-unauthenticated-nonloopback.
+          $nonLoop = Start-Process -FilePath $daemon -ArgumentList '--headless','--no-config','--bind','0.0.0.0','--port','1986','--no-discovery','--no-mdns','--log-file','rep3-nonloopback-denied.log' -PassThru
+          Start-Sleep -Seconds 2
+          $listener = Get-NetTCPConnection -State Listen -LocalPort 1986 -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($listener) {
+            Stop-Process -Id $nonLoop.Id -Force -ErrorAction SilentlyContinue
+            Get-Content rep3-nonloopback-denied.log -ErrorAction SilentlyContinue
+            throw 'Unauthenticated non-loopback TCP listener was established without explicit operator opt-in.'
+          }
+          if (-not $nonLoop.HasExited) { Stop-Process -Id $nonLoop.Id -Force -ErrorAction SilentlyContinue }
+
+          # --require-auth with no readable/non-empty key file must terminate
+          # before admitting a TCP listener.
+          $required = Start-Process -FilePath $daemon -ArgumentList '--headless','--no-config','--bind','127.0.0.1','--port','1987','--require-auth','--no-discovery','--no-mdns','--log-file','rep3-require-auth-denied.log' -PassThru
+          if (-not $required.WaitForExit(5000)) {
+            Stop-Process -Id $required.Id -Force -ErrorAction SilentlyContinue
+            throw '--require-auth without key material did not fail closed promptly.'
+          }
+          if ($required.ExitCode -eq 0) {
+            Get-Content rep3-require-auth-denied.log -ErrorAction SilentlyContinue
+            throw '--require-auth without key material exited successfully.'
+          }
+          $listener = Get-NetTCPConnection -State Listen -LocalPort 1987 -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($listener) { throw '--require-auth without key material admitted a TCP listener.' }
+
+          [ordered]@{
+            unauthenticated_nonloopback_listener = 'refused'
+            require_auth_without_keys = 'refused'
+          } | ConvertTo-Json | Set-Content -LiteralPath rep3-authority-evidence.json -Encoding utf8NoBOM
+
       - name: Bind exact candidate artifact identities
         if: always()
         shell: pwsh
@@ -211,7 +399,11 @@ jobs:
             .projection/source-manifest.json
             rep3-candidate-artifacts.json
             rep3-hosted-evidence.json
+            rep3-semantic-action-evidence.json
+            rep3-authority-evidence.json
             rep3-daemon.log
+            rep3-nonloopback-denied.log
+            rep3-require-auth-denied.log
           if-no-files-found: warn
           retention-days: 14
 
@@ -220,11 +412,12 @@ jobs:
         shell: pwsh
         run: |
           if ($env:TARGET_PID) { Stop-Process -Id $env:TARGET_PID -Force -ErrorAction SilentlyContinue }
+          if ($env:SEMANTIC_PID) { Stop-Process -Id $env:SEMANTIC_PID -Force -ErrorAction SilentlyContinue }
           if ($env:WININSPECTD_PID) { Stop-Process -Id $env:WININSPECTD_PID -Force -ErrorAction SilentlyContinue }
 
       - name: Record evidence boundary
         if: success()
         shell: pwsh
         run: |
-          Write-Host 'Hosted Windows proved the exact sanitized candidate builds, reports UIA callable over framed loopback TCP, and ui.inspect returns live target semantics.'
+          Write-Host 'Hosted Windows proved the exact sanitized candidate builds, reports UIA callable over framed loopback TCP, ui.inspect returns live target semantics, ui.invoke produces verified semantic state change, and unsafe TCP authority cases fail closed.'
           Write-Host 'This is hosted-windows evidence only. It does not claim WinBot Hyper-V native-interactive acceptance or authorize a public release.'
