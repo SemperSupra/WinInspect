@@ -33,11 +33,17 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64
           mkdir -p evidence
+          wine_bin=$(command -v wine64 || command -v wine || find /usr/lib/wine -maxdepth 1 -type f -name wine64 -print -quit)
+          if [ -z "$wine_bin" ]; then
+            echo 'wine executable not found after package install' >&2
+            exit 2
+          fi
+          echo "$wine_bin" > evidence/wine-bin.txt
           {
             echo "experiment=wininspect-382-wine-af-unix-peercred"
             echo "kernel=$(uname -r)"
             echo "uid=$(id -u)"
-            wine --version
+            "$wine_bin" --version
             x86_64-w64-mingw32-gcc --version | head -1
           } > evidence/environment.txt
 
@@ -59,7 +65,8 @@ jobs:
           set -euo pipefail
           export WINEPREFIX="$RUNNER_TEMP/wininspect-ipc-prefix"
           mkdir -p "$WINEPREFIX"
-          wineboot -u > evidence/wineboot.txt 2>&1 || true
+          wine_bin=$(cat evidence/wine-bin.txt)
+          "$wine_bin" wineboot.exe -u > evidence/wineboot.txt 2>&1 || true
 
           host_socket="$WINEPREFIX/drive_c/wininspect-uinput.sock"
           allowed_uid="$(id -u)"
@@ -67,7 +74,6 @@ jobs:
           server_pid=$!
           cleanup() {
             sudo kill "$server_pid" 2>/dev/null || true
-            wineserver -k 2>/dev/null || true
             sudo rm -f "$host_socket" 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -85,7 +91,7 @@ jobs:
 
           stat -c 'mode=%a uid=%u gid=%g path=%n' "$host_socket" > evidence/socket-stat.txt
           set +e
-          wine "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
+          "$wine_bin" "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
           client_rc=$?
           wait "$server_pid"
           server_rc=$?
