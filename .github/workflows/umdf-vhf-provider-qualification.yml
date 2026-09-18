@@ -70,15 +70,16 @@ jobs:
 
           $vhfUm.FullName | Set-Content evidence/vhfum-selected.txt -Encoding utf8
 
-          @"
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ItemDefinitionGroup>
-    <Link>
-      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-    </Link>
-  </ItemDefinitionGroup>
-</Project>
-"@ | Set-Content wds/hid/wininspect_umdf_vhf/Directory.Build.props -Encoding utf8
+          $props = @(
+            '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">'
+            '  <ItemDefinitionGroup>'
+            '    <Link>'
+            "      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>"
+            '    </Link>'
+            '  </ItemDefinitionGroup>'
+            '</Project>'
+          )
+          $props | Set-Content wds/hid/wininspect_umdf_vhf/Directory.Build.props -Encoding utf8
 
       - name: Build direct UMDF2 VHF fixture
         id: build
