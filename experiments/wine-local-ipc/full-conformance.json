@@ -1040,6 +1040,11 @@
       "expect": "deterministic"
     },
     {
+      "id": "explicit-release-all",
+      "kind": "release_all",
+      "expect": "accept"
+    },
+    {
       "id": "kbd-held-disconnect",
       "kind": "disconnect_cleanup",
       "held": [
