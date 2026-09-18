@@ -68,19 +68,20 @@ jobs:
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
 
-          $projects = @(
-            'dmf\Dmf\Solution\DmfU\DmfU.vcxproj',
-            'dmf\Dmf\Solution\DmfUModules.Template\DmfUModules.Template.vcxproj',
-            'dmf\DmfSamples\VirtualHidDeviceVhfDmf\User\VHidMini2VhfDmfU.vcxproj'
-          )
           $records = @()
-          foreach ($project in $projects) {
-            $name = [IO.Path]::GetFileNameWithoutExtension($project)
-            $log = "evidence/build-$name.txt"
-            & msbuild.exe $project /m:1 /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal *> $log
+
+          # Use Microsoft's own solution dependency graph for the DmfU library.
+          # This builds only DmfU and its declared UMDF dependencies.
+          & msbuild.exe dmf\Dmf.sln /m:1 /t:DmfU /p:Configuration=Release /p:Platform=x64 /v:minimal *> evidence/build-DmfU-closure.txt
+          $code = $LASTEXITCODE
+          $records += [pscustomobject]@{ project = 'dmf\\Dmf.sln::DmfU'; exit_code = $code }
+
+          if ($code -eq 0) {
+            $dmfRoot = (Resolve-Path dmf).Path + '\\'
+            $sample = 'dmf\DmfSamples\VirtualHidDeviceVhfDmf\User\VHidMini2VhfDmfU.vcxproj'
+            & msbuild.exe $sample /m:1 /t:Build /p:Configuration=Release /p:Platform=x64 /p:DmfRootPath="$dmfRoot" /v:minimal *> evidence/build-VHidMini2VhfDmfU.txt
             $code = $LASTEXITCODE
-            $records += [pscustomobject]@{ project = $project; exit_code = $code }
-            if ($code -ne 0) { break }
+            $records += [pscustomobject]@{ project = $sample; exit_code = $code }
           }
           $records | ConvertTo-Json -Depth 4 | Set-Content evidence/build-result.json -Encoding utf8
 
