@@ -91,8 +91,20 @@ jobs:
 
           stat -c 'mode=%a uid=%u gid=%g path=%n' "$host_socket" > evidence/socket-stat.txt
           set +e
-          "$wine_bin" "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
+          timeout 15s "$wine_bin" "$PWD/evidence/win32-unix-client.exe" 'C:\wininspect-uinput.sock' > evidence/client.txt 2> evidence/client.err
           client_rc=$?
+
+          server_done=false
+          for _ in $(seq 1 50); do
+            if ! sudo kill -0 "$server_pid" 2>/dev/null; then
+              server_done=true
+              break
+            fi
+            sleep 0.1
+          done
+          if [ "$server_done" != true ]; then
+            sudo kill "$server_pid" 2>/dev/null || true
+          fi
           wait "$server_pid"
           server_rc=$?
           set -e
