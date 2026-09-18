@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 35
     env:
       WDS_SHA: 97429c5623590d52f001249460daf43e6749d777
+      COMMON_PROBE_SHA: 752ecb186bd0f046e7d4c0bfb3bac6d585dc56d7
       HARDWARE_ID: 'ROOT\WININSPECT\VHFPROBE'
     steps:
       - name: Check out public deploy plane
@@ -101,6 +102,11 @@ jobs:
             cat_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.cat$' })
           } | ConvertTo-Json | Set-Content evidence/vhf-build-result.json -Encoding utf8
           if ($buildCode -ne 0) { exit $buildCode }
+
+      - name: Build exact common Win32 probe and SendInput control
+        shell: pwsh
+        run: |
+          ./.github/scripts/vhf-common-probe.ps1 -Mode Build -CommonProbeSha $env:COMMON_PROBE_SHA -EvidenceDir evidence
 
       - name: Sign, install, and query exact source devnode
         if: steps.build.outcome == 'success'
@@ -252,16 +258,35 @@ jobs:
             $result.classification = 'exact-source-devnode-not-observed'
           }
 
-          $cleanupLines = & pnputil.exe /remove-device $instanceId 2>&1
-          $result.cleanup += @($cleanupLines | ForEach-Object { "$_" })
-          if ($result.published_name) {
-            $cleanupLines = & pnputil.exe /delete-driver $result.published_name /uninstall /force 2>&1
-            $result.cleanup += @($cleanupLines | ForEach-Object { "$_" })
-          }
-
           $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
           Get-Content evidence/vhf-start-result.json
           if ($result.classification -ne 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
+
+      - name: Observe one VHF keyboard report with paired controls
+        if: steps.start.outcome == 'success'
+        id: input
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          ./.github/scripts/vhf-common-probe.ps1 -Mode Observe -EvidenceDir evidence
+
+      - name: Clean up experimental source device and package
+        if: always()
+        shell: pwsh
+        run: |
+          $cleanup = @()
+          if (Test-Path evidence/vhf-start-result.json) {
+            $start = Get-Content evidence/vhf-start-result.json | ConvertFrom-Json
+            if ($start.source_instance_id) {
+              $lines = & pnputil.exe /remove-device $start.source_instance_id 2>&1
+              $cleanup += @($lines | ForEach-Object { "$_" })
+            }
+            if ($start.published_name) {
+              $lines = & pnputil.exe /delete-driver $start.published_name /uninstall /force 2>&1
+              $cleanup += @($lines | ForEach-Object { "$_" })
+            }
+          }
+          $cleanup | Set-Content evidence/cleanup.txt -Encoding utf8
 
       - name: Summarize disposition
         if: always()
@@ -277,8 +302,11 @@ jobs:
             vhfum_count = if ($libs) { $libs.vhfum_count } else { $null }
             build = if ($build) { $build } else { 'not-recorded' }
             source_start = if ($start) { $start.classification } else { 'not-attempted' }
-            next = if ($start -and $start.classification -eq 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') {
-              'Next cell: common probe plus idle/SendInput controls and one VhfReadReportSubmit make/break.'
+            input = if (Test-Path evidence/input-result.json) { Get-Content evidence/input-result.json | ConvertFrom-Json } else { 'not-attempted' }
+            next = if ((Test-Path evidence/input-result.json) -and ((Get-Content evidence/input-result.json | ConvertFrom-Json).classification -eq 'vhf-report-observed-with-paired-controls')) {
+              'Positive discovery. Next: two fresh equivalent-runner confirmations, then Windows 11 confirmation before product promotion.'
+            } elseif ($start -and $start.classification -eq 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') {
+              'VHF child is proven; stop at the exact report-observation boundary unless one causal variable changes.'
             } elseif ($libs -and $libs.vhfum_count -gt 0) {
               'Retain exact KMDF boundary; user-mode VHF library is present, so the pinned Microsoft DMF UMDF control remains earned.'
             } else {
