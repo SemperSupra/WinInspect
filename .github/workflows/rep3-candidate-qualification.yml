@@ -188,9 +188,14 @@ jobs:
               sha256 = $hash
             }
           }
+          $projection = Get-Content -LiteralPath '.projection/source-manifest.json' -Raw | ConvertFrom-Json
           [ordered]@{
             public_candidate_commit = $env:GITHUB_SHA
             projection_receipt = '.projection/source-manifest.json'
+            projection_schema_version = [int]$projection.schemaVersion
+            projection_policy_sha256 = [string]$projection.projectionPolicySha256
+            projection_digest_sha256 = [string]$projection.projectionDigestSha256
+            projection_file_count = [int]$projection.fileCount
             subjects = @($records)
           } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath rep3-candidate-artifacts.json -Encoding utf8NoBOM
 
