@@ -18,9 +18,9 @@ DefaultDestDir=13
 WinInspectUmdfVhf.dll=1
 
 [Manufacturer]
-%ManufacturerString%=Models,NT$ARCH$.10.0
+%ManufacturerString%=Models,NT$ARCH$.10.0...18362
 
-[Models.NT$ARCH$.10.0]
+[Models.NT$ARCH$.10.0...18362]
 %DeviceDesc%=WinInspectUmdfVhf,ROOT\WININSPECT\UMDFVHF
 
 [WinInspectUmdfVhf.NT]
