@@ -242,9 +242,13 @@ jobs:
           focus_rc=$?
           sleep 0.25
           before_uinput=$(wc -l < evidence/probe.jsonl)
+          timeout 5s xinput test-xi2 --root > evidence/xinput2-uinput.txt 2>&1 &
+          xi2_pid=$!
+          sleep 0.25
           sudo "$PWD/evidence/uinput-hosted-probe" > evidence/uinput-emitter.txt 2> evidence/uinput-emitter.err
           uinput_rc=$?
           sleep 1
+          wait "$xi2_pid" 2>/dev/null || true
           uinput_end=$(wc -l < evidence/probe.jsonl)
           sed -n "$((before_uinput+1)),${uinput_end}p" evidence/probe.jsonl > evidence/phase-uinput.jsonl
 
@@ -253,11 +257,15 @@ jobs:
           uinput_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-uinput.jsonl || true)
           uinput_raw=$(grep -Ec '"event":"raw_input".*"type":"keyboard"' evidence/phase-uinput.jsonl || true)
           uinput_names=$(grep -o '"device_name":"[^"]*"' evidence/phase-uinput.jsonl | sort -u | tr '\n' ';' || true)
+          xi2_raw_key_events=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-uinput.txt || true)
+          xi2_source_ids=$(awk '/device:/ {gsub(/[()]/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' evidence/xinput2-uinput.txt | sort -un | paste -sd, - || true)
 
           if [ "$idle_events" -eq 0 ] && [ "$send_rc" -eq 0 ] && [ "$send_events" -gt 0 ] && [ "$focus_rc" -eq 0 ] && [ "$uinput_rc" -eq 0 ] && [ "$uinput_events" -gt 0 ]; then
             classification='wine-received-uinput-keyboard-event-with-paired-controls'
-          elif [ "$uinput_rc" -eq 0 ] && [ "$uinput_events" -eq 0 ]; then
-            classification='uinput-reached-xorg-but-no-wine-input-observed'
+          elif [ "$uinput_rc" -eq 0 ] && [ "$xi2_raw_key_events" -gt 0 ] && [ "$uinput_events" -eq 0 ]; then
+            classification='xinput2-observed-uinput-but-wine-did-not'
+          elif [ "$uinput_rc" -eq 0 ] && [ "$xi2_raw_key_events" -eq 0 ] && [ "$uinput_events" -eq 0 ]; then
+            classification='uinput-attached-but-xinput2-event-not-observed'
           elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
             classification='sendinput-control-invalid'
           elif [ "$idle_events" -ne 0 ]; then
@@ -266,8 +274,8 @@ jobs:
             classification='wine-uinput-phase-inconclusive'
           fi
 
-          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_names":"%s"}\n' \
-            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_names" > evidence/wine-result.json
+          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_raw_device_names":"%s","xinput2_raw_key_events":%d,"xinput2_source_ids":"%s"}\n' \
+            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_names" "$xi2_raw_key_events" "$xi2_source_ids" > evidence/wine-result.json
           cat evidence/wine-result.json
           [ "$classification" = 'wine-received-uinput-keyboard-event-with-paired-controls' ]
 
@@ -319,6 +327,7 @@ jobs:
             evidence/focus-control.txt
             evidence/uinput-emitter.txt
             evidence/uinput-emitter.err
+            evidence/xinput2-uinput.txt
             evidence/wine-result.json
             evidence/summary.md
           if-no-files-found: error
