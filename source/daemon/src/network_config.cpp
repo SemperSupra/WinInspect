@@ -12,6 +12,36 @@
 
 namespace wininspectd {
 
+  bool is_loopback_bind_address(const std::string& address)
+  {
+    if (_stricmp(address.c_str(), "localhost") == 0)
+      return true;
+
+    IN_ADDR ipv4{};
+    if (InetPtonA(AF_INET, address.c_str(), &ipv4) == 1) {
+      const uint32_t host_order = ntohl(ipv4.S_un.S_addr);
+      return ((host_order >> 24) & 0xFFu) == 127u;
+    }
+
+    IN6_ADDR ipv6{};
+    if (InetPtonA(AF_INET6, address.c_str(), &ipv6) == 1) {
+      const auto* bytes = reinterpret_cast<const unsigned char*>(&ipv6);
+      for (int i = 0; i < 15; ++i) {
+        if (bytes[i] != 0)
+          return false;
+      }
+      return bytes[15] == 1;
+    }
+
+    return false;
+  }
+
+  bool is_unauthenticated_tcp_bind_allowed(const std::string& address,
+                                           bool allow_nonloopback)
+  {
+    return allow_nonloopback || is_loopback_bind_address(address);
+  }
+
   wininspect::NetworkConfig apply_cli_overrides(const wininspect::NetworkConfig& base, int argc,
                                                 char** argv)
   {
@@ -118,43 +148,9 @@ namespace wininspectd {
       }
     }
 
-    // Auto-detect container/WSL2 IP if no explicit --bind was given
-    // In Docker/WSL2, the hostname resolves to the container's bridge IP,
-    // which is reachable from the host via port mapping.
-    // On native Windows, the hostname typically resolves to a public or private IP.
-    if (!has_bind_flag) {
-      WSADATA wsa;
-      if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
-        char hostname[256] = {};
-        if (gethostname(hostname, sizeof(hostname)) == 0) {
-          struct addrinfo hints = {};
-          hints.ai_family = AF_INET;
-          hints.ai_socktype = SOCK_STREAM;
-          struct addrinfo* result = nullptr;
-          if (getaddrinfo(hostname, nullptr, &hints, &result) == 0 && result) {
-            auto* sa = (struct sockaddr_in*)result->ai_addr;
-            char ip[INET_ADDRSTRLEN] = {};
-            inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip));
-            std::string ip_str(ip);
-            // Only auto-bind to private IPs (10.x, 172.16-31.x, 192.168.x)
-            // Avoids binding to 127.0.0.1 when the hostname resolves to loopback
-            if (ip_str.rfind("10.", 0) == 0 ||
-                (ip_str.rfind("172.", 0) == 0 && ip_str.size() > 6) ||
-                ip_str.rfind("192.168.", 0) == 0) {
-              LOG_INFO("Auto-detected container IP: " + ip_str);
-              cfg.bind.clear();
-              wininspect::NetworkAddress addr;
-              addr.address = ip_str;
-              addr.family = wininspect::ADDR_FAMILY_IPV4;
-              cfg.bind.push_back(addr);
-              has_bind_flag = true;
-            }
-            freeaddrinfo(result);
-          }
-        }
-        WSACleanup();
-      }
-    }
+    // Preserve the configured/default bind set unless the operator explicitly
+    // overrides it. In particular, do not widen loopback defaults to a
+    // hostname-derived RFC1918 address implicitly.
 
     // Env var + registry fallback for unset values (CLI > env > registry > config)
     // WININSPECT_ prefix convention: WININSPECT_PORT, WININSPECT_BIND, etc.

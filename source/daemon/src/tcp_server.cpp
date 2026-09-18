@@ -3,12 +3,14 @@
 
 #include "wininspect/base64.hpp"
 #include "tcp_server.hpp"
+#include "network_config.hpp"
 #include "control_manager.hpp"
 #include "wininspect/core.hpp"
 #include "wininspect/logger.hpp"
 #include "wininspect/crypto.hpp"
 #include "wininspect/tls.hpp"
 #include "wininspect/compress.hpp"
+#include "wininspect/util_win32.hpp"
 #include "request_handler.hpp"
 
 #ifdef _WIN32
@@ -171,6 +173,7 @@ namespace wininspectd {
                                    int idle_timeout_ms = 1800000, bool audit_all = false,
                                    wininspect::TlsSession* tls = nullptr)
   {
+    wininspect::CoInitGuard coinit;
     wininspect::CoreEngine core(backend);
     core.set_admin_logs_enabled(admin_logs);
     core.set_read_only(read_only);
@@ -384,6 +387,10 @@ namespace wininspectd {
   {
     if (cfg.tls_port <= 0)
       return;
+    if (auth_keys.empty()) {
+      LOG_ERROR("TLS TCP: refusing listener without configured client authentication keys.");
+      return;
+    }
     if (!wsa_init.ok) {
       LOG_ERROR("TLS TCP: Winsock not initialized.");
       return;
@@ -452,7 +459,7 @@ namespace wininspectd {
 
   void TcpServer::start(std::atomic<bool>* running, const wininspect::NetworkConfig& cfg,
                         const std::string& auth_keys, bool read_only, bool admin_logs,
-                        bool no_clipboard)
+                        bool no_clipboard, bool allow_unauthenticated_nonloopback)
   {
     if (!wsa_init.ok) {
       LOG_ERROR("TCP Server: Winsock not initialized.");
@@ -468,6 +475,14 @@ namespace wininspectd {
     std::vector<SOCKET> socks;
 
     for (auto& ba : cfg.bind) {
+      if (auth_keys.empty() && !is_loopback_bind_address(ba.address)) {
+        if (!is_unauthenticated_tcp_bind_allowed(ba.address, allow_unauthenticated_nonloopback)) {
+          LOG_ERROR("TCP Server: refusing unauthenticated non-loopback bind on " + ba.address);
+          continue;
+        }
+        LOG_WARN("TCP Server: unauthenticated non-loopback bind explicitly allowed on " + ba.address);
+      }
+
       struct addrinfo hints = {};
       hints.ai_family = ba.family;
       hints.ai_socktype = SOCK_STREAM;

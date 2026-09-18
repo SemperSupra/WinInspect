@@ -1,0 +1,33 @@
+build/
+dist/
+.wbab/
+*.tmp
+*.sig
+*.zip
+wi_nonce*
+.wininspect_config
+.wininspect_portable
+bin/
+obj/
+out/
+
+# TLA+ model checker artifacts
+formal/tla/*_TTrace_*.tla
+formal/tla/*_TTrace_*.bin
+formal/tla/states/
+formal/tla/*.states
+
+# Build directories
+bld/
+build_msvc*/
+build_openssl/
+build_*/
+
+# Logs
+daemon_test.log
+daemon_test_err.log
+smoke_test*.log
+__pycache__/
+build-debug/
+build-asan/
+build-ubsan/

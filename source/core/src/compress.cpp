@@ -17,7 +17,9 @@
 #define HAVE_COMPRESSAPI 1
 #include <windows.h>
 #include <compressapi.h>
+#if defined(_MSC_VER)
 #pragma comment(lib, "cabinet.lib")
+#endif
 
 static constexpr size_t COMPRESS_OVERHEAD = 512;
 
@@ -36,12 +38,12 @@ namespace wininspect {
 
     SIZE_T compressed_size = data.size() + COMPRESS_OVERHEAD;
     std::vector<uint8_t> out(compressed_size);
-    if (!Compress(compressor, data.data(), data.size(), out.data(), out.size(), &compressed_size)) {
+    auto* input = const_cast<uint8_t*>(data.data());
+    if (!Compress(compressor, input, data.size(), out.data(), out.size(), &compressed_size)) {
       DWORD err = GetLastError();
       if (err == ERROR_INSUFFICIENT_BUFFER) {
         out.resize(compressed_size);
-        if (!Compress(compressor, data.data(), data.size(), out.data(), out.size(),
-                      &compressed_size)) {
+        if (!Compress(compressor, input, data.size(), out.data(), out.size(), &compressed_size)) {
           CloseCompressor(compressor);
           return {};
         }
@@ -69,7 +71,8 @@ namespace wininspect {
 
     std::vector<uint8_t> out(uncompressed_size);
     SIZE_T raw_size = uncompressed_size;
-    if (!Decompress(decompressor, data.data(), data.size(), out.data(), out.size(), &raw_size)) {
+    auto* input = const_cast<uint8_t*>(data.data());
+    if (!Decompress(decompressor, input, data.size(), out.data(), out.size(), &raw_size)) {
       LOG_DEBUG("decompress: Decompress failed");
       out.clear();
     }

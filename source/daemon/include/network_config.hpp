@@ -6,6 +6,13 @@
 
 namespace wininspectd {
 
+  /// True only for addresses that are explicitly local to this host.
+  /// Unknown hostnames and wildcard/non-loopback addresses fail closed.
+  bool is_loopback_bind_address(const std::string& address);
+  /// Whether unauthenticated TCP may bind this address under the explicit policy.
+  bool is_unauthenticated_tcp_bind_allowed(const std::string& address,
+                                           bool allow_nonloopback);
+
   /// Parse CLI flags and merge them over a loaded NetworkConfig.
   /// Flags that are not set leave the config value unchanged (from file).
   /// Flags that are set override the config value.
