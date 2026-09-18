@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <ntstatus.h>
 #include <wdf.h>
 #include <vhf.h>
 
