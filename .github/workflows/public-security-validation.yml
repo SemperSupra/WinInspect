@@ -56,7 +56,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # E3: after three positive single-source reps, test whether two host sources remain distinct in Wine Raw Input.
   wine-uinput-w1:
     name: Wine two-source uinput identity E3
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'experiment/379-wine-uinput-actions-preflight' }}
@@ -272,27 +271,9 @@ jobs:
           timeout 8s xinput test-xi2 --root > evidence/xinput2-uinput.txt 2>&1 &
           xi2_pid=$!
           sleep 0.25
-          sudo "$PWD/evidence/uinput-two-source-probe" > evidence/uinput-emitter.txt 2> evidence/uinput-emitter.err &
-          emitter_pid=$!
-
-          sources_ready=false
-          for _ in $(seq 1 100); do
-            if grep -q 'xorg_attached=WinInspect-Actions-Probe-Keyboard-A' evidence/uinput-emitter.txt 2>/dev/null &&
-               grep -q 'xorg_attached=WinInspect-Actions-Probe-Keyboard-B' evidence/uinput-emitter.txt 2>/dev/null; then
-              sources_ready=true
-              break
-            fi
-            if ! sudo kill -0 "$emitter_pid" 2>/dev/null; then break; fi
-            sleep 0.1
-          done
-
-          xinput_a=$(xinput list --id-only 'WinInspect-Actions-Probe-Keyboard-A' 2>/dev/null | head -1)
-          xinput_b=$(xinput list --id-only 'WinInspect-Actions-Probe-Keyboard-B' 2>/dev/null | head -1)
-          printf 'A=%s\nB=%s\n' "$xinput_a" "$xinput_b" > evidence/xinput-source-ids.txt
-
-          wait "$emitter_pid"
+          sudo "$PWD/evidence/uinput-two-source-probe" > evidence/uinput-emitter.txt 2> evidence/uinput-emitter.err
           uinput_rc=$?
-          sleep 0.5
+          sleep 1
           wait "$xi2_pid" 2>/dev/null || true
           uinput_end=$(wc -l < evidence/probe.jsonl)
           sed -n "$((before_uinput+1)),${uinput_end}p" evidence/probe.jsonl > evidence/phase-uinput.jsonl
@@ -308,9 +289,34 @@ jobs:
           uinput_name_count=$(grep -c . evidence/uinput-device-names.txt || true)
           xi2_raw_key_events=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-uinput.txt || true)
           xi2_source_ids=$(awk '/device:/ {gsub(/[()]/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' evidence/xinput2-uinput.txt | sort -un | paste -sd, - || true)
-          xi2_source_count=$(printf '%s\n' "$xi2_source_ids" | tr ',' '\n' | grep -Ec '^[0-9]+
+          xi2_source_count=$(echo "$xi2_source_ids" | awk -F, '{ if (NF == 1 && $1 == "") print 0; else print NF }')
 
-      - name: Summarize E3 source-identity disposition
+          if [ "$idle_events" -ne 0 ]; then
+            classification='idle-control-contaminated'
+          elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
+            classification='sendinput-control-invalid'
+          elif [ "$focus_rc" -ne 0 ] || [ "$host_focus_ok" -ne 1 ]; then
+            classification='host-x-focus-control-invalid'
+          elif [ "$uinput_rc" -ne 0 ]; then
+            classification='two-source-uinput-emitter-failed'
+          elif [ "$xi2_raw_key_events" -lt 4 ] || [ "$xi2_source_count" -lt 2 ]; then
+            classification='xinput2-did-not-observe-two-distinct-source-events'
+          elif [ "$uinput_raw" -lt 4 ] || [ "$uinput_edits" -lt 2 ]; then
+            classification='two-host-sources-not-fully-delivered-to-wine'
+          elif [ "$uinput_handle_count" -ge 2 ]; then
+            classification='wine-preserved-two-uinput-source-identities'
+          elif [ "$uinput_handle_count" -eq 1 ]; then
+            classification='wine-collapsed-two-uinput-sources-to-one-rawinput-device'
+          else
+            classification='wine-two-source-identity-inconclusive'
+          fi
+
+          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_application_edits":%d,"uinput_raw_device_handle_count":%d,"uinput_raw_device_name_count":%d,"xinput2_raw_key_events":%d,"xinput2_source_count":%d,"xinput2_source_ids":"%s"}\n' \
+            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_edits" "$uinput_handle_count" "$uinput_name_count" "$xi2_raw_key_events" "$xi2_source_count" "$xi2_source_ids" > evidence/wine-result.json
+          cat evidence/wine-result.json
+          [ "$classification" = 'wine-preserved-two-uinput-source-identities' ] || [ "$classification" = 'wine-collapsed-two-uinput-sources-to-one-rawinput-device' ]
+
+      - name: Summarize discovery disposition
         if: always()
         shell: bash
         run: |
@@ -321,14 +327,13 @@ jobs:
             echo
             echo "Result: \`$result\`"
             echo
-            case "$result" in
-              wine-preserved-two-uinput-source-identities)
-                echo 'Two host input sources remain distinct at Wine Raw Input in this discovery rep. Confirm before architectural promotion.' ;;
-              wine-collapsed-two-uinput-sources-to-one-rawinput-device)
-                echo 'Xorg preserves the two sources but Wine Raw Input collapses them in this discovery rep. This is a valid negative identity result; confirm only if it changes an architectural decision.' ;;
-              *)
-                echo 'Stop at the recorded causal boundary unless one controlled variable changes.' ;;
-            esac
+            if [ "$result" = 'wine-preserved-two-uinput-source-identities' ]; then
+              echo 'Two host sources remained distinct at Wine Raw Input in this discovery rep.'
+            elif [ "$result" = 'wine-collapsed-two-uinput-sources-to-one-rawinput-device' ]; then
+              echo 'Xorg preserved two sources but Wine Raw Input collapsed them to one device identity in this discovery rep.'
+            else
+              echo 'Stop at the recorded causal boundary unless one controlled variable changes.'
+            fi
           } | tee evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Wine/uinput evidence
@@ -364,94 +369,7 @@ jobs:
             evidence/focus-control.txt
             evidence/uinput-emitter.txt
             evidence/uinput-emitter.err
-            evidence/uinput-device-handles.txt\n            evidence/uinput-device-names.txt\n            evidence/xinput-source-ids.txt
-            evidence/xinput2-uinput.txt
-            evidence/wine-result.json
-            evidence/summary.md
-          if-no-files-found: error
-          retention-days: 14
- || true)
-          host_sources_distinct=0
-          if [ "$sources_ready" = true ] && [ -n "$xinput_a" ] && [ -n "$xinput_b" ] && [ "$xinput_a" != "$xinput_b" ]; then host_sources_distinct=1; fi
-
-          if [ "$idle_events" -ne 0 ]; then
-            classification='idle-control-contaminated'
-          elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
-            classification='sendinput-control-invalid'
-          elif [ "$focus_rc" -ne 0 ] || [ "$host_focus_ok" -ne 1 ]; then
-            classification='host-x-focus-control-invalid'
-          elif [ "$uinput_rc" -ne 0 ]; then
-            classification='two-source-uinput-emitter-failed'
-          elif [ "$host_sources_distinct" -ne 1 ]; then
-            classification='xinput-two-source-identity-invalid'
-          elif [ "$xi2_raw_key_events" -lt 4 ] || [ "$xi2_source_count" -lt 2 ]; then
-            classification='xinput2-did-not-observe-two-source-key-events'
-          elif [ "$uinput_raw" -lt 4 ] || [ "$uinput_edits" -lt 2 ]; then
-            classification='two-host-sources-not-fully-delivered-to-wine'
-          elif [ "$uinput_handle_count" -ge 2 ]; then
-            classification='wine-preserved-two-uinput-source-identities'
-          elif [ "$uinput_handle_count" -eq 1 ]; then
-            classification='wine-collapsed-two-uinput-sources-to-one-rawinput-device'
-          else
-            classification='wine-two-source-identity-inconclusive'
-          fi
-
-          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_application_edits":%d,"uinput_raw_device_handle_count":%d,"uinput_raw_device_name_count":%d,"xinput_source_a":"%s","xinput_source_b":"%s","xinput_sources_distinct":%d,"xinput2_raw_key_events":%d,"xinput2_source_count":%d,"xinput2_source_ids":"%s"}\n' \
-            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_edits" "$uinput_handle_count" "$uinput_name_count" "$xinput_a" "$xinput_b" "$host_sources_distinct" "$xi2_raw_key_events" "$xi2_source_count" "$xi2_source_ids" > evidence/wine-result.json
-          cat evidence/wine-result.json
-          [ "$classification" = 'wine-preserved-two-uinput-source-identities' ] || [ "$classification" = 'wine-collapsed-two-uinput-sources-to-one-rawinput-device' ]
-
-      - name: Summarize discovery disposition
-        if: always()
-        shell: bash
-        run: |
-          result='not-recorded'
-          if [ -f evidence/wine-result.json ]; then result=$(python3 -c "import json; print(json.load(open('evidence/wine-result.json'))['classification'])"); fi
-          {
-            echo '# Wine/uinput W1 discovery'
-            echo
-            echo "Result: \`$result\`"
-            echo
-            if [ "$result" = 'wine-received-uinput-keyboard-event-with-paired-controls' ]; then
-              echo 'Positive discovery only. Next: repeat on fresh equivalent runners before cross-lane promotion analysis.'
-            else
-              echo 'Stop at the recorded causal boundary unless one controlled variable changes.'
-            fi
-          } | tee evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Wine/uinput evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: wine-uinput-w1
-          path: |
-            evidence/environment.txt
-            evidence/packages-installed.txt
-            evidence/wine-bin.txt
-            evidence/wine-version.txt
-            evidence/mingw-version.txt
-            evidence/wine_input_probe.exe
-            evidence/sendinput_control.exe
-            evidence/uinput-hosted-probe
-            evidence/fixture-sha256.txt
-            evidence/pe-imports.txt
-            evidence/xorg.conf
-            evidence/Xorg.log
-            evidence/xorg-stdout.txt
-            evidence/openbox.log
-            evidence/active-window.txt
-            evidence/active-window-properties.txt
-            evidence/wine-prefix-init.txt
-            evidence/probe.jsonl
-            evidence/probe.stderr
-            evidence/readiness-diagnostics.txt
-            evidence/phase-idle.jsonl
-            evidence/phase-sendinput.jsonl
-            evidence/phase-uinput.jsonl
-            evidence/sendinput-control.txt
-            evidence/focus-control.txt
-            evidence/uinput-emitter.txt
-            evidence/uinput-emitter.err
+            evidence/uinput-device-handles.txt
             evidence/uinput-device-names.txt
             evidence/xinput2-uinput.txt
             evidence/wine-result.json
