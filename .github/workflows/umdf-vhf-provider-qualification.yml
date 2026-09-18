@@ -70,9 +70,24 @@ jobs:
 
           $vhfUm.FullName | Set-Content evidence/vhfum-selected.txt -Encoding utf8
 
+          $wdfHeaders = @(Get-ChildItem wds/packages -Recurse -File -Filter wdf.h -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]umdf[\\/]' } |
+            Sort-Object FullName)
+          $wdfHeaders |
+            Select-Object FullName,Length |
+            ConvertTo-Json -Depth 4 |
+            Set-Content evidence/wdf-header-inventory.json -Encoding utf8
+
+          $wdfHeader = $wdfHeaders | Select-Object -Last 1
+          if (-not $wdfHeader) { throw 'Pinned WDK restored but UMDF wdf.h was not found' }
+          $wdfHeader.FullName | Set-Content evidence/wdf-header-selected.txt -Encoding utf8
+
           $props = @(
             '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">'
             '  <ItemDefinitionGroup>'
+            '    <ClCompile>'
+            "      <AdditionalIncludeDirectories>$($wdfHeader.Directory.FullName);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>"
+            '    </ClCompile>'
             '    <Link>'
             "      <AdditionalLibraryDirectories>$($vhfUm.Directory.FullName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>"
             '    </Link>'
