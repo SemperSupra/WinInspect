@@ -1,0 +1,92 @@
+name: GitHub Windows capability census
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/github-windows-capability-census]
+  pull_request:
+    paths:
+      - tools/github-windows-capability-census.ps1
+      - tools/hyperv-linux-l2-nonce.ps1
+      - .github/workflows/github-windows-capability-census.yml
+permissions:
+  contents: read
+jobs:
+  census:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+        mode: [passive, capacity, exercise, virtualization]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Preflight storage guardrail
+        shell: powershell
+        run: |
+          $d=Get-PSDrive -Name C
+          Write-Host "FREE_BYTES=$($d.Free)"
+          if($d.Free -lt 4GB){ throw 'Less than 4 GiB free; refusing active census.' }
+      - name: Census
+        shell: powershell
+        run: ./tools/github-windows-capability-census.ps1 -Mode '${{ matrix.mode }}'
+      - name: Preserve receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capability-${{ matrix.runner }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/windows-capability-*.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  observation-cycles:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+        cycle: [1, 2, 3]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - name: Observation cycle
+        shell: powershell
+        run: ./tools/github-windows-capability-census.ps1 -Mode passive
+      - name: Preserve observation receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observation-${{ matrix.runner }}-${{ matrix.cycle }}
+          path: ${{ runner.temp }}/windows-capability-*.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-l2-gate:
+    # One bounded attempt per architecture. This is a gate, not native-Windows acceptance.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Storage guardrail
+        shell: powershell
+        run: |
+          $d=Get-PSDrive C
+          if($d.Free -lt 6GB){ throw 'Less than 6 GiB free; refusing L2 experiment.' }
+      - name: Bounded Linux L2 gate
+        shell: powershell
+        run: ./tools/hyperv-linux-l2-nonce.ps1
+      - name: Preserve L2 receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-l2-${{ matrix.runner }}
+          path: ${{ runner.temp }}/hyperv-linux-l2-*.json
+          if-no-files-found: warn
+          retention-days: 7
