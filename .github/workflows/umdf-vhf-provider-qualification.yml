@@ -97,6 +97,7 @@ jobs:
 
           $props = @(
             '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">'
+            '  <Import Project="$(MSBuildThisFileDirectory)..\..\Directory.Build.props" />'
             '  <ItemDefinitionGroup>'
             '    <ClCompile>'
             "      <AdditionalIncludeDirectories>$($wdfHeader.Directory.FullName);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>"
