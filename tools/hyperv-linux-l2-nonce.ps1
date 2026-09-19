@@ -10,12 +10,13 @@ $kernel=Join-Path $root 'vmlinuz-lts';$initrd=Join-Path $root 'initramfs-lts'
 Invoke-WebRequest "$base/vmlinuz-lts" -OutFile $kernel
 Invoke-WebRequest "$base/initramfs-lts" -OutFile $initrd
 $nonce=[guid]::NewGuid().ToString()
+$memoryBytes=[int64]$MemoryMB * 1MB
 # Hyper-V Gen2 cannot directly boot a Linux kernel/initrd via PowerShell. This probe therefore
-# first records whether a supported firmware boot path can be assembled without custom tooling.
-# Do not manufacture a bootloader: prior art over custom builds.
+# records whether the supported control plane can assemble the bounded VM without manufacturing
+# a custom bootloader. A bootable EFI prior-art artifact is the next gate.
 $vm=$null
 try {
-  $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes (${MemoryMB}MB) -NoVHD
+  $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes $memoryBytes -NoVHD
   Set-VMProcessor -VMName $name -Count 1
   $switch=Get-VMSwitch|Where-Object SwitchType -eq 'Internal'|Select-Object -First 1
   if(-not $switch){$switch=New-VMSwitch -Name "$name-nat" -SwitchType Internal}
