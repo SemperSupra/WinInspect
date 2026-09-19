@@ -1,0 +1,388 @@
+name: Public VHF Actions qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/vhf-actions-qualification.yml'
+      - 'experiments/vhf-minimal/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vhf-actions-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vhf-source-start:
+    name: Minimal KMDF VHF exact-devnode qualification
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 35
+    env:
+      WDS_SHA: 97429c5623590d52f001249460daf43e6749d777
+      COMMON_PROBE_SHA: 752ecb186bd0f046e7d4c0bfb3bac6d585dc56d7
+      HARDWARE_ID: 'ROOT\WININSPECT\VHFPROBE'
+    steps:
+      - name: Check out public deploy plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare pinned WDK fixture and evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          [ordered]@{
+            experiment = 'wininspect-381-kmdf-vhf-exact-devnode'
+            commit = $env:GITHUB_SHA
+            windows_caption = $os.Caption
+            windows_version = $os.Version
+            windows_build = $os.BuildNumber
+            runner_arch = $env:RUNNER_ARCH
+            process_is_admin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            hardware_id = $env:HARDWARE_ID
+            windows_driver_samples_sha = $env:WDS_SHA
+          } | ConvertTo-Json -Depth 5 | Set-Content evidence/runner.json -Encoding utf8
+
+          git clone --filter=blob:none --no-checkout https://github.com/microsoft/Windows-driver-samples.git wds
+          if ($LASTEXITCODE -ne 0) { throw "clone failed: $LASTEXITCODE" }
+          git -C wds checkout $env:WDS_SHA
+          if ($LASTEXITCODE -ne 0) { throw "pinned checkout failed: $LASTEXITCODE" }
+          nuget restore wds/packages.config -PackagesDirectory wds/packages -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed: $LASTEXITCODE" }
+          New-Item -ItemType Directory -Force wds/hid/wininspect_vhf_probe | Out-Null
+          Copy-Item experiments/vhf-minimal/driver/* wds/hid/wininspect_vhf_probe/ -Force
+
+          $roots = @((Resolve-Path wds/packages).Path, 'C:\Program Files (x86)\Windows Kits\10\Lib') | Where-Object { Test-Path $_ }
+          $found = foreach ($root in $roots) {
+            Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -ieq 'VhfKm.lib' -or $_.Name -ieq 'VhfUm.lib' } |
+              Select-Object Name,FullName,Length
+          }
+          $found | Sort-Object Name,FullName | ConvertTo-Json -Depth 4 | Set-Content evidence/vhf-library-inventory.json -Encoding utf8
+          [ordered]@{
+            vhfkm_count = @($found | Where-Object Name -ieq 'VhfKm.lib').Count
+            vhfum_count = @($found | Where-Object Name -ieq 'VhfUm.lib').Count
+          } | ConvertTo-Json | Set-Content evidence/vhf-library-counts.json -Encoding utf8
+
+      - name: Build documented KMDF VHF source fixture
+        id: build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $buildCode = 1
+          Push-Location wds
+          try {
+            ./Build-Samples.ps1 `
+              -Samples 'hid.wininspect_vhf_probe' `
+              -Configurations 'Release' `
+              -Platforms 'x64' `
+              -RunMode NuGet `
+              -ThrottleLimit 1 `
+              -Verbose
+            $buildCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+          }
+          catch {
+            $_ | Out-String | Set-Content ../evidence/build-exception.txt
+            $buildCode = 1
+          }
+          finally { Pop-Location }
+          Copy-Item wds/_logs -Destination evidence/wds-build-logs -Recurse -Force -ErrorAction SilentlyContinue
+          $artifacts = @(Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Include *.sys,*.inf,*.cat |
+            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}})
+          $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/vhf-build-artifacts.json -Encoding utf8
+          [ordered]@{
+            exit_code = $buildCode
+            sys_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.sys$' })
+            inf_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.inf$' })
+            cat_present = [bool]($artifacts | Where-Object { $_.FullName -match 'WinInspectVhfProbe\.cat$' })
+          } | ConvertTo-Json | Set-Content evidence/vhf-build-result.json -Encoding utf8
+          if ($buildCode -ne 0) { exit $buildCode }
+
+      - name: Build exact common Win32 probe and SendInput control
+        shell: pwsh
+        run: |
+          ./.github/scripts/vhf-common-probe.ps1 -Mode Build -CommonProbeSha $env:COMMON_PROBE_SHA -EvidenceDir evidence
+
+      - name: Sign, install, and query exact source devnode
+        if: steps.build.outcome == 'success'
+        id: start
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            signature_status = $null
+            published_name = $null
+            source_instance_id = $null
+            devgen_exit_code = $null
+            install_exit_code = $null
+            source_devices = @()
+            source_child_ids = @()
+            source_children = @()
+            hid_children = @()
+            cleanup = @()
+          }
+
+          $inf = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Filter 'WinInspectVhfProbe.inf' |
+            Where-Object { Test-Path (Join-Path $_.Directory.FullName 'WinInspectVhfProbe.cat') } |
+            Select-Object -First 1
+          if (-not $inf) { throw 'built INF/catalog pair not found' }
+          $cat = Join-Path $inf.Directory.FullName 'WinInspectVhfProbe.cat'
+
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject 'CN=WinInspect VHF CI Test Signing' `
+            -CertStoreLocation 'Cert:\LocalMachine\My' `
+            -HashAlgorithm SHA256 `
+            -KeyLength 2048 `
+            -KeyExportPolicy Exportable `
+            -NotAfter (Get-Date).AddDays(30)
+          Export-Certificate -Cert $cert -FilePath evidence/wininspect-vhf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/wininspect-vhf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/wininspect-vhf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat | Set-Content evidence/sign.txt
+          if ($LASTEXITCODE -ne 0) { throw "catalog signing failed: $LASTEXITCODE" }
+          $result.signature_status = [string](Get-AuthenticodeSignature -FilePath $cat).Status
+
+          $stageLines = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stageLines | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stageLines -join "`n"), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-package-stage-failed'
+            $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
+          }
+
+          $devgen = Get-ChildItem wds/packages -Recurse -File -Filter devgen.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\devgen\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devgen) { throw 'devgen.exe unavailable' }
+          $devgenLines = & $devgen /add /bus ROOT /hardwareid $env:HARDWARE_ID 2>&1
+          $result.devgen_exit_code = $LASTEXITCODE
+          $devgenLines | Set-Content evidence/devgen.txt
+          $instanceMatch = [regex]::Match(($devgenLines -join "`n"), '(?im)Device Instance ID:\s*(ROOT\\DEVGEN\\\{[^\r\n]+\})')
+          if (-not $instanceMatch.Success) {
+            $result.classification = 'devgen-instance-id-not-parsed'
+            $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+            exit 1
+          }
+          $instanceId = $instanceMatch.Groups[1].Value.Trim()
+          $result.source_instance_id = $instanceId
+          $instanceId | Set-Content evidence/source-instance-id.txt
+
+          Start-Sleep -Seconds 1
+          $installLines = & pnputil.exe /add-driver $inf.FullName /install 2>&1
+          $result.install_exit_code = $LASTEXITCODE
+          $installLines | Set-Content evidence/install.txt
+          $childIds = @()
+          for ($i = 0; $i -lt 20; $i++) {
+            $childProperty = Get-PnpDeviceProperty -InstanceId $instanceId -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue
+            if ($childProperty -and $childProperty.Data) {
+              $childIds = @($childProperty.Data)
+              if ($childIds.Count -gt 0) { break }
+            }
+            Start-Sleep -Milliseconds 500
+          }
+
+          $source = @(Get-PnpDevice -InstanceId $instanceId -ErrorAction SilentlyContinue |
+            Select-Object Status,Class,FriendlyName,InstanceId,Problem,ProblemDescription)
+          $children = @(
+            foreach ($childId in $childIds) {
+              $device = Get-PnpDevice -InstanceId $childId -ErrorAction SilentlyContinue
+              if ($device) {
+                $hardwareIds = @((Get-PnpDeviceProperty -InstanceId $childId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+                [pscustomobject]@{
+                  Status = $device.Status
+                  Class = $device.Class
+                  FriendlyName = $device.FriendlyName
+                  InstanceId = $device.InstanceId
+                  Problem = $device.Problem
+                  ProblemDescription = $device.ProblemDescription
+                  HardwareIds = $hardwareIds
+                }
+              }
+            }
+          )
+          $allHid = @(
+            Get-PnpDevice -PresentOnly -Class HIDClass -ErrorAction SilentlyContinue | ForEach-Object {
+              $hardwareIds = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+              [pscustomobject]@{
+                Status = $_.Status
+                FriendlyName = $_.FriendlyName
+                InstanceId = $_.InstanceId
+                Problem = $_.Problem
+                HardwareIds = $hardwareIds
+              }
+            }
+          )
+          $hid = @($children | Where-Object {
+            $_.Class -eq 'HIDClass' -or
+            (($_.HardwareIds -join ';') -match 'VID_1209.*PID_0266')
+          })
+
+          $result.source_devices = $source
+          $result.source_child_ids = $childIds
+          $result.source_children = $children
+          $result.hid_children = $hid
+          $source | ConvertTo-Json -Depth 6 | Set-Content evidence/source-device.json -Encoding utf8
+          $childIds | ConvertTo-Json -Depth 4 | Set-Content evidence/source-child-ids.json -Encoding utf8
+          $children | ConvertTo-Json -Depth 8 | Set-Content evidence/source-children.json -Encoding utf8
+          $allHid | ConvertTo-Json -Depth 8 | Set-Content evidence/all-hid-devices.json -Encoding utf8
+          $hid | ConvertTo-Json -Depth 8 | Set-Content evidence/hid-child.json -Encoding utf8
+          (& pnputil.exe /enum-devices /instanceid $instanceId /relations /stack /services /drivers /properties 2>&1) | Set-Content evidence/source-pnputil.txt
+          (& pnputil.exe /enum-devicetree $instanceId /connected /services /stack /drivers 2>&1) | Set-Content evidence/source-device-tree.txt
+          Get-Content "$env:windir\inf\setupapi.dev.log" -Tail 1000 -ErrorAction SilentlyContinue | Set-Content evidence/setupapi-tail.txt
+
+          $sourceOk = [bool]($source | Where-Object { $_.Status -eq 'OK' })
+          $hidOk = [bool]($hid | Where-Object { $_.Status -eq 'OK' })
+          if ($sourceOk -and $hidOk) {
+            $result.classification = 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated'
+          } elseif ($sourceOk) {
+            $result.classification = 'source-started-but-vhf-hid-child-not-observed'
+          } elseif ($source.Count -gt 0) {
+            $result.classification = 'source-present-with-pnp-problem'
+          } elseif ($result.install_exit_code -ne 0) {
+            $result.classification = 'driver-install-command-failed'
+          } else {
+            $result.classification = 'exact-source-devnode-not-observed'
+          }
+
+          $result | ConvertTo-Json -Depth 10 | Set-Content evidence/vhf-start-result.json -Encoding utf8
+          Get-Content evidence/vhf-start-result.json
+          if ($result.classification -ne 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') { exit 1 }
+
+      - name: Observe one VHF keyboard report with system-device attribution
+        if: steps.start.outcome == 'success'
+        id: input
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          ./.github/scripts/vhf-common-probe.ps1 -Mode Observe -EvidenceDir evidence
+
+      - name: Package exact Windows 11 handoff
+        if: steps.input.outcome == 'success'
+        shell: pwsh
+        run: |
+          $handoff = New-Item -ItemType Directory -Force evidence/win11-handoff
+          $inf = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Filter 'WinInspectVhfProbe.inf' |
+            Where-Object { Test-Path (Join-Path $_.Directory.FullName 'WinInspectVhfProbe.cat') } |
+            Select-Object -First 1
+          if (-not $inf) { throw 'built INF/catalog pair not found for handoff' }
+          $cat = Join-Path $inf.Directory.FullName 'WinInspectVhfProbe.cat'
+          $sys = Get-ChildItem $inf.Directory.FullName -File -Filter 'WinInspectVhfProbe.sys' | Select-Object -First 1
+          if (-not $sys) {
+            $sys = Get-ChildItem wds/hid/wininspect_vhf_probe -Recurse -File -Filter 'WinInspectVhfProbe.sys' | Select-Object -First 1
+          }
+          if (-not $sys) { throw 'built SYS not found for handoff' }
+
+          $devgen = Get-ChildItem wds/packages -Recurse -File -Filter devgen.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\devgen\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $devgen) { throw 'devgen.exe unavailable for handoff' }
+
+          Copy-Item $inf.FullName (Join-Path $handoff 'WinInspectVhfProbe.inf') -Force
+          Copy-Item $cat (Join-Path $handoff 'WinInspectVhfProbe.cat') -Force
+          Copy-Item $sys.FullName (Join-Path $handoff 'WinInspectVhfProbe.sys') -Force
+          Copy-Item evidence/wininspect-vhf-test.cer (Join-Path $handoff 'wininspect-vhf-test.cer') -Force
+          Copy-Item $devgen.FullName (Join-Path $handoff 'devgen.exe') -Force
+          Copy-Item evidence/win32_input_probe.exe (Join-Path $handoff 'win32_input_probe.exe') -Force
+          Copy-Item evidence/sendinput_control.exe (Join-Path $handoff 'sendinput_control.exe') -Force
+          Copy-Item .github/scripts/vhf-common-probe.ps1 (Join-Path $handoff 'vhf-common-probe.ps1') -Force
+          Copy-Item .github/scripts/vhf-win11-confirm.ps1 (Join-Path $handoff 'Confirm-WinInspectVhf-Win11.ps1') -Force
+
+          $hashes = @(Get-ChildItem $handoff -File | ForEach-Object {
+            [ordered]@{
+              file = $_.Name
+              sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+              size = $_.Length
+            }
+          })
+          [ordered]@{
+            schema = 'wininspect-vhf-win11-handoff/1'
+            public_head = $env:GITHUB_SHA
+            common_probe_sha = $env:COMMON_PROBE_SHA
+            windows_driver_samples_sha = $env:WDS_SHA
+            generated_at = (Get-Date).ToUniversalTime().ToString('o')
+            certificate_not_after = (Get-PfxCertificate evidence/wininspect-vhf-test.cer).NotAfter.ToUniversalTime().ToString('o')
+            files = $hashes
+          } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $handoff 'handoff-manifest.json') -Encoding utf8
+
+          Get-ChildItem $handoff -File |
+            Get-FileHash -Algorithm SHA256 |
+            Select-Object Path,Hash |
+            ConvertTo-Json -Depth 4 |
+            Set-Content evidence/win11-handoff-hashes.json -Encoding utf8
+
+      - name: Upload Windows 11 handoff package
+        if: steps.input.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vhf-win11-handoff
+          path: evidence/win11-handoff/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean up experimental source device and package
+        if: always()
+        shell: pwsh
+        run: |
+          $cleanup = @()
+          if (Test-Path evidence/vhf-start-result.json) {
+            $start = Get-Content evidence/vhf-start-result.json | ConvertFrom-Json
+            if ($start.source_instance_id) {
+              $lines = & pnputil.exe /remove-device $start.source_instance_id 2>&1
+              $cleanup += @($lines | ForEach-Object { "$_" })
+            }
+            if ($start.published_name) {
+              $lines = & pnputil.exe /delete-driver $start.published_name /uninstall /force 2>&1
+              $cleanup += @($lines | ForEach-Object { "$_" })
+            }
+          }
+          $cleanup | Set-Content evidence/cleanup.txt -Encoding utf8
+
+      - name: Summarize disposition
+        if: always()
+        shell: pwsh
+        run: |
+          $build = if (Test-Path evidence/vhf-build-result.json) { Get-Content evidence/vhf-build-result.json | ConvertFrom-Json } else { $null }
+          $start = if (Test-Path evidence/vhf-start-result.json) { Get-Content evidence/vhf-start-result.json | ConvertFrom-Json } else { $null }
+          $libs = if (Test-Path evidence/vhf-library-counts.json) { Get-Content evidence/vhf-library-counts.json | ConvertFrom-Json } else { $null }
+          [ordered]@{
+            experiment = 'wininspect-381-kmdf-vhf-exact-devnode'
+            discovery_only = $true
+            vhfkm_count = if ($libs) { $libs.vhfkm_count } else { $null }
+            vhfum_count = if ($libs) { $libs.vhfum_count } else { $null }
+            build = if ($build) { $build } else { 'not-recorded' }
+            source_start = if ($start) { $start.classification } else { 'not-attempted' }
+            input = if (Test-Path evidence/input-result.json) { Get-Content evidence/input-result.json | ConvertFrom-Json } else { 'not-attempted' }
+            next = if ((Test-Path evidence/input-result.json) -and ((Get-Content evidence/input-result.json | ConvertFrom-Json).classification -eq 'vhf-report-observed-with-paired-controls')) {
+              'Positive discovery. Next: two fresh equivalent-runner confirmations, then Windows 11 confirmation before product promotion.'
+            } elseif ($start -and $start.classification -eq 'actual-kmdf-vhf-source-started-and-keyboard-child-enumerated') {
+              'VHF child is proven; stop at the exact report-observation boundary unless one causal variable changes.'
+            } elseif ($libs -and $libs.vhfum_count -gt 0) {
+              'Retain exact KMDF boundary; user-mode VHF library is present, so the pinned Microsoft DMF UMDF control remains earned.'
+            } else {
+              'Stop at the recorded boundary unless one causal variable changes.'
+            }
+          } | ConvertTo-Json -Depth 8 | Set-Content evidence/summary.json -Encoding utf8
+          Get-Content evidence/summary.json
+
+      - name: Upload VHF qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vhf-kmdf-exact-devnode
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
