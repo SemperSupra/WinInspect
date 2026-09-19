@@ -3,6 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches: [experiment/github-windows-capability-census]
+  pull_request:
+    paths:
+      - tools/github-windows-capability-census.ps1
+      - .github/workflows/github-windows-capability-census.yml
 permissions:
   contents: read
 jobs:
