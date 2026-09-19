@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - tools/github-windows-capability-census.ps1
+      - tools/hyperv-linux-l2-nonce.ps1
       - .github/workflows/github-windows-capability-census.yml
 permissions:
   contents: read
@@ -40,9 +41,6 @@ jobs:
           retention-days: 7
 
   observation-cycles:
-    # A few independent allocations expose variability without turning this into load testing.
-    # GitHub-hosted standard runners do not provide a supported region selector here, so record
-    # only environment/host facts actually exposed by the runner; do not infer a region from IP.
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -62,5 +60,33 @@ jobs:
         with:
           name: observation-${{ matrix.runner }}-${{ matrix.cycle }}
           path: ${{ runner.temp }}/windows-capability-*.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-l2-gate:
+    # One bounded attempt per architecture. This is a gate, not native-Windows acceptance.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Storage guardrail
+        shell: powershell
+        run: |
+          $d=Get-PSDrive C
+          if($d.Free -lt 6GB){ throw 'Less than 6 GiB free; refusing L2 experiment.' }
+      - name: Bounded Linux L2 gate
+        shell: powershell
+        run: ./tools/hyperv-linux-l2-nonce.ps1
+      - name: Preserve L2 receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-l2-${{ matrix.runner }}
+          path: ${{ runner.temp }}/hyperv-linux-l2-*.json
           if-no-files-found: warn
           retention-days: 7
