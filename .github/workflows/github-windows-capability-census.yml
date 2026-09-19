@@ -13,13 +13,20 @@ jobs:
   census:
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         runner: [windows-2025, windows-11-arm]
-        mode: [passive, exercise, virtualization]
+        mode: [passive, capacity, exercise, virtualization]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
+      - name: Preflight storage guardrail
+        shell: powershell
+        run: |
+          $d=Get-PSDrive -Name C
+          Write-Host "FREE_BYTES=$($d.Free)"
+          if($d.Free -lt 4GB){ throw 'Less than 4 GiB free; refusing active census.' }
       - name: Census
         shell: powershell
         run: ./tools/github-windows-capability-census.ps1 -Mode '${{ matrix.mode }}'
