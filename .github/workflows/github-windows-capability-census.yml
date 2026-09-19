@@ -1,6 +1,8 @@
 name: GitHub Windows capability census
 on:
   workflow_dispatch:
+  push:
+    branches: [experiment/github-windows-capability-census]
 permissions:
   contents: read
 jobs:
