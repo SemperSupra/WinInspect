@@ -180,7 +180,7 @@ jobs:
 
           if (-not $cat) {
             $inf2cat = Get-ChildItem wds/packages -Recurse -File -Filter Inf2Cat.exe |
-              Where-Object { $_.FullName -match '\x64\Inf2Cat\.exe$' } |
+              Where-Object { $_.FullName -like '*\x64\Inf2Cat.exe' } |
               Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
             if (-not $inf2cat) { throw 'Inf2Cat.exe not found' }
             & $inf2cat /driver:$($inf.Directory.FullName) /os:10_X64 | Set-Content evidence/inf2cat.txt
@@ -198,7 +198,7 @@ jobs:
           Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
 
           $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
-            Where-Object { $_.FullName -match '\x64\signtool\.exe$' } |
+            Where-Object { $_.FullName -like '*\x64\signtool.exe' } |
             Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
           if (-not $signtool) { throw 'signtool.exe not found' }
 
@@ -219,7 +219,7 @@ jobs:
           }
 
           $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\x64\devcon\.exe$' } |
+            Where-Object { $_.FullName -like '*\x64\devcon.exe' } |
             Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
           if (-not $devcon) {
             $result.classification = 'hosted-runner-devcon-unavailable'
