@@ -116,18 +116,39 @@ jobs:
         continue-on-error: true
         run: |
           $buildCode = 1
-          Push-Location wds
+          $solution = 'wds\hid\wininspect_umdf_vhf\WinInspectUmdfVhf.sln'
           try {
-            ./Build-Samples.ps1 -Samples 'hid.wininspect_umdf_vhf' -Configurations 'Release' -Platforms 'x64' -RunMode NuGet -ThrottleLimit 1 -Verbose
-            $buildCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+            $msbuildArgs = @(
+              $solution,
+              '/m:1',
+              '/t:Rebuild',
+              '/p:Configuration=Release',
+              '/p:Platform=x64',
+              '/p:TargetVersion=Windows10',
+              '/p:UMDF_VERSION_MAJOR=2',
+              '/p:UMDF_VERSION_MINOR=35',
+              '/p:UMDF_MINIMUM_VERSION_REQUIRED=35',
+              '/warnaserror',
+              '/v:minimal',
+              '/bl:evidence\wininspect-umdf235.binlog',
+              '/flp1:errorsonly;logfile=evidence\wininspect-umdf235.err',
+              '/flp2:warningsonly;logfile=evidence\wininspect-umdf235.wrn'
+            )
+            & msbuild.exe @msbuildArgs *> evidence\wininspect-umdf235.out
+            $buildCode = $LASTEXITCODE
           }
           catch {
-            $_ | Out-String | Set-Content ../evidence/build-exception.txt
+            $_ | Out-String | Set-Content evidence/build-exception.txt
             $buildCode = 1
           }
-          finally { Pop-Location }
 
-          Copy-Item wds/_logs -Destination evidence/wds-build-logs -Recurse -Force -ErrorAction SilentlyContinue
+          [ordered]@{
+            method = 'direct-msbuild-forced-umdf235'
+            umdf_major = 2
+            umdf_minor = 35
+            umdf_minimum = 35
+            exit_code = $buildCode
+          } | ConvertTo-Json | Set-Content evidence/build-invocation.json -Encoding utf8
           $artifacts = @(Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Include *.dll,*.inf,*.cat |
             Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}})
           $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
