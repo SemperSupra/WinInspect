@@ -37,8 +37,14 @@ def main(probe_path, xinput_ids_path, xi2_path, host_path, out_path):
     mouse_b=one_handle(events, lambda e:e.get("type")=="mouse" and e.get("dy")==-13, "mouseB", failures)
 
     handles=[h for h in (kbd_a,kbd_b,mouse_a,mouse_b) if h]
-    if len(set(handles)) != 4:
-        failures.append(f"Wine Raw Input identity collapsed: {handles}")
+    keyboard_handles={h for h in (kbd_a,kbd_b) if h}
+    mouse_handles={h for h in (mouse_a,mouse_b) if h}
+    if len(keyboard_handles) != 1:
+        failures.append(f"Wine keyboard identity topology changed: {sorted(keyboard_handles)}")
+    if len(mouse_handles) != 1:
+        failures.append(f"Wine mouse identity topology changed: {sorted(mouse_handles)}")
+    if keyboard_handles and mouse_handles and keyboard_handles == mouse_handles:
+        failures.append("Wine keyboard and mouse classes unexpectedly share one Raw Input handle")
 
     def seq_for(pred):
         vals=[e.get("seq") for e in events if pred(e) and isinstance(e.get("seq"), int)]
@@ -86,6 +92,9 @@ def main(probe_path, xinput_ids_path, xi2_path, host_path, out_path):
         "xinput_ids":ids,
         "wine_handles":{"kbdA":kbd_a,"kbdB":kbd_b,"mouseA":mouse_a,"mouseB":mouse_b},
         "wine_distinct_handle_count":len(set(handles)),
+        "wine_keyboard_handle_count":len(keyboard_handles),
+        "wine_mouse_handle_count":len(mouse_handles),
+        "wine_same_class_identity_collapsed":len(keyboard_handles)==1 and len(mouse_handles)==1,
         "failures":failures,
         "pass":not failures,
     }
