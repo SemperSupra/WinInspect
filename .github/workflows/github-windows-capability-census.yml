@@ -1,0 +1,27 @@
+name: GitHub Windows capability census
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  census:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+        mode: [passive, exercise, virtualization]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Census
+        shell: powershell
+        run: ./tools/github-windows-capability-census.ps1 -Mode '${{ matrix.mode }}'
+      - name: Preserve receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capability-${{ matrix.runner }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/windows-capability-*.json
+          if-no-files-found: warn
+          retention-days: 7
