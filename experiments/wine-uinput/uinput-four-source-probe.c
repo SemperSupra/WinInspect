@@ -61,12 +61,11 @@ static int sync_fd(int fd) {
     return emit_event(fd, EV_SYN, SYN_REPORT, 0);
 }
 
-static int create_keyboard(const char *name, unsigned short product) {
+static int create_keyboard(const char *name, unsigned short product, unsigned short keycode) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) return -1;
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_A) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_B) < 0 ||
+        ioctl(fd, UI_SET_KEYBIT, keycode) < 0 ||
         ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0) {
         close(fd);
         return -1;
@@ -87,15 +86,14 @@ static int create_keyboard(const char *name, unsigned short product) {
     return fd;
 }
 
-static int create_mouse(const char *name, unsigned short product) {
+static int create_mouse(const char *name, unsigned short product,
+                        unsigned short button, unsigned short axis) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) return -1;
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, BTN_LEFT) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT) < 0 ||
+        ioctl(fd, UI_SET_KEYBIT, button) < 0 ||
         ioctl(fd, UI_SET_EVBIT, EV_REL) < 0 ||
-        ioctl(fd, UI_SET_RELBIT, REL_X) < 0 ||
-        ioctl(fd, UI_SET_RELBIT, REL_Y) < 0 ||
+        ioctl(fd, UI_SET_RELBIT, axis) < 0 ||
         ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0) {
         close(fd);
         return -1;
@@ -151,10 +149,10 @@ int main(int argc, char **argv) {
     gid_t gid = (gid_t)strtoul(argv[2], NULL, 10);
 
     int ka = -1, kb = -1, ma = -1, mb = -1;
-    ka = create_keyboard(KBD_A, 0x0301);
-    kb = create_keyboard(KBD_B, 0x0302);
-    ma = create_mouse(MOUSE_A, 0x0303);
-    mb = create_mouse(MOUSE_B, 0x0304);
+    ka = create_keyboard(KBD_A, 0x0301, KEY_A);
+    kb = create_keyboard(KBD_B, 0x0302, KEY_B);
+    ma = create_mouse(MOUSE_A, 0x0303, BTN_LEFT, REL_X);
+    mb = create_mouse(MOUSE_B, 0x0304, BTN_RIGHT, REL_Y);
     if (ka < 0 || kb < 0 || ma < 0 || mb < 0) {
         fprintf(stderr, "uinput create failed errno=%d (%s)\n", errno, strerror(errno));
         goto fail_create;
