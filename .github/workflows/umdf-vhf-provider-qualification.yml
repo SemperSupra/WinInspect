@@ -135,20 +135,533 @@ jobs:
           $inf = $artifacts | Where-Object { $_.FullName -match 'WinInspectUmdfVhf\.inf$' } | Select-Object -First 1
           $cat = $artifacts | Where-Object { $_.FullName -match 'wudf\.cat$' } | Select-Object -First 1
 
+          $packageReady = [bool]($inf -and $cat)
+          "package_ready=$($packageReady.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
           [ordered]@{
             exit_code = $buildCode
             dll_present = [bool]$dll
             wdk_inf_present = [bool]$inf
             wdk_catalog_present = [bool]$cat
+            package_ready = $packageReady
             dll_sha256 = if ($dll) { $dll.SHA256 } else { $null }
             inf_sha256 = if ($inf) { $inf.SHA256 } else { $null }
             catalog_sha256 = if ($cat) { $cat.SHA256 } else { $null }
           } | ConvertTo-Json | Set-Content evidence/build-result.json -Encoding utf8
 
-          if ($buildCode -ne 0 -or -not $dll -or -not $inf -or -not $cat) { exit 1 }
+          if ($buildCode -ne 0 -or -not $dll) { exit 1 }
+
+      - name: Differential control — official Microsoft UMDF package
+        if: steps.build.outcome == 'success' && steps.build.outputs.package_ready != 'true'
+        id: package_control
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $controlCode = 1
+          Push-Location wds
+          try {
+            ./Build-Samples.ps1 -Samples 'hid.vhidmini2.driver.umdf2' -Configurations 'Release' -Platforms 'x64' -RunMode NuGet -ThrottleLimit 1 -Verbose
+            $controlCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+          }
+          catch {
+            $_ | Out-String | Set-Content ../evidence/package-control-exception.txt
+            $controlCode = 1
+          }
+          finally { Pop-Location }
+
+          $controlRoot = 'wds/hid/vhidmini2/driver/umdf2'
+          $controlArtifacts = @(Get-ChildItem $controlRoot -Recurse -File -Include *.dll,*.inf,*.cat,*.inx -ErrorAction SilentlyContinue |
+            Select-Object FullName,Length,@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}})
+          $controlArtifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/package-control-artifacts.json -Encoding utf8
+
+          $controlDll = $controlArtifacts | Where-Object { $_.FullName -match 'VhidminiUm\.dll
+        id: runtime
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            published_name = $null
+            source_instance_id = $null
+            child_ids = @()
+          }
+
+          $inf = Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Filter 'WinInspectUmdfVhf.inf' | Select-Object -First 1
+          if (-not $inf) { throw 'WDK-generated INF not found' }
+          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
+          if (-not $cat) { throw 'WDK-generated catalog not found' }
+
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect Direct UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
+          Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -like '*\x64\signtool.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat.FullName | Set-Content evidence/sign-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog signing failed' }
+          & $signtool verify /pa /v $cat.FullName | Set-Content evidence/verify-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog verification failed' }
+
+          $stage = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stage | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stage -join [Environment]::NewLine), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-umdf-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like '*\x64\devcon.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devcon) {
+            $result.classification = 'hosted-runner-devcon-unavailable'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $install = & $devcon install $inf.FullName $env:HARDWARE_ID 2>&1
+          $installCode = $LASTEXITCODE
+          $install | Set-Content evidence/devcon-install.txt
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+            ($ids -join ';') -match 'ROOT\\WININSPECT\\UMDFVHF'
+          })
+          $result.source_instance_id = if ($source) { $source[0].InstanceId } else { $null }
+          if ($result.source_instance_id) {
+            $result.child_ids = @((Get-PnpDeviceProperty -InstanceId $result.source_instance_id -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue).Data)
+          }
+
+          $source | Select-Object Status,Class,FriendlyName,InstanceId,Problem | ConvertTo-Json -Depth 5 | Set-Content evidence/source.json -Encoding utf8
+          $result.child_ids | ConvertTo-Json -Depth 4 | Set-Content evidence/child-ids.json -Encoding utf8
+
+          $childRecords = @()
+          foreach ($child in @($result.child_ids)) {
+            $dev = Get-PnpDevice -InstanceId $child -ErrorAction SilentlyContinue
+            if ($dev) {
+              $childRecords += [pscustomobject]@{Status=$dev.Status;Class=$dev.Class;FriendlyName=$dev.FriendlyName;InstanceId=$dev.InstanceId;Problem=$dev.Problem}
+            }
+          }
+          $childRecords | ConvertTo-Json -Depth 5 | Set-Content evidence/children.json -Encoding utf8
+
+          $sourceOk = [bool]($source | Where-Object Status -eq 'OK')
+          $childOk = [bool]($childRecords | Where-Object { $_.Status -eq 'OK' -and $_.Class -eq 'HIDClass' })
+
+          if ($sourceOk -and $childOk) {
+            $result.classification = 'direct-umdf2-vhf-source-and-hid-child-started'
+          } elseif ($sourceOk) {
+            $result.classification = 'direct-umdf2-source-started-vhf-child-not-observed'
+          } elseif ($installCode -ne 0) {
+            $result.classification = 'direct-umdf2-devcon-install-failed'
+          } else {
+            $result.classification = 'direct-umdf2-source-not-ok'
+          }
+
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json -Encoding utf8
+          Get-Content evidence/runtime-result.json
+          if ($result.classification -ne 'direct-umdf2-vhf-source-and-hid-child-started') { exit 1 }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/runtime-result.json) {
+            $r = Get-Content evidence/runtime-result.json | ConvertFrom-Json
+            if ($r.source_instance_id) { pnputil.exe /remove-device $r.source_instance_id | Out-File evidence/cleanup-device.txt }
+            if ($r.published_name) { pnputil.exe /delete-driver $r.published_name /uninstall /force | Out-File evidence/cleanup-driver.txt }
+          }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-direct-umdf-vhf-control
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+ } | Select-Object -First 1
+          $controlInf = $controlArtifacts | Where-Object { $_.FullName -match 'VhidminiUm\.inf
+        id: runtime
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            published_name = $null
+            source_instance_id = $null
+            child_ids = @()
+          }
+
+          $inf = Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Filter 'WinInspectUmdfVhf.inf' | Select-Object -First 1
+          if (-not $inf) { throw 'WDK-generated INF not found' }
+          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
+          if (-not $cat) { throw 'WDK-generated catalog not found' }
+
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect Direct UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
+          Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -like '*\x64\signtool.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat.FullName | Set-Content evidence/sign-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog signing failed' }
+          & $signtool verify /pa /v $cat.FullName | Set-Content evidence/verify-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog verification failed' }
+
+          $stage = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stage | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stage -join [Environment]::NewLine), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-umdf-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like '*\x64\devcon.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devcon) {
+            $result.classification = 'hosted-runner-devcon-unavailable'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $install = & $devcon install $inf.FullName $env:HARDWARE_ID 2>&1
+          $installCode = $LASTEXITCODE
+          $install | Set-Content evidence/devcon-install.txt
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+            ($ids -join ';') -match 'ROOT\\WININSPECT\\UMDFVHF'
+          })
+          $result.source_instance_id = if ($source) { $source[0].InstanceId } else { $null }
+          if ($result.source_instance_id) {
+            $result.child_ids = @((Get-PnpDeviceProperty -InstanceId $result.source_instance_id -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue).Data)
+          }
+
+          $source | Select-Object Status,Class,FriendlyName,InstanceId,Problem | ConvertTo-Json -Depth 5 | Set-Content evidence/source.json -Encoding utf8
+          $result.child_ids | ConvertTo-Json -Depth 4 | Set-Content evidence/child-ids.json -Encoding utf8
+
+          $childRecords = @()
+          foreach ($child in @($result.child_ids)) {
+            $dev = Get-PnpDevice -InstanceId $child -ErrorAction SilentlyContinue
+            if ($dev) {
+              $childRecords += [pscustomobject]@{Status=$dev.Status;Class=$dev.Class;FriendlyName=$dev.FriendlyName;InstanceId=$dev.InstanceId;Problem=$dev.Problem}
+            }
+          }
+          $childRecords | ConvertTo-Json -Depth 5 | Set-Content evidence/children.json -Encoding utf8
+
+          $sourceOk = [bool]($source | Where-Object Status -eq 'OK')
+          $childOk = [bool]($childRecords | Where-Object { $_.Status -eq 'OK' -and $_.Class -eq 'HIDClass' })
+
+          if ($sourceOk -and $childOk) {
+            $result.classification = 'direct-umdf2-vhf-source-and-hid-child-started'
+          } elseif ($sourceOk) {
+            $result.classification = 'direct-umdf2-source-started-vhf-child-not-observed'
+          } elseif ($installCode -ne 0) {
+            $result.classification = 'direct-umdf2-devcon-install-failed'
+          } else {
+            $result.classification = 'direct-umdf2-source-not-ok'
+          }
+
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json -Encoding utf8
+          Get-Content evidence/runtime-result.json
+          if ($result.classification -ne 'direct-umdf2-vhf-source-and-hid-child-started') { exit 1 }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/runtime-result.json) {
+            $r = Get-Content evidence/runtime-result.json | ConvertFrom-Json
+            if ($r.source_instance_id) { pnputil.exe /remove-device $r.source_instance_id | Out-File evidence/cleanup-device.txt }
+            if ($r.published_name) { pnputil.exe /delete-driver $r.published_name /uninstall /force | Out-File evidence/cleanup-driver.txt }
+          }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-direct-umdf-vhf-control
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+ } | Select-Object -First 1
+          $controlCat = $controlArtifacts | Where-Object { $_.FullName -match '\.cat
+        id: runtime
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            published_name = $null
+            source_instance_id = $null
+            child_ids = @()
+          }
+
+          $inf = Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Filter 'WinInspectUmdfVhf.inf' | Select-Object -First 1
+          if (-not $inf) { throw 'WDK-generated INF not found' }
+          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
+          if (-not $cat) { throw 'WDK-generated catalog not found' }
+
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect Direct UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
+          Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -like '*\x64\signtool.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat.FullName | Set-Content evidence/sign-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog signing failed' }
+          & $signtool verify /pa /v $cat.FullName | Set-Content evidence/verify-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog verification failed' }
+
+          $stage = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stage | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stage -join [Environment]::NewLine), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-umdf-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like '*\x64\devcon.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devcon) {
+            $result.classification = 'hosted-runner-devcon-unavailable'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $install = & $devcon install $inf.FullName $env:HARDWARE_ID 2>&1
+          $installCode = $LASTEXITCODE
+          $install | Set-Content evidence/devcon-install.txt
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+            ($ids -join ';') -match 'ROOT\\WININSPECT\\UMDFVHF'
+          })
+          $result.source_instance_id = if ($source) { $source[0].InstanceId } else { $null }
+          if ($result.source_instance_id) {
+            $result.child_ids = @((Get-PnpDeviceProperty -InstanceId $result.source_instance_id -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue).Data)
+          }
+
+          $source | Select-Object Status,Class,FriendlyName,InstanceId,Problem | ConvertTo-Json -Depth 5 | Set-Content evidence/source.json -Encoding utf8
+          $result.child_ids | ConvertTo-Json -Depth 4 | Set-Content evidence/child-ids.json -Encoding utf8
+
+          $childRecords = @()
+          foreach ($child in @($result.child_ids)) {
+            $dev = Get-PnpDevice -InstanceId $child -ErrorAction SilentlyContinue
+            if ($dev) {
+              $childRecords += [pscustomobject]@{Status=$dev.Status;Class=$dev.Class;FriendlyName=$dev.FriendlyName;InstanceId=$dev.InstanceId;Problem=$dev.Problem}
+            }
+          }
+          $childRecords | ConvertTo-Json -Depth 5 | Set-Content evidence/children.json -Encoding utf8
+
+          $sourceOk = [bool]($source | Where-Object Status -eq 'OK')
+          $childOk = [bool]($childRecords | Where-Object { $_.Status -eq 'OK' -and $_.Class -eq 'HIDClass' })
+
+          if ($sourceOk -and $childOk) {
+            $result.classification = 'direct-umdf2-vhf-source-and-hid-child-started'
+          } elseif ($sourceOk) {
+            $result.classification = 'direct-umdf2-source-started-vhf-child-not-observed'
+          } elseif ($installCode -ne 0) {
+            $result.classification = 'direct-umdf2-devcon-install-failed'
+          } else {
+            $result.classification = 'direct-umdf2-source-not-ok'
+          }
+
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json -Encoding utf8
+          Get-Content evidence/runtime-result.json
+          if ($result.classification -ne 'direct-umdf2-vhf-source-and-hid-child-started') { exit 1 }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/runtime-result.json) {
+            $r = Get-Content evidence/runtime-result.json | ConvertFrom-Json
+            if ($r.source_instance_id) { pnputil.exe /remove-device $r.source_instance_id | Out-File evidence/cleanup-device.txt }
+            if ($r.published_name) { pnputil.exe /delete-driver $r.published_name /uninstall /force | Out-File evidence/cleanup-driver.txt }
+          }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-direct-umdf-vhf-control
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+ } | Select-Object -First 1
+          $controlInx = $controlArtifacts | Where-Object { $_.FullName -match 'VhidminiUm\.inx
+        id: runtime
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $result = [ordered]@{
+            classification = 'not-attempted'
+            published_name = $null
+            source_instance_id = $null
+            child_ids = @()
+          }
+
+          $inf = Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Filter 'WinInspectUmdfVhf.inf' | Select-Object -First 1
+          if (-not $inf) { throw 'WDK-generated INF not found' }
+          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
+          if (-not $cat) { throw 'WDK-generated catalog not found' }
+
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect Direct UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
+          Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+          Import-Certificate -FilePath evidence/umdf-test.cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' | Out-Null
+
+          $signtool = Get-ChildItem wds/packages -Recurse -File -Filter signtool.exe |
+            Where-Object { $_.FullName -like '*\x64\signtool.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+
+          & $signtool sign /fd SHA256 /s My /sm /sha1 $cert.Thumbprint $cat.FullName | Set-Content evidence/sign-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog signing failed' }
+          & $signtool verify /pa /v $cat.FullName | Set-Content evidence/verify-cat.txt
+          if ($LASTEXITCODE -ne 0) { throw 'catalog verification failed' }
+
+          $stage = & pnputil.exe /add-driver $inf.FullName 2>&1
+          $stageCode = $LASTEXITCODE
+          $stage | Set-Content evidence/stage.txt
+          $published = [regex]::Match(($stage -join [Environment]::NewLine), '(?im)^Published Name\s*:\s*(oem\d+\.inf)\s*$')
+          if ($published.Success) { $result.published_name = $published.Groups[1].Value }
+          if ($stageCode -ne 0) {
+            $result.classification = 'signed-umdf-package-stage-failed'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter devcon.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like '*\x64\devcon.exe' } |
+            Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
+          if (-not $devcon) {
+            $result.classification = 'hosted-runner-devcon-unavailable'
+            $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
+            exit 1
+          }
+
+          $install = & $devcon install $inf.FullName $env:HARDWARE_ID 2>&1
+          $installCode = $LASTEXITCODE
+          $install | Set-Content evidence/devcon-install.txt
+          Start-Sleep -Seconds 3
+
+          $source = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+            $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+            ($ids -join ';') -match 'ROOT\\WININSPECT\\UMDFVHF'
+          })
+          $result.source_instance_id = if ($source) { $source[0].InstanceId } else { $null }
+          if ($result.source_instance_id) {
+            $result.child_ids = @((Get-PnpDeviceProperty -InstanceId $result.source_instance_id -KeyName 'DEVPKEY_Device_Children' -ErrorAction SilentlyContinue).Data)
+          }
+
+          $source | Select-Object Status,Class,FriendlyName,InstanceId,Problem | ConvertTo-Json -Depth 5 | Set-Content evidence/source.json -Encoding utf8
+          $result.child_ids | ConvertTo-Json -Depth 4 | Set-Content evidence/child-ids.json -Encoding utf8
+
+          $childRecords = @()
+          foreach ($child in @($result.child_ids)) {
+            $dev = Get-PnpDevice -InstanceId $child -ErrorAction SilentlyContinue
+            if ($dev) {
+              $childRecords += [pscustomobject]@{Status=$dev.Status;Class=$dev.Class;FriendlyName=$dev.FriendlyName;InstanceId=$dev.InstanceId;Problem=$dev.Problem}
+            }
+          }
+          $childRecords | ConvertTo-Json -Depth 5 | Set-Content evidence/children.json -Encoding utf8
+
+          $sourceOk = [bool]($source | Where-Object Status -eq 'OK')
+          $childOk = [bool]($childRecords | Where-Object { $_.Status -eq 'OK' -and $_.Class -eq 'HIDClass' })
+
+          if ($sourceOk -and $childOk) {
+            $result.classification = 'direct-umdf2-vhf-source-and-hid-child-started'
+          } elseif ($sourceOk) {
+            $result.classification = 'direct-umdf2-source-started-vhf-child-not-observed'
+          } elseif ($installCode -ne 0) {
+            $result.classification = 'direct-umdf2-devcon-install-failed'
+          } else {
+            $result.classification = 'direct-umdf2-source-not-ok'
+          }
+
+          $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json -Encoding utf8
+          Get-Content evidence/runtime-result.json
+          if ($result.classification -ne 'direct-umdf2-vhf-source-and-hid-child-started') { exit 1 }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path evidence/runtime-result.json) {
+            $r = Get-Content evidence/runtime-result.json | ConvertFrom-Json
+            if ($r.source_instance_id) { pnputil.exe /remove-device $r.source_instance_id | Out-File evidence/cleanup-device.txt }
+            if ($r.published_name) { pnputil.exe /delete-driver $r.published_name /uninstall /force | Out-File evidence/cleanup-driver.txt }
+          }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -eq 'CN=WinInspect Direct UMDF VHF CI' | Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase1-direct-umdf-vhf-control
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+ } | Select-Object -First 1
+
+          [ordered]@{
+            exit_code = $controlCode
+            dll_present = [bool]$controlDll
+            inx_present = [bool]$controlInx
+            inf_present = [bool]$controlInf
+            catalog_present = [bool]$controlCat
+            interpretation = if ($controlInf -and $controlCat) {
+              'official-sample-packages; WinInspect project metadata differs'
+            } elseif ($controlDll -and $controlInx -and -not $controlInf -and -not $controlCat) {
+              'NuGet sample mode builds UMDF but does not emit stamped package in-tree'
+            } else {
+              'control inconclusive'
+            }
+          } | ConvertTo-Json | Set-Content evidence/package-control-result.json -Encoding utf8
+
+          if ($controlCode -ne 0) { exit 1 }
 
       - name: Sign, install, and observe VHF child
-        if: steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success' && steps.build.outputs.package_ready == 'true'
         id: runtime
         shell: pwsh
         continue-on-error: true
