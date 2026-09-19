@@ -236,14 +236,14 @@ jobs:
           elif [ "$priv_ok" -ne 1 ]; then
             classification='provider-privilege-drop-invalid'
           elif [ "$verify_rc" -ne 0 ]; then
-            classification='source-identity-or-interleave-failed'
+            classification='multiplicity-topology-or-interleave-failed'
           else
-            classification='wine-phase3a-four-source-identity-pass'
+            classification='wine-phase3a-host-distinct-wine-class-collapsed-pass'
           fi
 
           printf '{"classification":"%s","provider_exit_code":%d,"privilege_drop_ok":%d,"verifier_exit_code":%d}\n'             "$classification" "$provider_rc" "$priv_ok" "$verify_rc" > evidence/result.json
           cat evidence/result.json
-          [ "$classification" = 'wine-phase3a-four-source-identity-pass' ]
+          [ "$classification" = 'wine-phase3a-host-distinct-wine-class-collapsed-pass' ]
 
       - name: Upload evidence
         if: always()
