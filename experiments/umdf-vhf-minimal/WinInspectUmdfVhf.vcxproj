@@ -22,6 +22,8 @@
     <ProjectGuid>{54B9E7C2-4E18-4B6E-A5A4-382000000001}</ProjectGuid>
     <RootNamespace>$(MSBuildProjectName)</RootNamespace>
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
+    <UMDF_VERSION_MINOR>35</UMDF_VERSION_MINOR>
+    <UMDF_MINIMUM_VERSION_REQUIRED>35</UMDF_MINIMUM_VERSION_REQUIRED>
     <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
     <SampleGuid>{5A1A7283-817B-4D67-BC6D-382000000002}</SampleGuid>
@@ -105,7 +107,7 @@
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DDK_INC_PATH);$(DDK_INC_PATH)\wdm;..\..\inc;..</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);WdfDriverStubUm.lib;ntdll.lib;mincore.lib;VhfUm.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);ntdll.lib;mincore.lib;VhfUm.lib</AdditionalDependencies>
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
