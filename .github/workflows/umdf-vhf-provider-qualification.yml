@@ -132,34 +132,20 @@ jobs:
           $artifacts | ConvertTo-Json -Depth 4 | Set-Content evidence/build-artifacts.json -Encoding utf8
 
           $dll = $artifacts | Where-Object { $_.FullName -match 'WinInspectUmdfVhf\.dll$' } | Select-Object -First 1
+          $inf = $artifacts | Where-Object { $_.FullName -match 'WinInspectUmdfVhf\.inf$' } | Select-Object -First 1
+          $cat = $artifacts | Where-Object { $_.FullName -match 'wudf\.cat$' } | Select-Object -First 1
 
-          $package = New-Item -ItemType Directory -Force evidence/package
-          if ($dll) {
-            Copy-Item $dll.FullName (Join-Path $package 'WinInspectUmdfVhf.dll') -Force
-          }
-
-          $wdfHeader = (Get-Content evidence/wdf-header-selected.txt -Raw).Trim()
-          $wdfVersion = (Split-Path (Split-Path $wdfHeader -Parent) -Leaf)
-          $inxPath = 'experiments/umdf-vhf-minimal/WinInspectUmdfVhf.inx'
-          $infPath = Join-Path $package 'WinInspectUmdfVhf.inf'
-          if (Test-Path $inxPath) {
-            $infText = Get-Content $inxPath -Raw
-            $infText = $infText.Replace('$ARCH$', 'AMD64')
-            $infText = $infText.Replace('$UMDFVERSION$', $wdfVersion)
-            Set-Content $infPath $infText -Encoding ascii
-          }
-
-          $inf = if (Test-Path $infPath) { Get-Item $infPath } else { $null }
           [ordered]@{
             exit_code = $buildCode
             dll_present = [bool]$dll
-            inf_present = [bool]$inf
-            selected_umdf_version = $wdfVersion
-            packaged_dll_sha256 = if ($dll) { (Get-FileHash (Join-Path $package 'WinInspectUmdfVhf.dll') -Algorithm SHA256).Hash } else { $null }
-            packaged_inf_sha256 = if ($inf) { (Get-FileHash $inf.FullName -Algorithm SHA256).Hash } else { $null }
+            wdk_inf_present = [bool]$inf
+            wdk_catalog_present = [bool]$cat
+            dll_sha256 = if ($dll) { $dll.SHA256 } else { $null }
+            inf_sha256 = if ($inf) { $inf.SHA256 } else { $null }
+            catalog_sha256 = if ($cat) { $cat.SHA256 } else { $null }
           } | ConvertTo-Json | Set-Content evidence/build-result.json -Encoding utf8
 
-          if ($buildCode -ne 0 -or -not $dll -or -not $inf) { exit 1 }
+          if ($buildCode -ne 0 -or -not $dll -or -not $inf -or -not $cat) { exit 1 }
 
       - name: Sign, install, and observe VHF child
         if: steps.build.outcome == 'success'
@@ -174,30 +160,10 @@ jobs:
             child_ids = @()
           }
 
-          $inf = Get-Item evidence/package/WinInspectUmdfVhf.inf -ErrorAction Stop
-          $dll = Get-Item evidence/package/WinInspectUmdfVhf.dll -ErrorAction Stop
-          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' -ErrorAction SilentlyContinue | Select-Object -First 1
-
-          if (-not $cat) {
-            $inf2catCandidates = @(
-              Get-ChildItem wds/packages -Recurse -File -Filter Inf2Cat.exe -ErrorAction SilentlyContinue
-              Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter Inf2Cat.exe -ErrorAction SilentlyContinue
-            ) | Where-Object { $_.FullName -like '*\x64\Inf2Cat.exe' } | Sort-Object FullName -Descending
-            $inf2catCandidates |
-              Select-Object FullName,Length,@{n='Version';e={$_.VersionInfo.FileVersion}} |
-              ConvertTo-Json -Depth 4 |
-              Set-Content evidence/inf2cat-inventory.json -Encoding utf8
-            $inf2cat = $inf2catCandidates | Select-Object -ExpandProperty FullName -First 1
-            if (-not $inf2cat) { throw 'Inf2Cat.exe not found in NuGet or installed Windows Kits' }
-            $inf2cat | Set-Content evidence/inf2cat-selected.txt -Encoding utf8
-            & $inf2cat /driver:$($inf.Directory.FullName) /os:10_X64 | Set-Content evidence/inf2cat.txt
-            if ($LASTEXITCODE -ne 0) {
-              $result.classification = 'inf2cat-failed'
-              $result | ConvertTo-Json -Depth 8 | Set-Content evidence/runtime-result.json
-              exit 1
-            }
-            $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
-          }
+          $inf = Get-ChildItem wds/hid/wininspect_umdf_vhf -Recurse -File -Filter 'WinInspectUmdfVhf.inf' | Select-Object -First 1
+          if (-not $inf) { throw 'WDK-generated INF not found' }
+          $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' | Select-Object -First 1
+          if (-not $cat) { throw 'WDK-generated catalog not found' }
 
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=WinInspect Direct UMDF VHF CI' -CertStoreLocation 'Cert:\LocalMachine\My' -HashAlgorithm SHA256 -KeyLength 2048 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2)
           Export-Certificate -Cert $cert -FilePath evidence/umdf-test.cer -Force | Out-Null
