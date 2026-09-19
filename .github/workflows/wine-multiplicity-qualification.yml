@@ -1,0 +1,248 @@
+name: Phase 3A Wine input multiplicity qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/wine-multiplicity-qualification.yml'
+      - 'experiments/wine-uinput/uinput-four-source-probe.c'
+      - 'experiments/wine-uinput/verify_multiplicity.py'
+      - 'experiments/wine-uinput/wine_input_probe.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wine-multiplicity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  multiplicity:
+    name: Two keyboards and two mice through Wine Raw Input
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Check out public experiment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install bounded qualification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          sudo modprobe uinput
+          test -c /dev/uinput
+
+          packages=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox gcc g++ gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64-posix python3 wget)
+          install=()
+          for pkg in "${packages[@]}"; do
+            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || install+=("$pkg")
+          done
+          if [ "${#install[@]}" -gt 0 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${install[@]}"
+          fi
+
+          sudo dpkg --add-architecture i386
+          sudo install -d -m 0755 /etc/apt/keyrings
+          sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -qO /etc/apt/sources.list.d/winehq-noble.sources https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y --install-recommends winehq-devel
+
+          wine_bin=''
+          for candidate in /opt/wine-devel/bin/wine /opt/wine-devel/bin/wine64; do
+            if [ -x "$candidate" ]; then wine_bin="$candidate"; break; fi
+          done
+          test -n "$wine_bin"
+          version=$("$wine_bin" --version)
+          echo "$wine_bin" > evidence/wine-bin.txt
+          {
+            echo "experiment=wininspect-382-phase3a-multiplicity"
+            echo "kernel=$(uname -r)"
+            echo "uid=$(id -u)"
+            echo "gid=$(id -g)"
+            echo "wine_version=$version"
+          } > evidence/environment.txt
+          printf '%s\n' "$version" | grep -Eq '^wine-11\.(1[4-9]|[2-9][0-9])' || {
+            echo "Expected Wine 11.14+ for multiplicity qualification, got $version" >&2
+            exit 3
+          }
+
+      - name: Build four-source provider and Wine observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experiments/wine-uinput/verify_multiplicity.py
+          gcc -std=c11 -O2 -Wall -Wextra -Werror             experiments/wine-uinput/uinput-four-source-probe.c             -o evidence/uinput-four-source-probe
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror             -static -static-libgcc -static-libstdc++             experiments/wine-uinput/wine_input_probe.cpp             -o evidence/wine_input_probe.exe -luser32
+          sha256sum             experiments/wine-uinput/uinput-four-source-probe.c             experiments/wine-uinput/verify_multiplicity.py             experiments/wine-uinput/wine_input_probe.cpp             evidence/uinput-four-source-probe             evidence/wine_input_probe.exe             > evidence/fixture-sha256.txt
+
+      - name: Run four-source identity and interleave treatment
+        id: treatment
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          wine_bin=$(cat evidence/wine-bin.txt)
+
+          cat > evidence/xorg.conf <<'EOF'
+          Section "ServerFlags"
+              Option "AutoAddDevices" "true"
+              Option "AutoEnableDevices" "true"
+              Option "AllowMouseOpenFail" "true"
+              Option "DontVTSwitch" "true"
+          EndSection
+          Section "Device"
+              Identifier "DummyDevice"
+              Driver "dummy"
+              VideoRam 256000
+          EndSection
+          Section "Monitor"
+              Identifier "DummyMonitor"
+              HorizSync 5.0 - 1000.0
+              VertRefresh 5.0 - 200.0
+              Modeline "1024x768" 65.0 1024 1048 1184 1344 768 771 777 806
+          EndSection
+          Section "Screen"
+              Identifier "DummyScreen"
+              Device "DummyDevice"
+              Monitor "DummyMonitor"
+              DefaultDepth 24
+              SubSection "Display"
+                  Depth 24
+                  Modes "1024x768"
+              EndSubSection
+          EndSection
+          Section "ServerLayout"
+              Identifier "DummyLayout"
+              Screen "DummyScreen"
+          EndSection
+          EOF
+
+          sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf"             -logfile "$PWD/evidence/Xorg.log" > evidence/xorg-stdout.txt 2>&1 &
+          xorg_pid=$!
+          openbox_pid=''
+          wine_pid=''
+          xi2_pid=''
+          provider_pid=''
+
+          cleanup() {
+            [ -n "${provider_pid:-}" ] && sudo kill "$provider_pid" 2>/dev/null || true
+            [ -n "${wine_pid:-}" ] && kill "$wine_pid" 2>/dev/null || true
+            command -v wineserver >/dev/null 2>&1 && wineserver -k 2>/dev/null || true
+            [ -n "${openbox_pid:-}" ] && kill "$openbox_pid" 2>/dev/null || true
+            [ -n "${xi2_pid:-}" ] && kill "$xi2_pid" 2>/dev/null || true
+            [ -n "${xorg_pid:-}" ] && sudo kill "$xorg_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          x_ready=false
+          for _ in $(seq 1 40); do
+            DISPLAY=:99 xset q >/dev/null 2>&1 && { x_ready=true; break; }
+            sleep 0.25
+          done
+          if [ "$x_ready" != true ]; then
+            echo '{"classification":"xorg-start-failed"}' > evidence/result.json
+            exit 1
+          fi
+
+          export DISPLAY=:99
+          export PATH="$(dirname "$wine_bin"):$PATH"
+          export WINEARCH=win64
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-multiplicity-prefix"
+          export WINEDEBUG=-all
+          rm -rf "$WINEPREFIX"
+
+          openbox --sm-disable > evidence/openbox.log 2>&1 &
+          openbox_pid=$!
+
+          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot.txt 2>&1
+          wineboot_rc=$?
+          if [ "$wineboot_rc" -ne 0 ]; then
+            printf '{"classification":"wine-prefix-preflight-failed","wineboot_exit_code":%d}\n' "$wineboot_rc" > evidence/result.json
+            exit 1
+          fi
+
+          "$wine_bin" "$PWD/evidence/wine_input_probe.exe" > evidence/probe.jsonl 2> evidence/probe.stderr &
+          wine_pid=$!
+          probe_ready=false
+          for _ in $(seq 1 80); do
+            grep -q '"event":"probe_ready"' evidence/probe.jsonl 2>/dev/null && { probe_ready=true; break; }
+            kill -0 "$wine_pid" 2>/dev/null || break
+            sleep 0.25
+          done
+          if [ "$probe_ready" != true ]; then
+            echo '{"classification":"wine-probe-not-ready"}' > evidence/result.json
+            exit 1
+          fi
+
+          timeout 20s xinput test-xi2 --root > evidence/xinput2.txt 2>&1 &
+          xi2_pid=$!
+          sleep 0.25
+
+          uid=$(id -u)
+          gid=$(id -g)
+          export WININSPECT_XORG_LOG="$PWD/evidence/Xorg.log"
+          sudo --preserve-env=WININSPECT_XORG_LOG "$PWD/evidence/uinput-four-source-probe" "$uid" "$gid"             > evidence/provider.txt 2> evidence/provider.err &
+          provider_pid=$!
+
+          provider_ready=false
+          for _ in $(seq 1 100); do
+            grep -q '^ready=1$' evidence/provider.txt 2>/dev/null && { provider_ready=true; break; }
+            sudo kill -0 "$provider_pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          if [ "$provider_ready" != true ]; then
+            echo '{"classification":"four-source-provider-not-ready"}' > evidence/result.json
+            exit 1
+          fi
+
+          cat /proc/bus/input/devices > evidence/host-input-devices.txt
+          xinput list > evidence/xinput-list.txt 2>&1
+          : > evidence/xinput-ids.txt
+          for name in             WinInspect-Multi-Kbd-A             WinInspect-Multi-Kbd-B             WinInspect-Multi-Mouse-A             WinInspect-Multi-Mouse-B; do
+            xid=$(xinput list --id-only "$name" 2>/dev/null | head -1)
+            printf '%s=%s\n' "$name" "$xid" >> evidence/xinput-ids.txt
+          done
+
+          wait "$provider_pid"
+          provider_rc=$?
+          provider_pid=''
+          sleep 1
+
+          kill "$xi2_pid" 2>/dev/null || true
+          wait "$xi2_pid" 2>/dev/null || true
+          xi2_pid=''
+
+          python3 experiments/wine-uinput/verify_multiplicity.py             evidence/probe.jsonl evidence/xinput-ids.txt evidence/xinput2.txt             evidence/host-input-devices.txt evidence/multiplicity-result.json
+          verify_rc=$?
+
+          priv_ok=0
+          grep -q "^privilege_drop=ok euid=$uid egid=$gid$" evidence/provider.txt && priv_ok=1
+
+          if [ "$provider_rc" -ne 0 ]; then
+            classification='four-source-provider-failed'
+          elif [ "$priv_ok" -ne 1 ]; then
+            classification='provider-privilege-drop-invalid'
+          elif [ "$verify_rc" -ne 0 ]; then
+            classification='source-identity-or-interleave-failed'
+          else
+            classification='wine-phase3a-four-source-identity-pass'
+          fi
+
+          printf '{"classification":"%s","provider_exit_code":%d,"privilege_drop_ok":%d,"verifier_exit_code":%d}\n'             "$classification" "$provider_rc" "$priv_ok" "$verify_rc" > evidence/result.json
+          cat evidence/result.json
+          [ "$classification" = 'wine-phase3a-four-source-identity-pass' ]
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase3a-wine-multiplicity
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
