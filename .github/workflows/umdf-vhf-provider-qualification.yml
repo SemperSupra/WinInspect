@@ -179,10 +179,17 @@ jobs:
           $cat = Get-ChildItem $inf.Directory.FullName -File -Filter 'wudf.cat' -ErrorAction SilentlyContinue | Select-Object -First 1
 
           if (-not $cat) {
-            $inf2cat = Get-ChildItem wds/packages -Recurse -File -Filter Inf2Cat.exe |
-              Where-Object { $_.FullName -like '*\x64\Inf2Cat.exe' } |
-              Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
-            if (-not $inf2cat) { throw 'Inf2Cat.exe not found' }
+            $inf2catCandidates = @(
+              Get-ChildItem wds/packages -Recurse -File -Filter Inf2Cat.exe -ErrorAction SilentlyContinue
+              Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -Recurse -File -Filter Inf2Cat.exe -ErrorAction SilentlyContinue
+            ) | Where-Object { $_.FullName -like '*\x64\Inf2Cat.exe' } | Sort-Object FullName -Descending
+            $inf2catCandidates |
+              Select-Object FullName,Length,@{n='Version';e={$_.VersionInfo.FileVersion}} |
+              ConvertTo-Json -Depth 4 |
+              Set-Content evidence/inf2cat-inventory.json -Encoding utf8
+            $inf2cat = $inf2catCandidates | Select-Object -ExpandProperty FullName -First 1
+            if (-not $inf2cat) { throw 'Inf2Cat.exe not found in NuGet or installed Windows Kits' }
+            $inf2cat | Set-Content evidence/inf2cat-selected.txt -Encoding utf8
             & $inf2cat /driver:$($inf.Directory.FullName) /os:10_X64 | Set-Content evidence/inf2cat.txt
             if ($LASTEXITCODE -ne 0) {
               $result.classification = 'inf2cat-failed'
