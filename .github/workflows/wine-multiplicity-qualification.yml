@@ -88,6 +88,25 @@ jobs:
         run: |
           set +e
           wine_bin=$(cat evidence/wine-bin.txt)
+          export PATH="$(dirname "$wine_bin"):$PATH"
+          export WINEARCH=win64
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-multiplicity-prefix"
+          export WINEDEBUG=-all
+          rm -rf "$WINEPREFIX"
+
+          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot.txt 2>&1
+          wineboot_rc=$?
+          if [ "$wineboot_rc" -eq 0 ]; then
+            timeout 20s "$wine_bin" cmd /c exit > evidence/wine-cmd.txt 2>&1
+            winecmd_rc=$?
+          else
+            winecmd_rc=125
+          fi
+          timeout 10s "$(dirname "$wine_bin")/wineserver" -w > evidence/wineserver-preflight.txt 2>&1
+          if [ "$wineboot_rc" -ne 0 ] || [ "$winecmd_rc" -ne 0 ]; then
+            printf '{"classification":"wine-prefix-preflight-failed","wineboot_exit_code":%d,"winecmd_exit_code":%d}\n' "$wineboot_rc" "$winecmd_rc" > evidence/result.json
+            exit 1
+          fi
 
           cat > evidence/xorg.conf <<'EOF'
           Section "ServerFlags"
@@ -151,21 +170,9 @@ jobs:
           fi
 
           export DISPLAY=:99
-          export PATH="$(dirname "$wine_bin"):$PATH"
-          export WINEARCH=win64
-          export WINEPREFIX="$RUNNER_TEMP/wininspect-multiplicity-prefix"
-          export WINEDEBUG=-all
-          rm -rf "$WINEPREFIX"
 
           openbox --sm-disable > evidence/openbox.log 2>&1 &
           openbox_pid=$!
-
-          timeout 45s "$(dirname "$wine_bin")/wineboot" -u > evidence/wineboot.txt 2>&1
-          wineboot_rc=$?
-          if [ "$wineboot_rc" -ne 0 ]; then
-            printf '{"classification":"wine-prefix-preflight-failed","wineboot_exit_code":%d}\n' "$wineboot_rc" > evidence/result.json
-            exit 1
-          fi
 
           "$wine_bin" "$PWD/evidence/wine_input_probe.exe" > evidence/probe.jsonl 2> evidence/probe.stderr &
           wine_pid=$!
