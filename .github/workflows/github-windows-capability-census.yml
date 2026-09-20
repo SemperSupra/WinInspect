@@ -12,6 +12,7 @@ permissions:
   contents: read
 jobs:
   census:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -43,6 +44,7 @@ jobs:
           retention-days: 7
 
   observation-cycles:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       max-parallel: 2
