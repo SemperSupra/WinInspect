@@ -191,7 +191,8 @@ jobs:
           retention-days: 7
 
   windows-dotnet-powershell-nano:
-    if: ${{ github.event_name == 'pull_request' }}
+    # Qualified; rerun only when explicitly selected through workflow_dispatch.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.delegation_id == 'windows-dotnet-powershell-nano' }}
     runs-on: windows-2025
     timeout-minutes: 8
     steps:
