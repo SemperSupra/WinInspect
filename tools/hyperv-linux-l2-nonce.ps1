@@ -97,7 +97,7 @@ New-Item -ItemType Directory -Path $root -Force|Out-Null
 
 $release='3.24.1'
 $base='https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud'
-$imageName="azure_alpine-$release-x86_64-uefi-cloudinit-r0.vhd"
+$imageName="generic_alpine-$release-x86_64-uefi-cloudinit-r0.qcow2"
 $image=Join-Path $root $imageName
 $imageVhdx=Join-Path $root ([IO.Path]::GetFileNameWithoutExtension($imageName)+'.vhdx')
 $sumFile="$image.sha512"
@@ -120,15 +120,25 @@ try {
   $actual=(Get-FileHash $image -Algorithm SHA512).Hash.ToLowerInvariant()
   if(-not $expected -or $expected.Length -ne 128){throw "Invalid published SHA512 material for $imageName"}
   if($actual -ne $expected){throw "Alpine VHD SHA512 mismatch expected=$expected actual=$actual"}
-  $state.source='Alpine Linux official Azure UEFI cloud-init VHD'
+  $state.source='Alpine Linux official generic UEFI cloud-init QCOW2 (NoCloud-capable)'
   $state.release=$release
   $state.image=$imageName
   $state.imageSha512=$actual
   Save-State
 
   Set-Stage 'convert-vhdx'
+  $qemuImg=$null
+  $cmd=Get-Command qemu-img.exe -ErrorAction SilentlyContinue
+  if($cmd){$qemuImg=$cmd.Source}
+  if(-not $qemuImg -and $env:ANDROID_HOME){
+    $androidQemu=Join-Path $env:ANDROID_HOME 'emulator\qemu-img.exe'
+    if(Test-Path -LiteralPath $androidQemu){$qemuImg=$androidQemu}
+  }
+  if(-not $qemuImg){throw 'Generic Alpine QCOW2 selected but no existing qemu-img primitive was found (PATH or Android Emulator).'}
+  $state.qemuImg=$qemuImg
   $convertSw=[Diagnostics.Stopwatch]::StartNew()
-  Convert-VHD -Path $image -DestinationPath $imageVhdx -VHDType Dynamic
+  & $qemuImg convert -f qcow2 -O vhdx $image $imageVhdx
+  if($LASTEXITCODE -ne 0){throw "qemu-img conversion failed with exit code $LASTEXITCODE"}
   $convertSw.Stop()
   $state.convertedVhdxBytes=(Get-Item $imageVhdx).Length
   $state.convertSeconds=[math]::Round($convertSw.Elapsed.TotalSeconds,3)
@@ -182,10 +192,41 @@ bootcmd:
   $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes $memoryBytes -VHDPath $imageVhdx
   Set-VMProcessor -VMName $name -Count 1
   Set-VMFirmware -VMName $name -EnableSecureBoot Off
-  Add-VMHardDiskDrive -VMName $name -ControllerType SCSI -Path $seed
   $osDisk=Get-VMHardDiskDrive -VMName $name|Where-Object Path -eq $imageVhdx|Select-Object -First 1
   if($osDisk){Set-VMFirmware -VMName $name -FirstBootDevice $osDisk}
   Connect-VMNetworkAdapter -VMName $name -SwitchName $switch.Name
+
+  # Configure the NoCloud seed with the exact Hyper-V synthetic NIC identity.
+  if($hostIp){
+    $prefixLength=[int]$hostIp.PrefixLength
+    $hostNum=Convert-IPv4ToUInt $hostIp.IPAddress
+    $guestNum=$hostNum+10
+    $guestIp=Convert-UIntToIPv4 $guestNum
+    $mask=Get-MaskFromPrefix $prefixLength
+    $macRaw=(Get-VMNetworkAdapter -VMName $name|Select-Object -First 1).MacAddress
+    $mac=($macRaw -replace '(.{2})(?!$)','$1:').ToLowerInvariant()
+    $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns='1.1.1.1';mac=$mac}
+    $seedDisk=Mount-VHD -Path $seed -PassThru|Get-Disk
+    $seedVol=$seedDisk|Get-Partition|Get-Volume|Where-Object FileSystemLabel -eq 'CIDATA'|Select-Object -First 1
+    if(-not $seedVol -or -not $seedVol.DriveLetter){throw 'CIDATA seed volume could not be remounted for NoCloud network configuration'}
+    $seedRoot="$($seedVol.DriveLetter):\"
+    @"
+version: 1
+config:
+  - type: physical
+    name: eth0
+    mac_address: '$mac'
+    subnets:
+      - type: static
+        address: $guestIp
+        netmask: $mask
+        gateway: $($hostIp.IPAddress)
+        dns_nameservers:
+          - 1.1.1.1
+"@ | Set-Content -Encoding ascii (Join-Path $seedRoot 'network-config')
+    Dismount-VHD -Path $seed
+  }
+  Add-VMHardDiskDrive -VMName $name -ControllerType SCSI -Path $seed
   $state.vmCreated=$true
   Save-State
 
@@ -219,8 +260,9 @@ bootcmd:
   }
   Save-State
 
-  # Use Microsoft's Hyper-V KVP guest-network injection rather than adding a DHCP server.
-  if($heartbeatSeen -and $vmWmi -and $hostIp){
+  # Generic NoCloud is the primary network configuration path. KVP injection is a
+  # fallback diagnostic only if no static NoCloud candidate could be prepared.
+  if($heartbeatSeen -and $vmWmi -and $hostIp -and -not $state.networkCandidate){
     Set-Stage 'inject-guest-network'
     try {
       $nat=@(Get-NetNat -ErrorAction SilentlyContinue|Where-Object{$_.Name -eq $switch.Name})|Select-Object -First 1
@@ -277,6 +319,16 @@ bootcmd:
     Start-Sleep -Seconds $GuestSettleSeconds
   }
 
+  if($heartbeatSeen -and $state.networkCandidate){
+    $candidateIp=[string]$state.networkCandidate.guestIPv4
+    $state.observedGuestIPs=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
+    $state.l1ToL2Ping=Test-Connection -ComputerName $candidateIp -Count 1 -Quiet -ErrorAction SilentlyContinue
+    $state.l1ToL2Tcp22=Test-TcpQuick $candidateIp 22
+    $state.natSessionsFromGuest=@(Get-NetNatSession -ErrorAction SilentlyContinue|Where-Object{$_.InternalSourceAddress -eq $candidateIp}|Select-Object -First 20|ForEach-Object{[ordered]@{internalSourceAddress=$_.InternalSourceAddress;internalSourcePort=$_.InternalSourcePort;remoteExternalDestinationAddress=$_.RemoteExternalDestinationAddress;remoteExternalDestinationPort=$_.RemoteExternalDestinationPort;protocol=$_.Protocol}})
+    if($vmWmi){$state.guestKvpAfterNetwork=Get-GuestKvp $vmWmi}
+    Save-State
+  }
+
   Set-Stage 'stop-vm'
   Stop-VM -Name $name -TurnOff -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
@@ -306,7 +358,7 @@ bootcmd:
   }
   $state.l2Executed=([bool]$heartbeatSeen -or $validGuid)
   $state.oracleSatisfied=$state.l2Executed
-  $networkProven=([bool]$state.preInjectionL1ToL2Ping -or [bool]$state.preInjectionL1ToL2Tcp22 -or ([bool]$state.networkInjectionSucceeded -and ([bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22)))
+  $networkProven=([bool]$state.preInjectionL1ToL2Ping -or [bool]$state.preInjectionL1ToL2Tcp22 -or [bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22)
   $state.l1L2NetworkProven=$networkProven
 
   if($validGuid -and $networkProven){
