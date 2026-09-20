@@ -211,7 +211,16 @@ bootcmd:
   $vmWmi=Get-WmiObject -Namespace 'root\virtualization\v2' -Class 'Msvm_ComputerSystem'|Where-Object{$_.ElementName -eq $name}|Select-Object -First 1
   if($vmWmi){$state.guestKvpBeforeNetwork=Get-GuestKvp $vmWmi}
   $state.observedGuestIPsBeforeInjection=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
-  $existingIPv4=@($state.observedGuestIPsBeforeInjection|Where-Object{$_ -match '^\\d+\\.\\d+\\.\\d+\\.\\d+  if($heartbeatSeen -and $vmWmi -and $hostIp){
+  $existingIPv4=@($state.observedGuestIPsBeforeInjection|Where-Object{$_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*'})|Select-Object -First 1
+  if($existingIPv4){
+    $state.preInjectionGuestIPv4=$existingIPv4
+    $state.preInjectionL1ToL2Ping=Test-Connection -ComputerName $existingIPv4 -Count 1 -Quiet -ErrorAction SilentlyContinue
+    $state.preInjectionL1ToL2Tcp22=Test-TcpQuick $existingIPv4 22
+  }
+  Save-State
+
+  # Use Microsoft's Hyper-V KVP guest-network injection rather than adding a DHCP server.
+  if($heartbeatSeen -and $vmWmi -and $hostIp){
     Set-Stage 'inject-guest-network'
     try {
       $nat=@(Get-NetNat -ErrorAction SilentlyContinue|Where-Object{$_.Name -eq $switch.Name})|Select-Object -First 1
