@@ -141,8 +141,26 @@ try {
   $convertSw=[Diagnostics.Stopwatch]::StartNew()
   # Hyper-V on the hosted runner refuses sparse VHDX attachments. Ask the existing
   # qemu-img primitive for a fixed VHDX so no filesystem sparse semantics leak through.
-  & $qemuImg convert -f qcow2 -O vhdx -o subformat=fixed $image $imageVhdx
+  $sparseVhdx="$imageVhdx.sparse"
+  & $qemuImg convert -f qcow2 -O vhdx -o subformat=fixed $image $sparseVhdx
   if($LASTEXITCODE -ne 0){throw "qemu-img fixed-VHDX conversion failed with exit code $LASTEXITCODE"}
+
+  # qemu-img on the runner creates VHDX files with the NTFS SparseFile attribute even
+  # for subformat=fixed. Hyper-V refuses any sparse backing file. Re-materialize the
+  # bytes through ordinary FileStreams so the final VHDX is dense without another tool.
+  $src=[IO.File]::Open($sparseVhdx,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+  try {
+    $dst=[IO.File]::Open($imageVhdx,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try {
+      $buffer=New-Object byte[] (8MB)
+      while(($n=$src.Read($buffer,0,$buffer.Length)) -gt 0){$dst.Write($buffer,0,$n)}
+      $dst.Flush($true)
+    } finally {$dst.Dispose()}
+  } finally {$src.Dispose()}
+  Remove-Item -LiteralPath $sparseVhdx -Force
+  $attrs=(Get-Item -LiteralPath $imageVhdx).Attributes
+  $state.convertedVhdxAttributes=$attrs.ToString()
+  if(($attrs -band [IO.FileAttributes]::SparseFile) -ne 0){throw 'Dense VHDX rematerialization still has SparseFile attribute'}
   $convertSw.Stop()
   $state.convertedVhdxBytes=(Get-Item $imageVhdx).Length
   $state.convertSeconds=[math]::Round($convertSw.Elapsed.TotalSeconds,3)
