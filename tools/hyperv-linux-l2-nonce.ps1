@@ -104,6 +104,8 @@ $sumFile="$image.sha512"
 $seed=Join-Path $root 'cidata.vhdx'
 $memoryBytes=[int64]$MemoryMB * 1MB
 $vm=$null
+$createdSwitchName=$null
+$createdNatName=$null
 
 try {
   Set-Stage 'download-image'
@@ -174,18 +176,38 @@ bootcmd:
   Dismount-VHD -Path $seed
 
   Set-Stage 'characterize-host-network'
-  $switch=Get-VMSwitch|Where-Object{$_.Name -eq 'Default Switch'}|Select-Object -First 1
-  if(-not $switch){$switch=Get-VMSwitch|Where-Object{$_.Name -eq 'nat'}|Select-Object -First 1}
-  if(-not $switch){$switch=Get-VMSwitch|Select-Object -First 1}
-  if(-not $switch){throw 'No Hyper-V virtual switch available'}
-  $state.networkSwitch=[ordered]@{name=$switch.Name;type=$switch.SwitchType.ToString();id=$switch.Id.ToString()}
-  $state.hostNats=@(Get-NetNat -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;prefix=$_.InternalIPInterfaceAddressPrefix;active=$_.Active}})
-  $ifAlias="vEthernet ($($switch.Name))"
-  $hostIp=Get-NetIPAddress -InterfaceAlias $ifAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue|Where-Object{$_.IPAddress -notlike '169.254.*'}|Select-Object -First 1
-  if($hostIp){
-    $state.switchHostIPv4=$hostIp.IPAddress
-    $state.switchHostPrefixLength=$hostIp.PrefixLength
+  # Use a disposable, controlled Hyper-V internal switch/NAT instead of depending on
+  # an ambient Docker/Default Switch that varies between hosted-runner allocations.
+  $switchName="$name-net"
+  $natName="$name-nat"
+  $selectedThirdOctet=$null
+  $existingIps=@(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue|ForEach-Object{$_.IPAddress})
+  $existingPrefixes=@(Get-NetNat -ErrorAction SilentlyContinue|ForEach-Object{[string]$_.InternalIPInterfaceAddressPrefix})
+  foreach($octet in @(252,253,254,251,250)){
+    $candidatePrefix="192.168.$octet.0/24"
+    $candidateStem="192.168.$octet."
+    if(-not ($existingPrefixes -contains $candidatePrefix) -and -not @($existingIps|Where-Object{$_ -like "$candidateStem*"}).Count){
+      $selectedThirdOctet=$octet
+      break
+    }
   }
+  if($null -eq $selectedThirdOctet){throw 'No free bounded RFC1918 /24 candidate found for disposable L2 NAT'}
+  $switch=New-VMSwitch -Name $switchName -SwitchType Internal -ErrorAction Stop
+  $createdSwitchName=$switchName
+  $ifAlias="vEthernet ($switchName)"
+  $adapterDeadline=(Get-Date).AddSeconds(10)
+  while((Get-Date) -lt $adapterDeadline -and -not (Get-NetAdapter -Name $ifAlias -ErrorAction SilentlyContinue)){Start-Sleep -Milliseconds 500}
+  if(-not (Get-NetAdapter -Name $ifAlias -ErrorAction SilentlyContinue)){throw "Internal-switch host adapter did not appear: $ifAlias"}
+  $hostAddress="192.168.$selectedThirdOctet.1"
+  $prefix="192.168.$selectedThirdOctet.0/24"
+  New-NetIPAddress -InterfaceAlias $ifAlias -IPAddress $hostAddress -PrefixLength 24 -ErrorAction Stop|Out-Null
+  New-NetNat -Name $natName -InternalIPInterfaceAddressPrefix $prefix -ErrorAction Stop|Out-Null
+  $createdNatName=$natName
+  $hostIp=Get-NetIPAddress -InterfaceAlias $ifAlias -AddressFamily IPv4 -ErrorAction Stop|Where-Object{$_.IPAddress -eq $hostAddress}|Select-Object -First 1
+  $state.networkSwitch=[ordered]@{name=$switch.Name;type=$switch.SwitchType.ToString();id=$switch.Id.ToString();createdForProbe=$true}
+  $state.hostNats=@(Get-NetNat -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;prefix=$_.InternalIPInterfaceAddressPrefix;active=$_.Active}})
+  $state.switchHostIPv4=$hostIp.IPAddress
+  $state.switchHostPrefixLength=$hostIp.PrefixLength
   Save-State
 
   Set-Stage 'create-vm'
@@ -386,6 +408,8 @@ config:
     Remove-VM -Name $name -Force -ErrorAction SilentlyContinue
   }
   Dismount-VHD -Path $seed -ErrorAction SilentlyContinue
+  if($createdNatName){Remove-NetNat -Name $createdNatName -Confirm:$false -ErrorAction SilentlyContinue}
+  if($createdSwitchName){Remove-VMSwitch -Name $createdSwitchName -Force -ErrorAction SilentlyContinue}
   Save-State
   Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 }
