@@ -37,8 +37,25 @@ function Run-Probe([string]$isolation){
 try {
   $d=Get-Command docker -ErrorAction Stop
   $state.docker.command=$d.Source
-  $state.docker.version=(& docker version --format '{{json .}}' 2>&1|Out-String).Trim()
-  if($LASTEXITCODE -ne 0){throw 'Docker daemon is not callable'}
+  $svc=Get-Service docker -ErrorAction SilentlyContinue
+  $state.docker.serviceInitial=if($svc){$svc.Status.ToString()}else{'ABSENT'}
+  $versionText=(& docker version --format '{{json .}}' 2>&1|Out-String).Trim()
+  $versionCode=$LASTEXITCODE
+  if($versionCode -ne 0 -and $svc){
+    if($svc.Status -ne 'Running'){
+      Start-Service docker -ErrorAction Stop
+    }
+    $deadline=(Get-Date).AddSeconds(20)
+    do {
+      Start-Sleep -Seconds 1
+      $versionText=(& docker version --format '{{json .}}' 2>&1|Out-String).Trim()
+      $versionCode=$LASTEXITCODE
+    } while($versionCode -ne 0 -and (Get-Date) -lt $deadline)
+  }
+  $svc=Get-Service docker -ErrorAction SilentlyContinue
+  $state.docker.serviceFinal=if($svc){$svc.Status.ToString()}else{'ABSENT'}
+  $state.docker.version=$versionText
+  if($versionCode -ne 0){throw "Docker daemon is not callable after bounded service recovery: $versionText"}
 
   $free=(Get-PSDrive C).Free
   $state.host.freeCBytes=[int64]$free
