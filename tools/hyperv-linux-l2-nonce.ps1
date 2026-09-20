@@ -228,6 +228,35 @@ bootcmd:
   $state.hostNats=@(Get-NetNat -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;prefix=$_.InternalIPInterfaceAddressPrefix;active=$_.Active}})
   $state.switchHostIPv4=$hostIp.IPAddress
   $state.switchHostPrefixLength=$hostIp.PrefixLength
+
+  # Characterize the L1 uplink and reuse its resolver as the first DNS candidate.
+  # This separates WinNAT/TCP egress from guest resolver behavior without adding a DNS service.
+  $defaultRoute=Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+    Sort-Object RouteMetric,InterfaceMetric | Select-Object -First 1
+  $dnsCandidate='1.1.1.1'
+  if($defaultRoute){
+    $uplink=Get-NetAdapter -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction SilentlyContinue
+    $dnsAddresses=@(Get-DnsClientServerAddress -InterfaceIndex $defaultRoute.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      ForEach-Object{$_.ServerAddresses} | Where-Object{$_})
+    if($dnsAddresses.Count -gt 0){$dnsCandidate=[string]$dnsAddresses[0]}
+    $state.hostUplink=[ordered]@{
+      interfaceIndex=$defaultRoute.InterfaceIndex
+      interfaceAlias=$defaultRoute.InterfaceAlias
+      nextHop=$defaultRoute.NextHop
+      routeMetric=$defaultRoute.RouteMetric
+      adapter=if($uplink){$uplink.InterfaceDescription}else{$null}
+      dnsServers=$dnsAddresses
+    }
+  }
+  $probeHost='dl-cdn.alpinelinux.org'
+  $probeIPv4=(Resolve-DnsName $probeHost -Type A -ErrorAction SilentlyContinue |
+    Where-Object{$_.IPAddress} | Select-Object -First 1 -ExpandProperty IPAddress)
+  $state.hostEgressProbe=[ordered]@{
+    probeHost=$probeHost
+    probeIPv4=$probeIPv4
+    dnsCandidate=$dnsCandidate
+    tcp443=if($probeIPv4){Test-TcpQuick $probeIPv4 443}else{$false}
+  }
   Save-State
 
   Set-Stage 'create-vm'
@@ -250,7 +279,7 @@ bootcmd:
     $guestIp=Convert-UIntToIPv4 $guestNum
     $mask=Get-MaskFromPrefix $prefixLength
     $mac=($macRaw -replace '(.{2})(?!$)','$1:').ToLowerInvariant()
-    $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns='1.1.1.1';mac=$mac}
+    $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns=$dnsCandidate;mac=$mac}
     $seedDisk=Mount-VHD -Path $seed -PassThru|Get-Disk
     $seedVol=$seedDisk|Get-Partition|Get-Volume|Where-Object FileSystemLabel -eq 'CIDATA'|Select-Object -First 1
     if(-not $seedVol -or -not $seedVol.DriveLetter){throw 'CIDATA seed volume could not be remounted for NoCloud network configuration'}
@@ -267,7 +296,7 @@ config:
         netmask: $mask
         gateway: $($hostIp.IPAddress)
         dns_nameservers:
-          - 1.1.1.1
+          - $dnsCandidate
 "@ | Set-Content -Encoding ascii (Join-Path $seedRoot 'network-config')
 
     # Reuse the guest's existing BusyBox/cloud image utilities to prove outbound
@@ -291,7 +320,26 @@ runcmd:
       echo FAIL > /mnt/cidata-rw/guest-egress-ip.txt
     fi
     cat /tmp/l2-egress-ip.txt > /mnt/cidata-rw/guest-egress-ip-detail.txt 2>/dev/null || true
-    if nslookup dl-cdn.alpinelinux.org >/tmp/l2-dns.txt 2>&1; then
+
+    # Prove HTTPS/TCP egress independently of guest DNS by temporarily using the
+    # L1-resolved CDN address while retaining the real hostname for TLS/SNI.
+    if [ -n '__PROBE_IP__' ]; then
+      cp /etc/hosts /tmp/hosts.before-l2-probe 2>/dev/null || true
+      echo '__PROBE_IP__ __PROBE_HOST__' >> /etc/hosts
+      if wget -q -T 10 -O /tmp/l2-fetch-hostmap '__PROBE_URL__'; then
+        echo PASS > /mnt/cidata-rw/guest-fetch-hostmap.txt
+        wc -c /tmp/l2-fetch-hostmap > /mnt/cidata-rw/guest-fetch-hostmap-bytes.txt 2>&1 || true
+        sha256sum /tmp/l2-fetch-hostmap > /mnt/cidata-rw/guest-fetch-hostmap-sha256.txt 2>&1 || true
+      else
+        echo FAIL > /mnt/cidata-rw/guest-fetch-hostmap.txt
+      fi
+      if [ -f /tmp/hosts.before-l2-probe ]; then cp /tmp/hosts.before-l2-probe /etc/hosts; fi
+    else
+      echo SKIP > /mnt/cidata-rw/guest-fetch-hostmap.txt
+    fi
+
+    printf 'nameserver %s\n' '__DNS__' > /etc/resolv.conf
+    if nslookup __PROBE_HOST__ >/tmp/l2-dns.txt 2>&1; then
       echo PASS > /mnt/cidata-rw/guest-dns.txt
     else
       echo FAIL > /mnt/cidata-rw/guest-dns.txt
@@ -307,6 +355,9 @@ runcmd:
     sync
 '@
     $egressYaml=$egressYaml.Replace('__PROBE_URL__',$probeUrl)
+    $egressYaml=$egressYaml.Replace('__PROBE_HOST__',$probeHost)
+    $egressYaml=$egressYaml.Replace('__PROBE_IP__',[string]$probeIPv4)
+    $egressYaml=$egressYaml.Replace('__DNS__',[string]$dnsCandidate)
     Add-Content -Encoding ascii (Join-Path $seedRoot 'user-data') $egressYaml
     Dismount-VHD -Path $seed
   }
@@ -430,6 +481,9 @@ runcmd:
       @('guest-route.txt','guestRouteObservation'),
       @('guest-egress-ip.txt','guestEgressIp'),
       @('guest-egress-ip-detail.txt','guestEgressIpDetail'),
+      @('guest-fetch-hostmap.txt','guestFetchHostMap'),
+      @('guest-fetch-hostmap-bytes.txt','guestFetchHostMapBytes'),
+      @('guest-fetch-hostmap-sha256.txt','guestFetchHostMapSha256'),
       @('guest-dns.txt','guestDns'),
       @('guest-dns-detail.txt','guestDnsDetail'),
       @('guest-fetch.txt','guestFetch'),
@@ -452,16 +506,20 @@ runcmd:
   $networkProven=([bool]$state.preInjectionL1ToL2Ping -or [bool]$state.preInjectionL1ToL2Tcp22 -or [bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22)
   $state.l1L2NetworkProven=$networkProven
   $state.guestInternetIpProven=([string]$state.guestEgressIp -eq 'PASS')
+  $state.guestHttpsHostMapProven=([string]$state.guestFetchHostMap -eq 'PASS')
   $state.guestDnsProven=([string]$state.guestDns -eq 'PASS')
   $state.guestHttpsFetchProven=([string]$state.guestFetch -eq 'PASS')
   $state.networkFetchProven=([bool]$state.guestDnsProven -and [bool]$state.guestHttpsFetchProven)
 
-  if($validGuid -and $networkProven -and $state.guestInternetIpProven -and $state.networkFetchProven){
+  if($validGuid -and $networkProven -and $state.guestHttpsHostMapProven -and $state.networkFetchProven){
     $state.classification='L2_EXECUTION_L1_L2_AND_EGRESS_PROVEN'
-    $state.reason='Guest execution, guest-generated nonce, L1-L2 reachability, raw Internet reachability, DNS, and HTTPS fetch were all observed.'
+    $state.reason='Guest execution, guest-generated nonce, L1-L2 reachability, independent HTTPS/TCP egress, DNS, and normal HTTPS fetch were all observed.'
+  } elseif($validGuid -and $networkProven -and $state.guestHttpsHostMapProven){
+    $state.classification='L2_EXECUTION_L1_L2_AND_TCP_EGRESS_PROVEN_DNS_UNPROVEN'
+    $state.reason='Guest execution and L1-L2 reachability were observed; HTTPS/TCP egress succeeded using an L1-resolved host mapping, but guest DNS/normal fetch did not satisfy the oracle.'
   } elseif($validGuid -and $networkProven){
     $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
-    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were observed; full guest egress oracle was not satisfied.'
+    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were observed; independent HTTPS/TCP egress did not satisfy the oracle.'
   } elseif($networkProven){
     $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
     $state.reason='Healthy Hyper-V heartbeat proves L2 execution; Microsoft KVP network injection plus an observed guest IP/reachability proves L1-L2 networking. NoCloud write-back remains unproven.'
