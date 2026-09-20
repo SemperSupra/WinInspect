@@ -92,7 +92,8 @@ jobs:
           retention-days: 7
 
   linux-l2-gate:
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    # Qualified on PR #32; rerun only by explicit/manual or sidecar dispatch.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       max-parallel: 1
