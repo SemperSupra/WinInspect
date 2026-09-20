@@ -50,6 +50,7 @@ $release='3.24.1'
 $base='https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud'
 $imageName="azure_alpine-$release-x86_64-uefi-cloudinit-r0.vhd"
 $image=Join-Path $root $imageName
+$imageVhdx=Join-Path $root ([IO.Path]::GetFileNameWithoutExtension($imageName)+'.vhdx')
 $sumFile="$image.sha512"
 $seed=Join-Path $root 'cidata.vhdx'
 $memoryBytes=[int64]$MemoryMB * 1MB
@@ -74,6 +75,14 @@ try {
   $state.release=$release
   $state.image=$imageName
   $state.imageSha512=$actual
+  Save-State
+
+  Set-Stage 'convert-vhdx'
+  $convertSw=[Diagnostics.Stopwatch]::StartNew()
+  Convert-VHD -Path $image -DestinationPath $imageVhdx -VHDType Dynamic
+  $convertSw.Stop()
+  $state.convertedVhdxBytes=(Get-Item $imageVhdx).Length
+  $state.convertSeconds=[math]::Round($convertSw.Elapsed.TotalSeconds,3)
   Save-State
 
   Set-Stage 'create-seed'
@@ -106,11 +115,11 @@ bootcmd:
   Dismount-VHD -Path $seed
 
   Set-Stage 'create-vm'
-  $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes $memoryBytes -VHDPath $image
+  $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes $memoryBytes -VHDPath $imageVhdx
   Set-VMProcessor -VMName $name -Count 1
   Set-VMFirmware -VMName $name -EnableSecureBoot Off
   Add-VMHardDiskDrive -VMName $name -ControllerType SCSI -Path $seed
-  $osDisk=Get-VMHardDiskDrive -VMName $name|Where-Object Path -eq $image|Select-Object -First 1
+  $osDisk=Get-VMHardDiskDrive -VMName $name|Where-Object Path -eq $imageVhdx|Select-Object -First 1
   if($osDisk){Set-VMFirmware -VMName $name -FirstBootDevice $osDisk}
   $switch=Get-VMSwitch|Where-Object{$_.Name -eq 'Default Switch'}|Select-Object -First 1
   if(-not $switch){$switch=Get-VMSwitch|Select-Object -First 1}
