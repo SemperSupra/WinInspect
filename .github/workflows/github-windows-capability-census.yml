@@ -1,6 +1,23 @@
 name: GitHub Windows capability census
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('sidecar:{0}:{1}:{2}', inputs.workset_id, inputs.delegation_id, inputs.assignment_id) || format('GitHub Windows capability census PR #{0}', github.event.pull_request.number) }}
 on:
   workflow_dispatch:
+    inputs:
+      assignment_id:
+        description: Stable assignment/idempotency key; use manual outside Agent Dispatch
+        required: false
+        default: manual
+        type: string
+      workset_id:
+        description: Correlation only; authoritative workset remains outside Actions
+        required: false
+        default: manual
+        type: string
+      delegation_id:
+        description: Bounded workset delegation being executed
+        required: false
+        default: manual
+        type: string
   pull_request:
     paths:
       - tools/github-windows-capability-census.ps1
@@ -16,7 +33,7 @@ permissions:
 
 jobs:
   census:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.workset_id == 'manual' }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -48,7 +65,7 @@ jobs:
           retention-days: 7
 
   observation-cycles:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.workset_id == 'manual' }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -74,6 +91,7 @@ jobs:
           retention-days: 7
 
   linux-l2-gate:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       max-parallel: 1
