@@ -134,8 +134,8 @@ jobs:
           retention-days: 7
 
   windows-container-nanoserver:
-    # PR-only qualification: sidecar-correlated dispatch remains limited to the L2 lane.
-    if: ${{ github.event_name == 'pull_request' }}
+    # Qualified; rerun only when explicitly selected through workflow_dispatch.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.delegation_id == 'windows-container-nanoserver' }}
     runs-on: windows-2025
     timeout-minutes: 8
     steps:
