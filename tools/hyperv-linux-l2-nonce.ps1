@@ -29,16 +29,30 @@ function Invoke-Curl([string]$url,[string]$out) {
   if($LASTEXITCODE -ne 0){ throw "curl failed ($LASTEXITCODE): $url" }
 }
 function Convert-IPv4ToUInt([string]$ip) {
+  # Windows PowerShell 5.1 can coerce bit-shifts through signed Int32. Use arithmetic
+  # so addresses with the high bit set (for example 172.x) cannot become negative.
   $b=[Net.IPAddress]::Parse($ip).GetAddressBytes()
-  return (([uint64]$b[0] -shl 24) -bor ([uint64]$b[1] -shl 16) -bor ([uint64]$b[2] -shl 8) -bor [uint64]$b[3])
+  return ([uint64]$b[0] * 16777216 + [uint64]$b[1] * 65536 + [uint64]$b[2] * 256 + [uint64]$b[3])
 }
 function Convert-UIntToIPv4([uint64]$n) {
-  return "$(($n -shr 24) -band 255).$(($n -shr 16) -band 255).$(($n -shr 8) -band 255).$($n -band 255)"
+  $a=[uint64][math]::Floor($n / 16777216) % 256
+  $b=[uint64][math]::Floor($n / 65536) % 256
+  $c=[uint64][math]::Floor($n / 256) % 256
+  $d=$n % 256
+  return "$a.$b.$c.$d"
 }
 function Get-MaskFromPrefix([int]$prefix) {
   if($prefix -le 0){return '0.0.0.0'}
-  $mask=([uint64]0xffffffff -shl (32-$prefix)) -band [uint64]0xffffffff
-  return Convert-UIntToIPv4 $mask
+  if($prefix -ge 32){return '255.255.255.255'}
+  $octets=New-Object int[] 4
+  $full=[int][math]::Floor($prefix/8)
+  $rem=$prefix % 8
+  for($i=0;$i-lt4;$i++){
+    if($i -lt $full){$octets[$i]=255}
+    elseif($i -eq $full -and $rem -gt 0){$octets[$i]=[int](256-[math]::Pow(2,8-$rem))}
+    else{$octets[$i]=0}
+  }
+  return ($octets -join '.')
 }
 function Test-TcpQuick([string]$ip,[int]$port,[int]$timeoutMs=2500) {
   $client=New-Object Net.Sockets.TcpClient
@@ -196,6 +210,130 @@ bootcmd:
   $state.integrationServices=@(Get-VMIntegrationService -VMName $name -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;enabled=$_.Enabled;primaryStatus=$_.PrimaryStatusDescription;secondaryStatus=$_.SecondaryStatusDescription}})
   $vmWmi=Get-WmiObject -Namespace 'root\virtualization\v2' -Class 'Msvm_ComputerSystem'|Where-Object{$_.ElementName -eq $name}|Select-Object -First 1
   if($vmWmi){$state.guestKvpBeforeNetwork=Get-GuestKvp $vmWmi}
+  $state.observedGuestIPsBeforeInjection=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
+  $existingIPv4=@($state.observedGuestIPsBeforeInjection|Where-Object{$_ -match '^\\d+\\.\\d+\\.\\d+\\.\\d+  if($heartbeatSeen -and $vmWmi -and $hostIp){
+    Set-Stage 'inject-guest-network'
+    try {
+      $nat=@(Get-NetNat -ErrorAction SilentlyContinue|Where-Object{$_.Name -eq $switch.Name})|Select-Object -First 1
+      if(-not $nat){$nat=@(Get-NetNat -ErrorAction SilentlyContinue)|Select-Object -First 1}
+      $prefixLength=if($nat -and $nat.InternalIPInterfaceAddressPrefix){[int](($nat.InternalIPInterfaceAddressPrefix -split '/')[1])}else{[int]$hostIp.PrefixLength}
+      $hostNum=Convert-IPv4ToUInt $hostIp.IPAddress
+      $guestNum=$hostNum+10
+      $guestIp=Convert-UIntToIPv4 $guestNum
+      $mask=Get-MaskFromPrefix $prefixLength
+      $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns='1.1.1.1'}
+
+      $vmSettings=@($vmWmi.GetRelated('Msvm_VirtualSystemSettingData'))|Where-Object{$_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized'}|Select-Object -First 1
+      $vmNet=@($vmSettings.GetRelated('Msvm_SyntheticEthernetPortSettingData'))|Select-Object -First 1
+      $netCfg=@($vmNet.GetRelated('Msvm_GuestNetworkAdapterConfiguration'))|Select-Object -First 1
+      if(-not $netCfg){throw 'Guest network configuration object not exposed by KVP integration service'}
+      $netCfg.IPAddresses=@($guestIp)
+      $netCfg.Subnets=@($mask)
+      $netCfg.DefaultGateways=@($hostIp.IPAddress)
+      $netCfg.DNSServers=@('1.1.1.1')
+      $netCfg.DHCPEnabled=$false
+      $netCfg.ProtocolIFType=4096
+      $svc=Get-WmiObject -Namespace 'root\virtualization\v2' -Class 'Msvm_VirtualSystemManagementService'
+      $setResult=$svc.SetGuestNetworkAdapterConfiguration($vmWmi,@($netCfg.GetText(1)))
+      $state.networkInjectionReturnValue=[int]$setResult.ReturnValue
+      $injectOk=$false
+      if($setResult.ReturnValue -eq 0){$injectOk=$true}
+      elseif($setResult.ReturnValue -eq 4096){
+        $job=[WMI]$setResult.Job
+        $jobDeadline=(Get-Date).AddSeconds(20)
+        while((Get-Date) -lt $jobDeadline -and ($job.JobState -eq 3 -or $job.JobState -eq 4)){
+          Start-Sleep -Seconds 1
+          $job=[WMI]$setResult.Job
+        }
+        $state.networkInjectionJobState=[int]$job.JobState
+        $injectOk=($job.JobState -eq 7)
+      }
+      $state.networkInjectionSucceeded=$injectOk
+      Start-Sleep -Seconds 6
+      $state.observedGuestIPs=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
+      $state.guestKvpAfterNetwork=Get-GuestKvp $vmWmi
+      $state.l1ToL2Ping=Test-Connection -ComputerName $guestIp -Count 1 -Quiet -ErrorAction SilentlyContinue
+      $state.l1ToL2Tcp22=Test-TcpQuick $guestIp 22
+      $state.natSessionsFromGuest=@(Get-NetNatSession -ErrorAction SilentlyContinue|Where-Object{$_.InternalSourceAddress -eq $guestIp}|Select-Object -First 20|ForEach-Object{[ordered]@{internalSourceAddress=$_.InternalSourceAddress;internalSourcePort=$_.InternalSourcePort;remoteExternalDestinationAddress=$_.RemoteExternalDestinationAddress;remoteExternalDestinationPort=$_.RemoteExternalDestinationPort;protocol=$_.Protocol}})
+      Save-State
+    } catch {
+      $state.networkInjectionSucceeded=$false
+      $state.networkInjectionError=$_.Exception.Message
+      Save-State
+    }
+  }
+
+  if($heartbeatSeen -and $GuestSettleSeconds -gt 0){
+    Set-Stage 'guest-settle'
+    Start-Sleep -Seconds $GuestSettleSeconds
+  }
+
+  Set-Stage 'stop-vm'
+  Stop-VM -Name $name -TurnOff -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+
+  Set-Stage 'read-guest-receipt'
+  $seedDisk=Mount-VHD -Path $seed -PassThru|Get-Disk
+  $vol=$seedDisk|Get-Partition|Get-Volume|Where-Object FileSystemLabel -eq 'CIDATA'|Select-Object -First 1
+  if($vol -and $vol.DriveLetter){
+    $receiptRoot="$($vol.DriveLetter):\"
+    foreach($pair in @(
+      @('guest-nonce.txt','guestNonce'),
+      @('guest-boot-id.txt','guestBootId'),
+      @('guest-uname.txt','guestUname'),
+      @('guest-ip.txt','guestIpObservation'),
+      @('guest-route.txt','guestRouteObservation')
+    )){
+      $p=Join-Path $receiptRoot $pair[0]
+      if(Test-Path $p){$state[$pair[1]]=(Get-Content $p -Raw).Trim()}
+    }
+  }
+  Dismount-VHD -Path $seed
+
+  $validGuid=$false
+  if($state.guestNonce){
+    $tmp=[guid]::Empty
+    $validGuid=[guid]::TryParse([string]$state.guestNonce,[ref]$tmp)
+  }
+  $state.l2Executed=([bool]$heartbeatSeen -or $validGuid)
+  $state.oracleSatisfied=$state.l2Executed
+  $networkProven=([bool]$state.preInjectionL1ToL2Ping -or [bool]$state.preInjectionL1ToL2Tcp22 -or ([bool]$state.networkInjectionSucceeded -and ([bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22)))
+  $state.l1L2NetworkProven=$networkProven
+
+  if($validGuid -and $networkProven){
+    $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
+    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were all observed.'
+  } elseif($networkProven){
+    $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
+    $state.reason='Healthy Hyper-V heartbeat proves L2 execution; Microsoft KVP network injection plus an observed guest IP/reachability proves L1-L2 networking. NoCloud write-back remains unproven.'
+  } elseif($heartbeatSeen){
+    $state.classification='L2_EXECUTION_PROVEN_NETWORK_UNPROVEN'
+    $state.reason='Healthy Hyper-V heartbeat proves L2 execution; guest-network injection/reachability did not satisfy an oracle.'
+  } else {
+    $state.classification='GUEST_BOOT_NOT_PROVEN'
+    $state.reason='The VM control plane started the VM but no healthy Hyper-V heartbeat or guest nonce was observed.'
+  }
+  Set-Stage 'complete'
+} catch {
+  $state.classification='ENVIRONMENT_OR_HARNESS_FAILURE'
+  $state.reason=$_.Exception.Message
+  $state.failureType=$_.Exception.GetType().FullName
+  Set-Stage 'failed'
+} finally {
+  if($vm){
+    Stop-VM -Name $name -TurnOff -Force -ErrorAction SilentlyContinue
+    Remove-VM -Name $name -Force -ErrorAction SilentlyContinue
+  }
+  Dismount-VHD -Path $seed -ErrorAction SilentlyContinue
+  Save-State
+  Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+ -and $_ -notlike '169.254.*'})|Select-Object -First 1
+  if($existingIPv4){
+    $state.preInjectionGuestIPv4=$existingIPv4
+    $state.preInjectionL1ToL2Ping=Test-Connection -ComputerName $existingIPv4 -Count 1 -Quiet -ErrorAction SilentlyContinue
+    $state.preInjectionL1ToL2Tcp22=Test-TcpQuick $existingIPv4 22
+  }
   Save-State
 
   # Use Microsoft's Hyper-V KVP guest-network injection rather than adding a DHCP server.
