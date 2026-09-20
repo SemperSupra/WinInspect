@@ -1,15 +1,19 @@
 name: GitHub Windows capability census
 on:
   workflow_dispatch:
-  push:
-    branches: [experiment/github-windows-capability-census]
   pull_request:
     paths:
       - tools/github-windows-capability-census.ps1
       - tools/hyperv-linux-l2-nonce.ps1
       - .github/workflows/github-windows-capability-census.yml
+
+concurrency:
+  group: windows-capability-census-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+
 jobs:
   census:
     if: ${{ github.event_name == 'workflow_dispatch' }}
