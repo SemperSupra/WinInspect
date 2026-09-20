@@ -24,6 +24,7 @@ on:
       - tools/hyperv-linux-l2-nonce.ps1
       - tools/windows-container-nanoserver.ps1
       - tools/windows-servercore-powershell.ps1
+      - tools/windows-dotnet-powershell-nano.ps1
       - .github/workflows/github-windows-capability-census.yml
 
 concurrency:
@@ -162,7 +163,8 @@ jobs:
           retention-days: 7
 
   windows-servercore-powershell:
-    if: ${{ github.event_name == 'pull_request' }}
+    # Expensive 5.62 GB candidate; keep explicit-only after harness characterization.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.delegation_id == 'windows-servercore-powershell' }}
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
@@ -185,5 +187,32 @@ jobs:
         with:
           name: windows-servercore-powershell
           path: ${{ runner.temp }}/windows-servercore-powershell.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-dotnet-powershell-nano:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Parse Nano .NET PowerShell probe before execution
+        shell: powershell
+        run: |
+          $tokens=$null
+          $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\tools\windows-dotnet-powershell-nano.ps1'),[ref]$tokens,[ref]$errors)
+          if($errors){$errors|ForEach-Object{Write-Error $_}; throw 'Nano .NET PowerShell probe parser qualification failed'}
+      - name: Bounded Nano .NET PowerShell isolation oracle
+        shell: powershell
+        run: ./tools/windows-dotnet-powershell-nano.ps1
+      - name: Preserve Nano .NET PowerShell receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-dotnet-powershell-nano
+          path: ${{ runner.temp }}/windows-dotnet-powershell-nano.json
           if-no-files-found: warn
           retention-days: 7
