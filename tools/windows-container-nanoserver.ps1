@@ -20,7 +20,7 @@ $state=[ordered]@{
 function Save-State {$state|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 $out}
 function Run-Probe([string]$isolation){
   $noncePrefix=[guid]::NewGuid().ToString('N').Substring(0,12)
-  $cmd='set /p H=<NUL & for /f "delims=" %i in (''hostname'') do @echo CONTAINER_HOST=%i & echo NONCE_PREFIX='+$noncePrefix+' & echo RANDOM_NONCE=%RANDOM%-%RANDOM% & ver'
+  $cmd='echo CONTAINER_HOST=%COMPUTERNAME% ^& echo NONCE_PREFIX='+$noncePrefix+' ^& echo RANDOM_NONCE=%RANDOM%-%RANDOM% ^& ver'
   $sw=[Diagnostics.Stopwatch]::StartNew()
   $text=(& docker run --rm --isolation=$isolation $image cmd.exe /d /s /c $cmd 2>&1|Out-String).Trim()
   $code=$LASTEXITCODE
