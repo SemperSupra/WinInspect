@@ -1,5 +1,5 @@
 name: GitHub Windows capability census
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('sidecar:{0}:{1}:{2}', inputs.workset_id, inputs.delegation_id, inputs.assignment_id) || format('GitHub Windows capability census PR #{0}', github.event.pull_request.number) }}
+run-name: "sidecar:${{ inputs.workset_id }}:${{ inputs.delegation_id }}:${{ inputs.assignment_id }}"
 on:
   workflow_dispatch:
     inputs:
