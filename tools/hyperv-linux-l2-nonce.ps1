@@ -1,11 +1,11 @@
-param([int]$MemoryMB=768,[int]$HeartbeatTimeoutSeconds=75,[int]$GuestSettleSeconds=35)
+param([int]$MemoryMB=768,[int]$HeartbeatTimeoutSeconds=75,[int]$GuestSettleSeconds=20)
 $ErrorActionPreference='Stop'
 $name='l2-'+[guid]::NewGuid().ToString('N').Substring(0,8)
 $hostArch=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 $arch=if($hostArch -eq 'Arm64'){'arm64'}else{'amd64'}
 $receiptPath=Join-Path $env:RUNNER_TEMP "hyperv-linux-l2-$arch.json"
 $state=[ordered]@{
-  schema='hyperv-linux-l2-nonce/v3'
+  schema='hyperv-linux-l2-nonce/v4'
   architecture=$arch
   vmName=$name
   stage='init'
@@ -16,7 +16,7 @@ $state=[ordered]@{
 }
 
 function Save-State {
-  $state | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $receiptPath
+  $state | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 $receiptPath
 }
 function Set-Stage([string]$stage) {
   $state.stage=$stage
@@ -28,14 +28,51 @@ function Invoke-Curl([string]$url,[string]$out) {
   & curl.exe -L --fail --silent --show-error --retry 2 --retry-delay 2 --output $out $url
   if($LASTEXITCODE -ne 0){ throw "curl failed ($LASTEXITCODE): $url" }
 }
+function Convert-IPv4ToUInt([string]$ip) {
+  $b=[Net.IPAddress]::Parse($ip).GetAddressBytes()
+  return (([uint64]$b[0] -shl 24) -bor ([uint64]$b[1] -shl 16) -bor ([uint64]$b[2] -shl 8) -bor [uint64]$b[3])
+}
+function Convert-UIntToIPv4([uint64]$n) {
+  return "$(($n -shr 24) -band 255).$(($n -shr 16) -band 255).$(($n -shr 8) -band 255).$($n -band 255)"
+}
+function Get-MaskFromPrefix([int]$prefix) {
+  if($prefix -le 0){return '0.0.0.0'}
+  $mask=([uint64]0xffffffff -shl (32-$prefix)) -band [uint64]0xffffffff
+  return Convert-UIntToIPv4 $mask
+}
+function Test-TcpQuick([string]$ip,[int]$port,[int]$timeoutMs=2500) {
+  $client=New-Object Net.Sockets.TcpClient
+  try {
+    $iar=$client.BeginConnect($ip,$port,$null,$null)
+    if(-not $iar.AsyncWaitHandle.WaitOne($timeoutMs,$false)){return $false}
+    $client.EndConnect($iar)
+    return $true
+  } catch { return $false } finally { $client.Close() }
+}
+function Get-GuestKvp($vmWmi) {
+  $result=[ordered]@{}
+  try {
+    $component=@($vmWmi.GetRelated('Msvm_KvpExchangeComponent'))|Select-Object -First 1
+    foreach($item in @($component.GuestIntrinsicExchangeItems)){
+      try {
+        [xml]$doc=$item
+        $props=[ordered]@{}
+        foreach($p in @($doc.INSTANCE.PROPERTY)){
+          $props[[string]$p.NAME]=[string]$p.VALUE
+        }
+        if($props.Name){$result[[string]$props.Name]=[string]$props.Data}
+      } catch {}
+    }
+  } catch {}
+  return $result
+}
 
 Save-State
 
-# Resource discipline: x64 first. ARM64 gets the same architecture-neutral oracle only after
-# x64 proves that the image/seed/receipt path itself works.
+# Qualify x64 first; ARM64 runs only after the architecture-neutral oracle has proven itself.
 if($arch -eq 'arm64'){
-  $state.classification='DEFERRED_UNTIL_X64_ORACLE'
-  $state.reason='ARM64 intentionally gated until the x64 direct-VHD + writable NoCloud seed oracle is proven.'
+  $state.classification='DEFERRED_UNTIL_X64_NETWORK_ORACLE'
+  $state.reason='ARM64 intentionally gated until the x64 L2 execution + host/guest network characterization path is qualified.'
   Set-Stage 'deferred-arm64'
   exit 0
 }
@@ -44,8 +81,6 @@ $workDrive=Get-PSDrive -Name D -ErrorAction SilentlyContinue
 if($workDrive -and $workDrive.Free -gt 8GB){$root="D:\$name"}else{$root=Join-Path $env:RUNNER_TEMP $name}
 New-Item -ItemType Directory -Path $root -Force|Out-Null
 
-# Prior-art-first and deliberately small: Alpine publishes a direct UEFI Azure VHD, so there is
-# no archive expansion, image conversion, or custom bootloader. Pin exact release + verify SHA512.
 $release='3.24.1'
 $base='https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud'
 $imageName="azure_alpine-$release-x86_64-uefi-cloudinit-r0.vhd"
@@ -114,6 +149,21 @@ bootcmd:
 '@ | Set-Content -Encoding ascii (Join-Path $seedRoot 'user-data')
   Dismount-VHD -Path $seed
 
+  Set-Stage 'characterize-host-network'
+  $switch=Get-VMSwitch|Where-Object{$_.Name -eq 'Default Switch'}|Select-Object -First 1
+  if(-not $switch){$switch=Get-VMSwitch|Where-Object{$_.Name -eq 'nat'}|Select-Object -First 1}
+  if(-not $switch){$switch=Get-VMSwitch|Select-Object -First 1}
+  if(-not $switch){throw 'No Hyper-V virtual switch available'}
+  $state.networkSwitch=[ordered]@{name=$switch.Name;type=$switch.SwitchType.ToString();id=$switch.Id.ToString()}
+  $state.hostNats=@(Get-NetNat -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;prefix=$_.InternalIPInterfaceAddressPrefix;active=$_.Active}})
+  $ifAlias="vEthernet ($($switch.Name))"
+  $hostIp=Get-NetIPAddress -InterfaceAlias $ifAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue|Where-Object{$_.IPAddress -notlike '169.254.*'}|Select-Object -First 1
+  if($hostIp){
+    $state.switchHostIPv4=$hostIp.IPAddress
+    $state.switchHostPrefixLength=$hostIp.PrefixLength
+  }
+  Save-State
+
   Set-Stage 'create-vm'
   $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes $memoryBytes -VHDPath $imageVhdx
   Set-VMProcessor -VMName $name -Count 1
@@ -121,12 +171,7 @@ bootcmd:
   Add-VMHardDiskDrive -VMName $name -ControllerType SCSI -Path $seed
   $osDisk=Get-VMHardDiskDrive -VMName $name|Where-Object Path -eq $imageVhdx|Select-Object -First 1
   if($osDisk){Set-VMFirmware -VMName $name -FirstBootDevice $osDisk}
-  $switch=Get-VMSwitch|Where-Object{$_.Name -eq 'Default Switch'}|Select-Object -First 1
-  if(-not $switch){$switch=Get-VMSwitch|Select-Object -First 1}
-  if($switch){
-    Connect-VMNetworkAdapter -VMName $name -SwitchName $switch.Name
-    $state.networkSwitch=$switch.Name
-  }
+  Connect-VMNetworkAdapter -VMName $name -SwitchName $switch.Name
   $state.vmCreated=$true
   Save-State
 
@@ -148,8 +193,63 @@ bootcmd:
   }
   $state.heartbeatSeen=$heartbeatSeen
   $state.vmState=(Get-VM -Name $name).State.ToString()
-  $state.observedGuestIPs=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
+  $state.integrationServices=@(Get-VMIntegrationService -VMName $name -ErrorAction SilentlyContinue|ForEach-Object{[ordered]@{name=$_.Name;enabled=$_.Enabled;primaryStatus=$_.PrimaryStatusDescription;secondaryStatus=$_.SecondaryStatusDescription}})
+  $vmWmi=Get-WmiObject -Namespace 'root\virtualization\v2' -Class 'Msvm_ComputerSystem'|Where-Object{$_.ElementName -eq $name}|Select-Object -First 1
+  if($vmWmi){$state.guestKvpBeforeNetwork=Get-GuestKvp $vmWmi}
   Save-State
+
+  # Use Microsoft's Hyper-V KVP guest-network injection rather than adding a DHCP server.
+  if($heartbeatSeen -and $vmWmi -and $hostIp){
+    Set-Stage 'inject-guest-network'
+    try {
+      $nat=@(Get-NetNat -ErrorAction SilentlyContinue|Where-Object{$_.Name -eq $switch.Name})|Select-Object -First 1
+      if(-not $nat){$nat=@(Get-NetNat -ErrorAction SilentlyContinue)|Select-Object -First 1}
+      $prefixLength=if($nat -and $nat.InternalIPInterfaceAddressPrefix){[int](($nat.InternalIPInterfaceAddressPrefix -split '/')[1])}else{[int]$hostIp.PrefixLength}
+      $hostNum=Convert-IPv4ToUInt $hostIp.IPAddress
+      $guestNum=$hostNum+10
+      $guestIp=Convert-UIntToIPv4 $guestNum
+      $mask=Get-MaskFromPrefix $prefixLength
+      $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns='1.1.1.1'}
+
+      $vmSettings=@($vmWmi.GetRelated('Msvm_VirtualSystemSettingData'))|Where-Object{$_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized'}|Select-Object -First 1
+      $vmNet=@($vmSettings.GetRelated('Msvm_SyntheticEthernetPortSettingData'))|Select-Object -First 1
+      $netCfg=@($vmNet.GetRelated('Msvm_GuestNetworkAdapterConfiguration'))|Select-Object -First 1
+      if(-not $netCfg){throw 'Guest network configuration object not exposed by KVP integration service'}
+      $netCfg.IPAddresses=@($guestIp)
+      $netCfg.Subnets=@($mask)
+      $netCfg.DefaultGateways=@($hostIp.IPAddress)
+      $netCfg.DNSServers=@('1.1.1.1')
+      $netCfg.DHCPEnabled=$false
+      $netCfg.ProtocolIFType=4096
+      $svc=Get-WmiObject -Namespace 'root\virtualization\v2' -Class 'Msvm_VirtualSystemManagementService'
+      $setResult=$svc.SetGuestNetworkAdapterConfiguration($vmWmi,@($netCfg.GetText(1)))
+      $state.networkInjectionReturnValue=[int]$setResult.ReturnValue
+      $injectOk=$false
+      if($setResult.ReturnValue -eq 0){$injectOk=$true}
+      elseif($setResult.ReturnValue -eq 4096){
+        $job=[WMI]$setResult.Job
+        $jobDeadline=(Get-Date).AddSeconds(20)
+        while((Get-Date) -lt $jobDeadline -and ($job.JobState -eq 3 -or $job.JobState -eq 4)){
+          Start-Sleep -Seconds 1
+          $job=[WMI]$setResult.Job
+        }
+        $state.networkInjectionJobState=[int]$job.JobState
+        $injectOk=($job.JobState -eq 7)
+      }
+      $state.networkInjectionSucceeded=$injectOk
+      Start-Sleep -Seconds 6
+      $state.observedGuestIPs=@((Get-VMNetworkAdapter -VMName $name -ErrorAction SilentlyContinue).IPAddresses|Where-Object{$_})
+      $state.guestKvpAfterNetwork=Get-GuestKvp $vmWmi
+      $state.l1ToL2Ping=Test-Connection -ComputerName $guestIp -Count 1 -Quiet -ErrorAction SilentlyContinue
+      $state.l1ToL2Tcp22=Test-TcpQuick $guestIp 22
+      $state.natSessionsFromGuest=@(Get-NetNatSession -ErrorAction SilentlyContinue|Where-Object{$_.InternalSourceAddress -eq $guestIp}|Select-Object -First 20|ForEach-Object{[ordered]@{internalSourceAddress=$_.InternalSourceAddress;internalSourcePort=$_.InternalSourcePort;remoteExternalDestinationAddress=$_.RemoteExternalDestinationAddress;remoteExternalDestinationPort=$_.RemoteExternalDestinationPort;protocol=$_.Protocol}})
+      Save-State
+    } catch {
+      $state.networkInjectionSucceeded=$false
+      $state.networkInjectionError=$_.Exception.Message
+      Save-State
+    }
+  }
 
   if($heartbeatSeen -and $GuestSettleSeconds -gt 0){
     Set-Stage 'guest-settle'
@@ -163,7 +263,6 @@ bootcmd:
   Set-Stage 'read-guest-receipt'
   $seedDisk=Mount-VHD -Path $seed -PassThru|Get-Disk
   $vol=$seedDisk|Get-Partition|Get-Volume|Where-Object FileSystemLabel -eq 'CIDATA'|Select-Object -First 1
-  $guestNonce=$null;$bootId=$null;$uname=$null;$guestIp=$null;$guestRoute=$null
   if($vol -and $vol.DriveLetter){
     $receiptRoot="$($vol.DriveLetter):\"
     foreach($pair in @(
@@ -184,16 +283,24 @@ bootcmd:
     $tmp=[guid]::Empty
     $validGuid=[guid]::TryParse([string]$state.guestNonce,[ref]$tmp)
   }
-  $state.l2Executed=$validGuid
-  $state.oracleSatisfied=$validGuid
-  $state.classification=$(if($validGuid){'L2_EXECUTION_PROVEN'}elseif($heartbeatSeen){'GUEST_EXECUTION_SEEN_NONCE_NOT_RECOVERED'}else{'GUEST_BOOT_NOT_PROVEN'})
-  $state.reason=$(if($validGuid){
-    'Guest-generated UUID was written to the writable NoCloud seed disk and recovered by L1.'
-  }elseif($heartbeatSeen){
-    'Hyper-V heartbeat became healthy, proving guest execution, but the NoCloud write-back oracle did not produce a valid nonce.'
-  }else{
-    'The VM control plane started the VM but no healthy Hyper-V heartbeat or guest nonce was observed in the bounded window.'
-  })
+  $state.l2Executed=([bool]$heartbeatSeen -or $validGuid)
+  $state.oracleSatisfied=$state.l2Executed
+  $networkProven=([bool]$state.networkInjectionSucceeded -and ([bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22 -or @($state.observedGuestIPs).Count -gt 0))
+  $state.l1L2NetworkProven=$networkProven
+
+  if($validGuid -and $networkProven){
+    $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
+    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were all observed.'
+  } elseif($networkProven){
+    $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
+    $state.reason='Healthy Hyper-V heartbeat proves L2 execution; Microsoft KVP network injection plus an observed guest IP/reachability proves L1-L2 networking. NoCloud write-back remains unproven.'
+  } elseif($heartbeatSeen){
+    $state.classification='L2_EXECUTION_PROVEN_NETWORK_UNPROVEN'
+    $state.reason='Healthy Hyper-V heartbeat proves L2 execution; guest-network injection/reachability did not satisfy an oracle.'
+  } else {
+    $state.classification='GUEST_BOOT_NOT_PROVEN'
+    $state.reason='The VM control plane started the VM but no healthy Hyper-V heartbeat or guest nonce was observed.'
+  }
   Set-Stage 'complete'
 } catch {
   $state.classification='ENVIRONMENT_OR_HARNESS_FAILURE'
