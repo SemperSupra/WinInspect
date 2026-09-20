@@ -139,8 +139,10 @@ try {
   if(-not $qemuImg){throw 'Generic Alpine QCOW2 selected but no existing qemu-img primitive was found (PATH or Android Emulator).'}
   $state.qemuImg=$qemuImg
   $convertSw=[Diagnostics.Stopwatch]::StartNew()
-  & $qemuImg convert -f qcow2 -O vhdx $image $imageVhdx
-  if($LASTEXITCODE -ne 0){throw "qemu-img conversion failed with exit code $LASTEXITCODE"}
+  # Hyper-V on the hosted runner refuses sparse VHDX attachments. Ask the existing
+  # qemu-img primitive for a fixed VHDX so no filesystem sparse semantics leak through.
+  & $qemuImg convert -f qcow2 -O vhdx -o subformat=fixed $image $imageVhdx
+  if($LASTEXITCODE -ne 0){throw "qemu-img fixed-VHDX conversion failed with exit code $LASTEXITCODE"}
   $convertSw.Stop()
   $state.convertedVhdxBytes=(Get-Item $imageVhdx).Length
   $state.convertSeconds=[math]::Round($convertSw.Elapsed.TotalSeconds,3)
@@ -217,6 +219,10 @@ bootcmd:
   $osDisk=Get-VMHardDiskDrive -VMName $name|Where-Object Path -eq $imageVhdx|Select-Object -First 1
   if($osDisk){Set-VMFirmware -VMName $name -FirstBootDevice $osDisk}
   Connect-VMNetworkAdapter -VMName $name -SwitchName $switch.Name
+  # Dynamic Hyper-V MACs remain 00:00:00:00:00:00 until first start; pin a disposable
+  # static MAC so NoCloud can match the synthetic NIC before boot.
+  $macRaw=('00155D'+[guid]::NewGuid().ToString('N').Substring(0,6)).ToUpperInvariant()
+  Set-VMNetworkAdapter -VMName $name -StaticMacAddress $macRaw
 
   # Configure the NoCloud seed with the exact Hyper-V synthetic NIC identity.
   if($hostIp){
@@ -225,7 +231,6 @@ bootcmd:
     $guestNum=$hostNum+10
     $guestIp=Convert-UIntToIPv4 $guestNum
     $mask=Get-MaskFromPrefix $prefixLength
-    $macRaw=(Get-VMNetworkAdapter -VMName $name|Select-Object -First 1).MacAddress
     $mac=($macRaw -replace '(.{2})(?!$)','$1:').ToLowerInvariant()
     $state.networkCandidate=[ordered]@{guestIPv4=$guestIp;subnetMask=$mask;gateway=$hostIp.IPAddress;prefixLength=$prefixLength;dns='1.1.1.1';mac=$mac}
     $seedDisk=Mount-VHD -Path $seed -PassThru|Get-Disk
