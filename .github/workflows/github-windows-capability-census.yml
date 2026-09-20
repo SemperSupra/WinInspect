@@ -21,7 +21,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
       - name: Preflight storage guardrail
         shell: powershell
         run: |
@@ -33,7 +35,7 @@ jobs:
         run: ./tools/github-windows-capability-census.ps1 -Mode '${{ matrix.mode }}'
       - name: Preserve receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: capability-${{ matrix.runner }}-${{ matrix.mode }}
           path: ${{ runner.temp }}/windows-capability-*.json
@@ -50,13 +52,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
       - name: Observation cycle
         shell: powershell
         run: ./tools/github-windows-capability-census.ps1 -Mode passive
       - name: Preserve observation receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: observation-${{ matrix.runner }}-${{ matrix.cycle }}
           path: ${{ runner.temp }}/windows-capability-*.json
@@ -64,7 +68,6 @@ jobs:
           retention-days: 7
 
   linux-l2-gate:
-    # One bounded attempt per architecture. This is a gate, not native-Windows acceptance.
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -73,7 +76,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
       - name: Storage guardrail
         shell: powershell
         run: |
@@ -84,7 +89,7 @@ jobs:
         run: ./tools/hyperv-linux-l2-nonce.ps1
       - name: Preserve L2 receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-l2-${{ matrix.runner }}
           path: ${{ runner.temp }}/hyperv-linux-l2-*.json
