@@ -1,4 +1,4 @@
-param([int]$MemoryMB=768,[int]$HeartbeatTimeoutSeconds=75,[int]$GuestSettleSeconds=20)
+param([int]$MemoryMB=768,[int]$HeartbeatTimeoutSeconds=75,[int]$GuestSettleSeconds=30)
 $ErrorActionPreference='Stop'
 $name='l2-'+[guid]::NewGuid().ToString('N').Substring(0,8)
 $hostArch=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
@@ -269,6 +269,45 @@ config:
         dns_nameservers:
           - 1.1.1.1
 "@ | Set-Content -Encoding ascii (Join-Path $seedRoot 'network-config')
+
+    # Reuse the guest's existing BusyBox/cloud image utilities to prove outbound
+    # connectivity. Fetch the exact Alpine checksum artifact already used above.
+    $probeUrl="$base/$imageName.sha512"
+    $egressYaml=@'
+runcmd:
+  - |
+    set +e
+    dev="$(blkid -L CIDATA)"
+    test -n "$dev" || exit 0
+    mkdir -p /mnt/cidata-rw
+    mount -o rw "$dev" /mnt/cidata-rw 2>/dev/null || mount -o remount,rw "$dev" /mnt/cidata-rw 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      ip route | grep -q '^default ' && break
+      sleep 1
+    done
+    if ping -c 1 -W 2 1.1.1.1 >/tmp/l2-egress-ip.txt 2>&1; then
+      echo PASS > /mnt/cidata-rw/guest-egress-ip.txt
+    else
+      echo FAIL > /mnt/cidata-rw/guest-egress-ip.txt
+    fi
+    cat /tmp/l2-egress-ip.txt > /mnt/cidata-rw/guest-egress-ip-detail.txt 2>/dev/null || true
+    if nslookup dl-cdn.alpinelinux.org >/tmp/l2-dns.txt 2>&1; then
+      echo PASS > /mnt/cidata-rw/guest-dns.txt
+    else
+      echo FAIL > /mnt/cidata-rw/guest-dns.txt
+    fi
+    cat /tmp/l2-dns.txt > /mnt/cidata-rw/guest-dns-detail.txt 2>/dev/null || true
+    if wget -q -T 10 -O /tmp/l2-fetch '__PROBE_URL__'; then
+      echo PASS > /mnt/cidata-rw/guest-fetch.txt
+      wc -c /tmp/l2-fetch > /mnt/cidata-rw/guest-fetch-bytes.txt 2>&1 || true
+      sha256sum /tmp/l2-fetch > /mnt/cidata-rw/guest-fetch-sha256.txt 2>&1 || true
+    else
+      echo FAIL > /mnt/cidata-rw/guest-fetch.txt
+    fi
+    sync
+'@
+    $egressYaml=$egressYaml.Replace('__PROBE_URL__',$probeUrl)
+    Add-Content -Encoding ascii (Join-Path $seedRoot 'user-data') $egressYaml
     Dismount-VHD -Path $seed
   }
   Add-VMHardDiskDrive -VMName $name -ControllerType SCSI -Path $seed
@@ -388,7 +427,14 @@ config:
       @('guest-boot-id.txt','guestBootId'),
       @('guest-uname.txt','guestUname'),
       @('guest-ip.txt','guestIpObservation'),
-      @('guest-route.txt','guestRouteObservation')
+      @('guest-route.txt','guestRouteObservation'),
+      @('guest-egress-ip.txt','guestEgressIp'),
+      @('guest-egress-ip-detail.txt','guestEgressIpDetail'),
+      @('guest-dns.txt','guestDns'),
+      @('guest-dns-detail.txt','guestDnsDetail'),
+      @('guest-fetch.txt','guestFetch'),
+      @('guest-fetch-bytes.txt','guestFetchBytes'),
+      @('guest-fetch-sha256.txt','guestFetchSha256')
     )){
       $p=Join-Path $receiptRoot $pair[0]
       if(Test-Path $p){$state[$pair[1]]=(Get-Content $p -Raw).Trim()}
@@ -405,10 +451,17 @@ config:
   $state.oracleSatisfied=$state.l2Executed
   $networkProven=([bool]$state.preInjectionL1ToL2Ping -or [bool]$state.preInjectionL1ToL2Tcp22 -or [bool]$state.l1ToL2Ping -or [bool]$state.l1ToL2Tcp22)
   $state.l1L2NetworkProven=$networkProven
+  $state.guestInternetIpProven=([string]$state.guestEgressIp -eq 'PASS')
+  $state.guestDnsProven=([string]$state.guestDns -eq 'PASS')
+  $state.guestHttpsFetchProven=([string]$state.guestFetch -eq 'PASS')
+  $state.networkFetchProven=([bool]$state.guestDnsProven -and [bool]$state.guestHttpsFetchProven)
 
-  if($validGuid -and $networkProven){
+  if($validGuid -and $networkProven -and $state.guestInternetIpProven -and $state.networkFetchProven){
+    $state.classification='L2_EXECUTION_L1_L2_AND_EGRESS_PROVEN'
+    $state.reason='Guest execution, guest-generated nonce, L1-L2 reachability, raw Internet reachability, DNS, and HTTPS fetch were all observed.'
+  } elseif($validGuid -and $networkProven){
     $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
-    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were all observed.'
+    $state.reason='Guest execution, guest-generated seed nonce, and host/guest network reachability were observed; full guest egress oracle was not satisfied.'
   } elseif($networkProven){
     $state.classification='L2_EXECUTION_AND_L1_L2_NETWORK_PROVEN'
     $state.reason='Healthy Hyper-V heartbeat proves L2 execution; Microsoft KVP network injection plus an observed guest IP/reachability proves L1-L2 networking. NoCloud write-back remains unproven.'
