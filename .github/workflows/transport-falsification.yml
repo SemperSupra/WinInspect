@@ -1,0 +1,227 @@
+name: Transport falsification reps
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/transport-falsification.yml'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Qualification rule: environment -> process/session -> transport -> protocol/client
+# -> capability mechanism -> semantic behavior. A failure at an earlier layer is
+# not evidence against a later layer. Keep local qualification on loopback with
+# host firewall policy untouched.
+
+jobs:
+  native-windows-transport:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build baseline
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build --config Release --parallel 2
+      - name: Falsify UIA COM initialization boundary without product changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force uia-probe | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.20)
+          project(uia_com_probe LANGUAGES CXX)
+          add_executable(uia_com_probe probe.cpp)
+          target_link_libraries(uia_com_probe PRIVATE ole32)
+          '@ | Set-Content uia-probe/CMakeLists.txt
+          @'
+          #include <windows.h>
+          #include <uiautomation.h>
+          #include <iostream>
+
+          int main() {
+            IUIAutomation* before = nullptr;
+            HRESULT before_hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                                                  IID_IUIAutomation, reinterpret_cast<void**>(&before));
+            if (before) before->Release();
+
+            HRESULT init_hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            IUIAutomation* after = nullptr;
+            HRESULT after_hr = CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                                                 IID_IUIAutomation, reinterpret_cast<void**>(&after));
+            if (after) after->Release();
+            if (SUCCEEDED(init_hr)) CoUninitialize();
+
+            std::cout << std::hex
+                      << "UIA_PROBE before_hr=0x" << static_cast<unsigned long>(before_hr)
+                      << " init_hr=0x" << static_cast<unsigned long>(init_hr)
+                      << " after_hr=0x" << static_cast<unsigned long>(after_hr) << std::endl;
+            std::cout << "QUAL_UIA before=" << (SUCCEEDED(before_hr) ? "pass" : "fail")
+                      << " after_coinitialize=" << (SUCCEEDED(after_hr) ? "pass" : "fail")
+                      << " reversal=" << ((!SUCCEEDED(before_hr) && SUCCEEDED(after_hr)) ? "true" : "false")
+                      << std::endl;
+            return SUCCEEDED(after_hr) ? 0 : 1;
+          }
+          '@ | Set-Content uia-probe/probe.cpp
+          cmake -S uia-probe -B uia-probe/build
+          cmake --build uia-probe/build --config Release --parallel 2
+          & uia-probe/build/Release/uia_com_probe.exe
+          if ($LASTEXITCODE -ne 0) { throw 'uia-capability: UIAutomation activation still failed after explicit COM initialization' }
+      - name: Layered falsification in one process lifetime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Start-Process build/Release/wininspectd.exe -ArgumentList '--headless','--bind','127.0.0.1' -PassThru -RedirectStandardOutput daemon.log -RedirectStandardError daemon.err.log
+          try {
+            # Layer 1/2: environment and process/session viability.
+            for ($i=0; $i -lt 20; $i++) {
+              Start-Sleep 1
+              if ($p.HasExited) { throw "process-session: daemon exited early with $($p.ExitCode)" }
+              $listener = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 1985 -OwningProcess $p.Id -ErrorAction SilentlyContinue
+              if ($listener) { break }
+            }
+            if (-not $listener) { throw 'transport: daemon did not establish loopback listener' }
+            Write-Host 'QUAL_LAYER environment=pass process-session=pass transport-listener=pass bind=loopback firewall_modified=false'
+
+            # Differential control: named-pipe handler already initializes COM via CoInitGuard.
+            # Keep this diagnostic non-gating; it compares capability truth with the TCP path.
+            $pipeCaps = & build/Release/wininspect.exe capabilities 2>&1
+            $pipeRc = $LASTEXITCODE
+            Write-Host "QUAL_UIA_PIPE cli_exit=$pipeRc"
+            $pipeCaps | ForEach-Object { Write-Host $_ }
+
+            # Layer 3/4: raw transport + framing/protocol, independent of CLI.
+            @'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]
+              hello=json.loads(recvn(s,n))
+              print('HELLO',json.dumps(hello,sort_keys=True))
+              req=json.dumps({'id':'raw-1','method':'daemon.health','params':{}},separators=(',',':')).encode()
+              s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]
+              resp=json.loads(recvn(s,n))
+              print('RESPONSE',json.dumps(resp,sort_keys=True))
+              assert resp.get('ok') is True
+          print('QUAL_LAYER raw-protocol=pass deepest_layer=protocol-client')
+          '@ | Set-Content raw_probe.py
+            python raw_probe.py
+
+            # Baseline client: expected to expose the shared send-length defect.
+            $baselineOk = $true
+            & build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+            if ($LASTEXITCODE -ne 0) { $baselineOk = $false }
+            Write-Host "QUAL_LAYER baseline-cli=$baselineOk"
+
+            # Single-delta A/B correction: do not weaken compiler or alter server/environment.
+            $src='source/clients/cli/src/cli.cpp'
+            $s=Get-Content $src -Raw
+            $old='uint32_t len = htonl((uint32_t)m.size());'
+            if (-not $s.Contains($old)) { throw 'protocol-client: expected transport defect not found' }
+            $new="uint32_t payload_len = (uint32_t)m.size();`n      uint32_t len = htonl(payload_len);"
+            $s=$s.Replace($old,$new).Replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)')
+            Set-Content $src $s -NoNewline
+            cmake --build build --config Release --target wininspect --parallel 2
+            & build/Release/wininspect.exe health --tcp 127.0.0.1:1985
+            if ($LASTEXITCODE -ne 0) { throw 'protocol-client: corrected CLI still failed' }
+            if ($baselineOk) {
+              Write-Host 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=unknown causal_status=unresolved ab_reversal=false'
+            } else {
+              Write-Host 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=protocol-client causal_status=demonstrated ab_reversal=true'
+            }
+          }
+          finally {
+            Get-Content daemon.log -ErrorAction SilentlyContinue
+            Get-Content daemon.err.log -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+  wine-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake wine64 xvfb
+      - name: Apply already-qualified build portability hypotheses and build
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/core/src/core.cpp'); s=p.read_text(); s=s.replace('#include <cctype>\n','#include <cctype>\n#include <cstring>\n',1) if '#include <cstring>' not in s else s; s=s.replace('dispatch_["daemon.notify"] = [this]','dispatch_["daemon.notify"] = []'); p.write_text(s)
+          p=Path('source/core/src/compress.cpp'); s=p.read_text().replace('Compress(compressor, data.data(), data.size()','Compress(compressor, const_cast<uint8_t*>(data.data()), data.size()').replace('Decompress(decompressor, data.data(), data.size()','Decompress(decompressor, const_cast<uint8_t*>(data.data()), data.size()'); p.write_text(s)
+          p=Path('source/core/src/network_config.cpp'); s=p.read_text(); old='''    char* appdata = nullptr;\n    size_t sz = 0;\n    if (_dupenv_s(&appdata, &sz, "APPDATA") == 0 && appdata) {\n      std::string dir = std::string(appdata) + "\\\\WinInspect";\n      free(appdata);\n      return dir;\n    }\n    return std::string(getenv("USERPROFILE")) + "\\\\.config\\\\wininspect";'''; new='''    const char* appdata = getenv("APPDATA");\n    if (appdata && appdata[0]) return std::string(appdata) + "\\\\WinInspect";\n    const char* profile = getenv("USERPROFILE");\n    if (profile && profile[0]) return std::string(profile) + "\\\\.config\\\\wininspect";\n    return ".\\\\.config\\\\wininspect";'''; s=s.replace(old,new); p.write_text(s)
+          p=Path('source/CMakeLists.txt'); s=p.read_text().replace('advapi32 crypt32)','advapi32 crypt32 cabinet)',1).replace('    resources/wininspect.rc\n',''); p.write_text(s)
+          PY
+          cmake -S source -B build -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake --build build -j2
+      - name: Layered falsification in persistent Wine session
+        env:
+          WINEPREFIX: ${{ github.workspace }}/.wine-transport
+          WINEDEBUG: -all
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1280x800x24 >xvfb.log 2>&1 & XVFB_PID=$!
+          export DISPLAY=:99
+          DAEMON_PID=''
+          cleanup() {
+            cat daemon.log 2>/dev/null || true
+            if test -n "$DAEMON_PID"; then kill "$DAEMON_PID" 2>/dev/null || true; fi
+            kill "$XVFB_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Layer 1/2: environment and process/session viability.
+          sleep 2
+          wineboot --init
+          wine build/wininspectd.exe --headless --bind 127.0.0.1 >daemon.log 2>&1 & DAEMON_PID=$!
+          sleep 8
+          kill -0 "$DAEMON_PID"
+          grep -F 'TCP Server listening on [127.0.0.1]:1985' daemon.log
+          echo 'QUAL_LAYER environment=pass process-session=pass transport-listener=pass bind=loopback firewall_modified=false'
+
+          # Layer 3/4: raw transport + framed protocol.
+          python3 - <<'PY'
+          import json,socket,struct
+          def recvn(s,n):
+              b=b''
+              while len(b)<n:
+                  c=s.recv(n-len(b))
+                  if not c: raise RuntimeError('EOF')
+                  b+=c
+              return b
+          with socket.create_connection(('127.0.0.1',1985),3) as s:
+              n=struct.unpack('!I',recvn(s,4))[0]; hello=json.loads(recvn(s,n)); print('HELLO',json.dumps(hello,sort_keys=True))
+              req=json.dumps({'id':'raw-1','method':'daemon.health','params':{}},separators=(',',':')).encode(); s.sendall(struct.pack('!I',len(req))+req)
+              n=struct.unpack('!I',recvn(s,4))[0]; resp=json.loads(recvn(s,n)); print('RESPONSE',json.dumps(resp,sort_keys=True)); assert resp.get('ok') is True
+          print('QUAL_LAYER raw-protocol=pass deepest_layer=protocol-client')
+          PY
+
+          # Baseline client and one-variable A/B correction.
+          set +e
+          wine build/wininspect.exe health --tcp 127.0.0.1:1985
+          BASELINE_RC=$?
+          set -e
+          echo "QUAL_LAYER baseline-cli-rc=$BASELINE_RC"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/clients/cli/src/cli.cpp'); s=p.read_text(); old='uint32_t len = htonl((uint32_t)m.size());'; assert old in s; s=s.replace(old,'uint32_t payload_len = (uint32_t)m.size();\n      uint32_t len = htonl(payload_len);',1).replace('if (::send(s, m.data(), (int)len, 0) <= 0)','if (::send(s, m.data(), (int)payload_len, 0) <= 0)',1); p.write_text(s)
+          PY
+          cmake --build build --target wininspect -j2
+          wine build/wininspect.exe health --tcp 127.0.0.1:1985
+          if test "$BASELINE_RC" -ne 0; then
+            echo 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=protocol-client causal_status=demonstrated ab_reversal=true'
+          else
+            echo 'QUAL_RESULT deepest_layer=protocol-client first_blocking_layer=unknown causal_status=unresolved ab_reversal=false'
+          fi
