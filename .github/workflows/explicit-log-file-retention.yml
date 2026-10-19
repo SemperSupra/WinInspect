@@ -1,0 +1,71 @@
+name: Explicit log-file retention
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/Apply-ExplicitLogFileRetention.ps1'
+      - '.github/workflows/explicit-log-file-retention.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            arch: ARM64
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply fail-closed logging fix
+        shell: pwsh
+        run: |
+          ./experiments/Apply-ExplicitLogFileRetention.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Logging candidate introduced whitespace errors.' }
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
+      - name: Build daemon
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspectd --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Daemon build failed.' }
+      - name: Verify explicit log file survives startup reconfiguration
+        shell: pwsh
+        run: |
+          $daemon = (Resolve-Path './build/Release/wininspectd.exe').Path
+          $log = Join-Path $env:RUNNER_TEMP 'explicit-daemon.log'
+          if (Test-Path $log) { Remove-Item $log -Force }
+          $p = Start-Process -FilePath $daemon -ArgumentList '--headless','--no-config','--no-discovery','--log-file',$log -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            do {
+              Start-Sleep -Milliseconds 250
+              $text = if (Test-Path $log) { Get-Content $log -Raw -ErrorAction SilentlyContinue } else { '' }
+            } while ($text -notmatch 'Starting Cleanup thread' -and [DateTime]::UtcNow -lt $deadline -and -not $p.HasExited)
+
+            if (-not (Test-Path $log)) { throw 'Explicit log file was not created.' }
+            $text = Get-Content $log -Raw
+            if ($text -notmatch 'Environment:') { throw 'Explicit log file lost post-initialization Environment record.' }
+            if ($text -notmatch 'Discovery responder disabled') { throw 'Explicit log file lost post-initialization discovery record.' }
+            if ($text -notmatch 'Starting Cleanup thread') { throw 'Explicit log file lost later startup records after default log-dir initialization.' }
+            Write-Host "explicit_log_retained=$log"
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $log) { Get-Content $log | Select-Object -Last 40 }
+            $p.Dispose()
+          }
