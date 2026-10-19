@@ -6,7 +6,7 @@ Normal product development does **not** occur here. The authoritative developmen
 
 The repository is intentionally public so generic build, test, packaging, provenance, and release work can run on standard public GitHub-hosted runners without consuming the private repository's Actions allowance.
 
-Until the first sanitized source projection is reviewed, this repository remains a public staging/deployment shell. The expected generated boundary is:
+The first reviewed schema-v2 sanitized source projection is present. This repository remains the public build/deployment plane, not an independent source-development authority. The current generated boundary is:
 
 ```text
 .projection/source-manifest.json
