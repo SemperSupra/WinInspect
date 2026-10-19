@@ -1,0 +1,51 @@
+name: RPC response ID correlation
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/Apply-RpcResponseIdFix.ps1'
+      - '.github/workflows/rpc-response-id-correlation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            arch: ARM64
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply fail-closed correlation fix
+        shell: pwsh
+        run: |
+          ./experiments/Apply-RpcResponseIdFix.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Correlation candidate introduced whitespace errors.' }
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.arch }}' -DWININSPECT_BUILD_TESTS=ON -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
+      - name: Build focused correlation test
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target test_response_id --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Response-id test build failed.' }
+      - name: Verify handler-return correlation
+        shell: pwsh
+        run: |
+          & ./build/Release/test_response_id.exe
+          if ($LASTEXITCODE -ne 0) { throw 'RPC response ID was not preserved.' }
