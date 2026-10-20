@@ -19,7 +19,8 @@ async function reservePort(){
  return port;
 }
 async function request(base,method,uri,data){
- const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),8000);
+ const timeoutMs=uri==='/session'&&method==='POST'?45000:12000;
+ const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),timeoutMs);
  try{
   const r=await fetch(base+uri,{method,headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),signal:ctrl.signal});
   const body=await r.json();
@@ -50,7 +51,9 @@ async function qualify(){
   }
   if(!ready)throw Error('driver unavailable');
   stage='SESSION_NEW';
+  const startTime=Date.now();
   const value=await request(base,'POST','/session',{capabilities:{alwaysMatch:{browserName:'firefox','moz:firefoxOptions':{binary,args:['-headless']}}}});
+  result.sessionStartMs=Date.now()-startTime;
   session=value.sessionId;
   if(!session)throw Error('session missing');
   result.version=value.capabilities?.browserVersion||null;
@@ -68,7 +71,7 @@ async function qualify(){
   const output=await request(base,'POST',prefix+'/element',{using:'css selector',value:'#o'});
   const observed=await request(base,'GET',prefix+'/element/'+encodeURIComponent(output[key])+'/text');
   result.status=observed===text?'PASS':'POSTCONDITION_FAILED';
- }catch(e){result.status='FAILED';result.failureStage=stage;result.failureClass=e?.name||'Error';}
+ }catch(e){result.status='FAILED';result.failureStage=stage;result.failureClass=e?.name||'Error';result.driverExited=proc?.exitCode!==null;}
  finally{
   if(session){try{await request(base,'DELETE','/session/'+encodeURIComponent(session));result.sessionDeleted=true;}catch{result.sessionDeleted=false;}}
   if(proc?.pid){const killed=spawnSync('taskkill',['/PID',String(proc.pid),'/T','/F'],{timeout:4000,windowsHide:true,stdio:'ignore'});result.driverStopped=killed.status===0||proc.exitCode!==null;}

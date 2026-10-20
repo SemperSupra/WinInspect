@@ -3,6 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {chromium,firefox}=require(path.join(process.env.PLAYWRIGHT_MODULE_ROOT,'node_modules','playwright'));
 const wininspect=require('./public-browser-wininspect-observe.cjs');
+const stockFirefoxWebDriver=require('./public-stock-firefox-webdriver.cjs');
 let wininspectReady=false;
 const pf=process.env.ProgramFiles||'C:\\Program Files',pfx=process.env['ProgramFiles(x86)']||'C:\\Program Files (x86)';
 const local=process.env.LOCALAPPDATA||'';
@@ -12,6 +13,7 @@ const stockOpera=available(path.join(local,'Programs/Opera/launcher.exe'),path.j
 const browsers=[
  ['chrome',chromium,{channel:'chrome',headless:true},true],
  ['edge',chromium,{channel:'msedge',headless:false},true],
+ ['edge-accessibility',chromium,{channel:'msedge',headless:false,args:['--force-renderer-accessibility']},true],
  ['firefox-playwright',firefox,{headless:true},true],
  ['firefox-stock',firefox,{headless:true,executablePath:stockFirefox},!!stockFirefox],
  ['opera-stock',chromium,{headless:true,executablePath:stockOpera},!!stockOpera]
@@ -24,25 +26,29 @@ async function main(){
  for(const [name,engine,opts,installed] of browsers){
   const r={name,installed,dom:'NOT_RUN'};receipt.browsers.push(r);
   if(!installed){r.dom='NOT_INSTALLED';continue;}
-  let browser,server;
+  let browser,server,stage='LAUNCH';
   try{
-   if(name==='edge'){
-    server=await engine.launchServer({...opts,timeout:18000});
+   if(name.startsWith('edge')){
+    server=await engine.launchServer({...opts,timeout:30000});
     browser=await engine.connect(server.wsEndpoint());
-   }else browser=await engine.launch({...opts,timeout:18000});
+   }else browser=await engine.launch({...opts,timeout:30000});
+   stage='DOM';
    r.version=browser.version();
    const context=await browser.newContext(),page=await context.newPage();
    await page.goto('data:text/html;charset=utf-8,'+encodeURIComponent(fixture));
    await page.locator('#f').fill('hello-ไทย-日本語');
    await page.locator('#b').click();
    r.dom=(await page.locator('#o').innerText())==='hello-ไทย-日本語'?'PASS':'FAIL';
-   r.browserPid=name==='edge'?server.process()?.pid||null:null;
-   if(name==='edge'&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
+   r.browserPid=name.startsWith('edge')?server.process()?.pid||null:null;
+   if(name.startsWith('edge')&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
    await context.close();
-  }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';}
+  }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';r.failureStage=stage;}
   finally{if(browser)await browser.close().catch(()=>{});if(server)await server.close().catch(()=>{});}
   console.log('RDTE_BROWSER='+name+' DOM='+r.dom);
  }
+ const firefoxResult=await stockFirefoxWebDriver.qualify();
+ receipt.browsers.push(firefoxResult);
+ console.log('RDTE_BROWSER='+firefoxResult.name+' STATUS='+firefoxResult.status);
  // Browser PIDs are transient execution evidence; do not publish machine process IDs.
  for(const r of receipt.browsers)delete r.browserPid;
  receipt.verdict=receipt.browsers.some(r=>r.dom==='PASS')?'PLAYWRIGHT_DOM_PROVEN':'NO_BROWSER_PASS';

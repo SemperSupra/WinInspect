@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Validate public deploy-plane architecture
         shell: pwsh
@@ -83,6 +85,26 @@ jobs:
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
+      - name: Validate supplier-neutral primitive evidence catalog
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        env:
+          PRIMITIVE_IMPACT_REPORT: ${{ runner.temp }}\primitive-demand-report.json
+        run: |
+          node --check scripts/validate-primitive-impact.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog validator syntax failed' }
+          node scripts/validate-primitive-impact.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog failed validation' }
+          node --check scripts/primitive-demand-report.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive demand report syntax invalid' }
+          node scripts/primitive-demand-report.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive demand report failed' }
+
+      - name: Prepare isolated WinApp CLI read-only contender
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-winapp-guard.ps1 -Mode Prepare
+
       - name: Browser RDTE on approved public projection
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
@@ -106,12 +128,38 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Playwright harness syntax invalid' }
           node scripts/public-browser-playwright-rdte.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE failed; preserve receipt' }
-      - name: Archive sanitized browser RDTE results
+      - name: Measure Playwright-only synthetic file transfer baseline
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        env:
+          PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\public-playwright
+          TRANSFER_RECEIPT: ${{ runner.temp }}\public-browser-transfer.json
+        run: |
+          node --check scripts/public-browser-transfer-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Transfer harness syntax error' }
+          node scripts/public-browser-transfer-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic browser-only transfer baseline failed' }
+
+      - name: Tear down WinApp CLI executable guard and scratch state
+        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-winapp-guard.ps1 -Mode Cleanup
+
+      - name: Verify pinned competitor release provenance
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-competitor-provenance.ps1
+
+      - name: Archive sanitized browser RDTE results
+        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wininspect-browser-rdte
-          path: ${{ runner.temp }}\public-browser-rdte.json
+          path: |
+            ${{ runner.temp }}\public-browser-rdte.json
+            ${{ runner.temp }}\public-browser-transfer.json
+            ${{ runner.temp }}\primitive-demand-report.json
+            ${{ runner.temp }}\public-browser-competitor-provenance.json
           if-no-files-found: warn
           retention-days: 7
 
