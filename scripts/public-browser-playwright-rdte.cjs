@@ -12,6 +12,7 @@ const stockOpera=available(path.join(local,'Programs/Opera/launcher.exe'),path.j
 const browsers=[
  ['chrome',chromium,{channel:'chrome',headless:true},true],
  ['edge',chromium,{channel:'msedge',headless:false},true],
+ ['edge-accessibility',chromium,{channel:'msedge',headless:false,args:['--force-renderer-accessibility']},true],
  ['firefox-playwright',firefox,{headless:true},true],
  ['firefox-stock',firefox,{headless:true,executablePath:stockFirefox},!!stockFirefox],
  ['opera-stock',chromium,{headless:true,executablePath:stockOpera},!!stockOpera]
@@ -26,7 +27,7 @@ async function main(){
   if(!installed){r.dom='NOT_INSTALLED';continue;}
   let browser,server;
   try{
-   if(name==='edge'){
+   if(name.startsWith('edge')){
     server=await engine.launchServer({...opts,timeout:18000});
     browser=await engine.connect(server.wsEndpoint());
    }else browser=await engine.launch({...opts,timeout:18000});
@@ -36,8 +37,8 @@ async function main(){
    await page.locator('#f').fill('hello-ไทย-日本語');
    await page.locator('#b').click();
    r.dom=(await page.locator('#o').innerText())==='hello-ไทย-日本語'?'PASS':'FAIL';
-   r.browserPid=name==='edge'?server.process()?.pid||null:null;
-   if(name==='edge'&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
+   r.browserPid=name.startsWith('edge')?server.process()?.pid||null:null;
+   if(name.startsWith('edge')&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
    await context.close();
   }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';}
   finally{if(browser)await browser.close().catch(()=>{});if(server)await server.close().catch(()=>{});}
