@@ -82,6 +82,11 @@ jobs:
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
+      - name: Smoke actual projected Windows product binaries
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: ./scripts/Test-PublicProjectedBinarySmoke.ps1
+
       - name: Record public execution boundary
         shell: pwsh
         run: |
