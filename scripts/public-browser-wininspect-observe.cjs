@@ -45,7 +45,9 @@ async function observe(pid){
    const w=await rpc('window.getInfo',{hwnd:row.hwnd});
    if(w.ok&&Number(w.result?.pid)===pid){
     out.status='WINDOW_MATCH';
-    try{const u=await rpc('ui.inspect',{hwnd:row.hwnd});out.uia=u.ok&&Array.isArray(u.result)?'UIA_OBSERVED':'UIA_UNAVAILABLE';}
+    try{const u=await rpc('ui.inspect',{hwnd:row.hwnd});out.uia=u.ok&&Array.isArray(u.result)&&u.result.length>0?'UIA_NONEMPTY':(u.ok?'UIA_EMPTY':'UIA_UNAVAILABLE');
+      out.uiaCount=u.ok&&Array.isArray(u.result)?u.result.length:0;
+      out.uiaIdMatched=u.idMatched;}
     catch{out.uia='UIA_TIMEOUT';}
     break;
    }
