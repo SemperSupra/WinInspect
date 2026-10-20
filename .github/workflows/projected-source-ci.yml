@@ -88,11 +88,17 @@ jobs:
       - name: Validate supplier-neutral primitive evidence catalog
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
+        env:
+          PRIMITIVE_IMPACT_REPORT: ${{ runner.temp }}\primitive-demand-report.json
         run: |
           node --check scripts/validate-primitive-impact.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog validator syntax failed' }
           node scripts/validate-primitive-impact.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog failed validation' }
+          node --check scripts/primitive-demand-report.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive demand report syntax invalid' }
+          node scripts/primitive-demand-report.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive demand report failed' }
 
       - name: Prepare isolated WinApp CLI read-only contender
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
@@ -152,6 +158,7 @@ jobs:
           path: |
             ${{ runner.temp }}\public-browser-rdte.json
             ${{ runner.temp }}\public-browser-transfer.json
+            ${{ runner.temp }}\primitive-demand-report.json
             ${{ runner.temp }}\public-browser-competitor-provenance.json
           if-no-files-found: warn
           retention-days: 7
