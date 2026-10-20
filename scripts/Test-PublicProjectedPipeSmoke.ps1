@@ -57,7 +57,7 @@ try {
         if ($proc.HasExited) { throw "Projected daemon exited before pipe readiness: $($proc.ExitCode)." }
         $pipe = [IO.Pipes.NamedPipeClientStream]::new(
             '.', $pipeName, [IO.Pipes.PipeDirection]::InOut,
-            [IO.Pipes.PipeOptions]::None)
+            [IO.Pipes.PipeOptions]::Asynchronous)
         try {
             $pipe.Connect(300)
             $connected = $true
@@ -69,25 +69,34 @@ try {
         }
     }
     if (-not $connected) { throw 'Projected daemon did not accept local named pipe within bounded readiness interval.' }
-    $pipe.ReadTimeout = 5000
-    $pipe.WriteTimeout = 5000
     $request = '{"id":"public-smoke-health","method":"daemon.health","params":{"canonical":true}}'
     $payload = [Text.Encoding]::UTF8.GetBytes($request)
     if ($payload.Length -gt 4096) { throw 'Public fixture exceeded request cap.' }
     $header = [BitConverter]::GetBytes([uint32]$payload.Length)
     if (-not [BitConverter]::IsLittleEndian) { [Array]::Reverse($header) }
-    $pipe.Write($header, 0, 4)
-    $pipe.Write($payload, 0, $payload.Length)
-    $pipe.Flush()
+    $writeBudget = [Threading.CancellationTokenSource]::new(5000)
+    try {
+        $pipe.WriteAsync($header, 0, 4, $writeBudget.Token).GetAwaiter().GetResult()
+        $pipe.WriteAsync($payload, 0, $payload.Length, $writeBudget.Token).GetAwaiter().GetResult()
+        $pipe.FlushAsync($writeBudget.Token).GetAwaiter().GetResult()
+    } finally {
+        $writeBudget.Dispose()
+    }
 
     function Read-Exact {
         param([IO.Stream] $Stream, [int] $Length)
         $bytes = [byte[]]::new($Length)
         $offset = 0
-        while ($offset -lt $Length) {
-            $count = $Stream.Read($bytes, $offset, $Length - $offset)
-            if ($count -le 0) { throw 'Unexpected end of local named-pipe frame.' }
-            $offset += $count
+        $readBudget = [Threading.CancellationTokenSource]::new(5000)
+        try {
+            while ($offset -lt $Length) {
+                $count = $Stream.ReadAsync($bytes, $offset, $Length - $offset,
+                                           $readBudget.Token).GetAwaiter().GetResult()
+                if ($count -le 0) { throw 'Unexpected end of local named-pipe frame.' }
+                $offset += $count
+            }
+        } finally {
+            $readBudget.Dispose()
         }
         return ,$bytes
     }
