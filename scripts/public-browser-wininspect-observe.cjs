@@ -79,6 +79,26 @@ async function observe(pid){
      errorClass:direct.errorClass||null};
    }catch{out.independent={status:'MALFORMED_INDEPENDENT_RECEIPT'};}
   }else out.independent={status:'INDEPENDENT_PROBE_FAILED'};
+  if(process.env.WINAPP_EXE&&process.env.WINAPP_EGRESS_DENIED==='1'){
+   const start=Date.now();
+   const v=spawnSync(process.env.WINAPP_EXE,
+    ['ui','inspect','-w',BigInt(chosen.hwnd).toString(10),'--depth','1','--json'],
+    {encoding:'utf8',windowsHide:true,timeout:20000,maxBuffer:262144,stdio:['ignore','pipe','pipe'],
+     env:{...process.env,WINAPP_CLI_TELEMETRY_OPTOUT:'1',WINAPP_CLI_UPDATE_CHECK:'0'}});
+   out.winapp={status:'NOT_QUALIFIED',durationMs:Date.now()-start};
+   if(v.error){out.winapp.status=v.error.code==='ETIMEDOUT'?'TIMEOUT':'PROCESS_ERROR';}
+   else if(v.status!==0){out.winapp.status='COMMAND_FAILED';}
+   else{
+    try{
+     const parsed=JSON.parse(v.stdout.trim());
+     const matches=Array.isArray(parsed.windows)?parsed.windows.filter(w=>{
+      try{return BigInt(w.hwnd)===BigInt(chosen.hwnd);}catch{return false;}
+     }):[];
+     out.winapp.status=matches.length===1?'WINDOW_MATCH':'JSON_TARGET_MISMATCH';
+     if(matches.length===1)out.winapp.elementCount=Number(matches[0].elementCount)||0;
+    }catch{out.winapp.status='JSON_PARSE_FAILED';}
+   }
+  }else out.winapp={status:'NOT_ADMITTED'};
   out.sameTargetCompared=true;
  }catch{out.status='WINDOW_ENUM_UNAVAILABLE';}
  return out;
