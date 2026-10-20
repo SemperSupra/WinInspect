@@ -114,7 +114,7 @@ async function observe(pid){
      });
      out.winappWindowIdentity={status:exact.length===1?'EXACT_PID_HWND':'NO_EXACT_TARGET',
       processWindowCount:scoped.length,exactCount:exact.length,
-      targetClassChromium:exact.length===1?String(exact[0].className??exact[0].ClassName||'').startsWith('Chrome_WidgetWin'):null,
+      targetClassChromium:exact.length===1?String(exact[0].className ?? exact[0].ClassName ?? '').startsWith('Chrome_WidgetWin'):null,
       visibleSize:exact.length===1?(Number(exact[0].width??exact[0].Width)>100 &&
         Number(exact[0].height??exact[0].Height)>100):null};
     }catch{out.winappWindowIdentity.status='JSON_PARSE_FAILED'}
