@@ -66,7 +66,7 @@ $envEntries=@(
   'WINAPP_CLI_UPDATE_CHECK=0',
   'WINAPP_EGRESS_DENIED=1'
 )
-$envEntries | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8NoBOM
+foreach($line in $envEntries){ Add-Content -LiteralPath $env:GITHUB_ENV -Value $line -Encoding utf8NoBOM }
 $s.ready=$true
 $s | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8NoBOM
 Write-Host 'WINAPP_VENDOR_PROVENANCE=SHA256_PASS EGRESS=BLOCKED TELEMETRY=OPT_OUT'
