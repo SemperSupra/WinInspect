@@ -26,12 +26,13 @@ async function main(){
  for(const [name,engine,opts,installed] of browsers){
   const r={name,installed,dom:'NOT_RUN'};receipt.browsers.push(r);
   if(!installed){r.dom='NOT_INSTALLED';continue;}
-  let browser,server;
+  let browser,server,stage='LAUNCH';
   try{
    if(name.startsWith('edge')){
-    server=await engine.launchServer({...opts,timeout:18000});
+    server=await engine.launchServer({...opts,timeout:30000});
     browser=await engine.connect(server.wsEndpoint());
-   }else browser=await engine.launch({...opts,timeout:18000});
+   }else browser=await engine.launch({...opts,timeout:30000});
+   stage='DOM';
    r.version=browser.version();
    const context=await browser.newContext(),page=await context.newPage();
    await page.goto('data:text/html;charset=utf-8,'+encodeURIComponent(fixture));
@@ -41,7 +42,7 @@ async function main(){
    r.browserPid=name.startsWith('edge')?server.process()?.pid||null:null;
    if(name.startsWith('edge')&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
    await context.close();
-  }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';}
+  }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';r.failureStage=stage;}
   finally{if(browser)await browser.close().catch(()=>{});if(server)await server.close().catch(()=>{});}
   console.log('RDTE_BROWSER='+name+' DOM='+r.dom);
  }
