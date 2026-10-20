@@ -96,6 +96,29 @@ async function observe(pid){
   }else out.independent={status:'INDEPENDENT_PROBE_FAILED',
     failureClass:exact.error?.code||('EXIT_'+String(exact.status))};
   if(process.env.WINAPP_EXE&&process.env.WINAPP_EGRESS_DENIED==='1'){
+   // Independent supplier for the window-identity primitive. Only metadata verdict is retained.
+   const wl=spawnSync(process.env.WINAPP_EXE,
+    ['ui','list-windows','-a',String(pid),'--json'],
+    {encoding:'utf8',windowsHide:true,timeout:20000,maxBuffer:131072,stdio:['ignore','pipe','pipe'],
+     env:{...process.env,WINAPP_CLI_TELEMETRY_OPTOUT:'1',WINAPP_CLI_UPDATE_CHECK:'0'}});
+   out.winappWindowIdentity={status:'NOT_QUALIFIED'};
+   if(wl.error)out.winappWindowIdentity.status=wl.error.code==='ETIMEDOUT'?'TIMEOUT':'PROCESS_ERROR';
+   else if(wl.status!==0)out.winappWindowIdentity.status='COMMAND_FAILED';
+   else{
+    try{
+     const candidates=JSON.parse(wl.stdout.trim());
+     if(!Array.isArray(candidates))throw Error('not array');
+     const scoped=candidates.filter(w=>Number(w.processId??w.ProcessId)===pid);
+     const exact=scoped.filter(w=>{
+      try{return BigInt(w.hwnd??w.Hwnd)===BigInt(chosen.hwnd)}catch{return false}
+     });
+     out.winappWindowIdentity={status:exact.length===1?'EXACT_PID_HWND':'NO_EXACT_TARGET',
+      processWindowCount:scoped.length,exactCount:exact.length,
+      targetClassChromium:exact.length===1?String(exact[0].className??exact[0].ClassName||'').startsWith('Chrome_WidgetWin'):null,
+      visibleSize:exact.length===1?(Number(exact[0].width??exact[0].Width)>100 &&
+        Number(exact[0].height??exact[0].Height)>100):null};
+    }catch{out.winappWindowIdentity.status='JSON_PARSE_FAILED'}
+   }
    const start=Date.now();
    const v=spawnSync(process.env.WINAPP_EXE,
     ['ui','inspect','-w',BigInt(chosen.hwnd).toString(10),'--depth','1','--json'],
