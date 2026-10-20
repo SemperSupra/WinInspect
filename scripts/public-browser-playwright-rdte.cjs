@@ -3,6 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {chromium,firefox}=require(path.join(process.env.PLAYWRIGHT_MODULE_ROOT,'node_modules','playwright'));
 const wininspect=require('./public-browser-wininspect-observe.cjs');
+const stockFirefoxWebDriver=require('./public-stock-firefox-webdriver.cjs');
 let wininspectReady=false;
 const pf=process.env.ProgramFiles||'C:\\Program Files',pfx=process.env['ProgramFiles(x86)']||'C:\\Program Files (x86)';
 const local=process.env.LOCALAPPDATA||'';
@@ -44,6 +45,9 @@ async function main(){
   finally{if(browser)await browser.close().catch(()=>{});if(server)await server.close().catch(()=>{});}
   console.log('RDTE_BROWSER='+name+' DOM='+r.dom);
  }
+ const firefoxResult=await stockFirefoxWebDriver.qualify();
+ receipt.browsers.push(firefoxResult);
+ console.log('RDTE_BROWSER='+firefoxResult.name+' STATUS='+firefoxResult.status);
  // Browser PIDs are transient execution evidence; do not publish machine process IDs.
  for(const r of receipt.browsers)delete r.browserPid;
  receipt.verdict=receipt.browsers.some(r=>r.dom==='PASS')?'PLAYWRIGHT_DOM_PROVEN':'NO_BROWSER_PASS';
