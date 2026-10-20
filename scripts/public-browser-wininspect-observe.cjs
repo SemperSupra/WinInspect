@@ -2,6 +2,7 @@
 'use strict';
 const net=require('node:net'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process'),{randomUUID}=require('node:crypto');
+const mcpSnapshot=require('./public-browser-mcp-snapshot.cjs');
 const work=fs.mkdtempSync(path.join(os.tmpdir(),'wininspect-rdte-'));
 const pipe='wi-rdte-'+randomUUID().replaceAll('-','');
 let daemon=null;
@@ -100,6 +101,7 @@ async function observe(pid){
     }catch{out.winapp.status='JSON_PARSE_FAILED';}
    }
   }else out.winapp={status:'NOT_ADMITTED'};
+  out.windowsMcp=await mcpSnapshot.inspect(chosen.hwnd);
   out.sameTargetCompared=true;
  }catch{out.status='WINDOW_ENUM_UNAVAILABLE';}
  return out;
