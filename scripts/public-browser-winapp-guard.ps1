@@ -59,14 +59,15 @@ if($fw.Action -ne 'Block' -or $fw.Direction -ne 'Outbound' -or $fw.Enabled -ne '
 }
 $cache=Join-Path $work 'cache'
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
-$envEntries=@(
-  'WINAPP_EXE='+$exe,
-  'WINAPP_CLI_CACHE_DIRECTORY='+$cache,
-  'WINAPP_CLI_TELEMETRY_OPTOUT=1',
-  'WINAPP_CLI_UPDATE_CHECK=0',
-  'WINAPP_EGRESS_DENIED=1'
-)
-foreach($line in $envEntries){ Add-Content -LiteralPath $env:GITHUB_ENV -Value $line -Encoding utf8NoBOM }
+Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINAPP_EXE=$exe" -Encoding utf8NoBOM
+Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINAPP_CLI_CACHE_DIRECTORY=$cache" -Encoding utf8NoBOM
+Add-Content -LiteralPath $env:GITHUB_ENV -Value 'WINAPP_CLI_TELEMETRY_OPTOUT=1' -Encoding utf8NoBOM
+Add-Content -LiteralPath $env:GITHUB_ENV -Value 'WINAPP_CLI_UPDATE_CHECK=0' -Encoding utf8NoBOM
+Add-Content -LiteralPath $env:GITHUB_ENV -Value 'WINAPP_EGRESS_DENIED=1' -Encoding utf8NoBOM
+$tail=@(Get-Content -LiteralPath $env:GITHUB_ENV -Tail 5)
+if($tail.Count -ne 5 -or $tail[0] -notmatch '^WINAPP_EXE=' -or $tail[4] -ne 'WINAPP_EGRESS_DENIED=1'){
+ throw 'Runner environment boundary does not contain five distinct entries'
+}
 $s.ready=$true
 $s | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8NoBOM
 Write-Host 'WINAPP_VENDOR_PROVENANCE=SHA256_PASS EGRESS=BLOCKED TELEMETRY=OPT_OUT'
