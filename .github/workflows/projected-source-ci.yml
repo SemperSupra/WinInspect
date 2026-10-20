@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Validate public deploy-plane architecture
         shell: pwsh
@@ -83,6 +85,11 @@ jobs:
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
+      - name: Prepare isolated WinApp CLI read-only contender
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-winapp-guard.ps1 -Mode Prepare
+
       - name: Browser RDTE on approved public projection
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
@@ -106,13 +113,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Playwright harness syntax invalid' }
           node scripts/public-browser-playwright-rdte.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE failed; preserve receipt' }
+      - name: Tear down WinApp CLI executable guard and scratch state
+        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-winapp-guard.ps1 -Mode Cleanup
+
       - name: Verify pinned competitor release provenance
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
         run: ./scripts/public-browser-competitor-provenance.ps1
 
       - name: Archive sanitized browser RDTE results
-        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wininspect-browser-rdte
