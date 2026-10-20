@@ -17,7 +17,7 @@ const receipt={schema:'browser-native-file-transfer-baseline/v1',offlineFixture:
 let browser;
 (async()=>{
  try{
-  browser=await chromium.launch({channel:'chrome',headless:true,timeout:18000});
+  browser=await chromium.launch({channel:'chrome',headless:true,timeout:30000});
   receipt.browserVersion=browser.version();
   for(let i=0;i<3;i++){
    let context;const row={index:i+1,upload:'NOT_RUN',download:'NOT_RUN'};
@@ -31,7 +31,9 @@ let browser;
     await page.locator('#upload').click();
     const chooser=await choosing;
     await chooser.setFiles({name:'synthetic-upload.txt',mimeType:'text/plain',buffer:payload});
-    const verified=await page.locator('#out').innerText({timeout:10000});
+    await page.waitForFunction(expected=>document.querySelector('#out')?.textContent===expected,
+      'RECEIVED:'+payload.toString('utf8'),{timeout:12000});
+    const verified=await page.locator('#out').innerText();
     row.upload=verified==='RECEIVED:'+payload.toString('utf8')?'PASS':'POSTCONDITION_MISMATCH';
     row.uploadMs=Date.now()-begin;
     begin=Date.now();
