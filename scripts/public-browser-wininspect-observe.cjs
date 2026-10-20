@@ -55,6 +55,7 @@ async function observe(pid){
   }
   out.pidWindowCount=matches.length;
   out.visiblePidWindowCount=matches.filter(v=>v.visible).length;
+  const naiveFirst=matches[0]||null;
   matches.sort((a,b)=>Number(b.visible)-Number(a.visible)
     ||Number(b.browserClass)-Number(a.browserClass)||b.area-a.area);
   const chosen=matches.find(v=>v.visible&&v.area>20000);
@@ -62,6 +63,19 @@ async function observe(pid){
   out.status='VISIBLE_WINDOW_MATCH';
   out.selectedAreaBand=chosen.area>=250000?'LARGE':'SMALL';
   out.selectedBrowserClass=chosen.browserClass;
+  // Paired read-only ablation: first-PID HWND vs visibility-aware target.
+  // Both observations occur in the same browser lifetime; never copy UIA text to receipt.
+  out.windowSelectionAblation={sameWindow:naiveFirst?.hwnd===chosen.hwnd,
+    naiveFirstVisible:naiveFirst?.visible===true,visibilitySelectorApplied:true};
+  if(naiveFirst && naiveFirst.hwnd!==chosen.hwnd){
+    try {
+      const naive=await rpc('ui.inspect',{hwnd:naiveFirst.hwnd});
+      out.windowSelectionAblation.naiveStatus=naive.ok?'REPLY_OK':'REPLY_FAILED';
+      out.windowSelectionAblation.naiveChildCount=naive.ok&&Array.isArray(naive.result)
+        ?naive.result.length:null;
+      out.windowSelectionAblation.naiveIdMatched=naive.idMatched;
+    }catch{out.windowSelectionAblation.naiveStatus='TIMEOUT_OR_TRANSPORT_ERROR';}
+  }
   try{
    const u=await rpc('ui.inspect',{hwnd:chosen.hwnd});
    out.uia=u.ok&&Array.isArray(u.result)&&u.result.length>0?'UIA_NONEMPTY':(u.ok?'UIA_EMPTY':'UIA_UNAVAILABLE');
