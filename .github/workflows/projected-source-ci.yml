@@ -87,6 +87,11 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-PublicProjectedBinarySmoke.ps1
 
+      - name: Exercise projected daemon read-only named pipe
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: ./scripts/Test-PublicProjectedPipeSmoke.ps1
+
       - name: Record public execution boundary
         shell: pwsh
         run: |
