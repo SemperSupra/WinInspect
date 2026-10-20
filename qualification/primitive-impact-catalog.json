@@ -1,0 +1,680 @@
+{
+  "schema": "wininspect-primitive-impact-rdte/v1",
+  "as_of": "2026-10-20",
+  "purpose": "Supplier-neutral measurement of primitive contracts, dependencies and task-level incremental utility",
+  "source_inventory": {
+    "wininspect_dispatch_count": 72,
+    "source_url": "https://github.com/SemperSupra/WinInspect/blob/main/source/core/src/core.cpp",
+    "tier": "SOURCE_CONFIRMED_ONLY",
+    "methods": [
+      "events.poll",
+      "session.terminate",
+      "window.listTop",
+      "window.listChildren",
+      "window.getTree",
+      "window.highlight",
+      "window.getInfo",
+      "window.pickAtPoint",
+      "window.ensureVisible",
+      "window.ensureForeground",
+      "window.setProperty",
+      "window.getZOrder",
+      "window.move",
+      "window.resize",
+      "window.postMessage",
+      "input.send",
+      "input.mouseClick",
+      "input.mouseDrag",
+      "input.keyPress",
+      "input.text",
+      "input.hotkey",
+      "window.controlClick",
+      "window.controlSend",
+      "screen.getPixel",
+      "screen.capture",
+      "screen.desktopInfo",
+      "screen.pixelSearch",
+      "process.list",
+      "process.execute",
+      "process.kill",
+      "file.getInfo",
+      "file.read",
+      "clipboard.read",
+      "clipboard.write",
+      "service.list",
+      "service.status",
+      "service.control",
+      "env.get",
+      "env.set",
+      "wine.drives",
+      "wine.overrides",
+      "sync.checkMutex",
+      "sync.createMutex",
+      "mem.read",
+      "mem.write",
+      "image.match",
+      "input.hook",
+      "window.findRegex",
+      "reg.read",
+      "reg.write",
+      "reg.delete",
+      "ui.inspect",
+      "ui.invoke",
+      "daemon.health",
+      "daemon.capabilities",
+      "daemon.checkUpdate",
+      "daemon.notify",
+      "daemon.shutdown",
+      "daemon.downloadUpdate",
+      "daemon.status",
+      "daemon.identity",
+      "daemon.metrics",
+      "daemon.diag",
+      "credential.store",
+      "credential.retrieve",
+      "credential.delete",
+      "credential.list",
+      "credential.generate",
+      "daemon.logs",
+      "daemon.session.startRecording",
+      "daemon.session.stopRecording",
+      "daemon.recordingStatus"
+    ]
+  },
+  "evidence_tiers": [
+    "ADVERTISED",
+    "SOURCE_CONFIRMED",
+    "EXECUTED_ON_EXACT_TARGET",
+    "CONSUMER_QUALIFIED"
+  ],
+  "outcomes": [
+    "PASS",
+    "FAIL",
+    "UNSUPPORTED",
+    "NOT_EXECUTED",
+    "BLOCKED",
+    "INCONCLUSIVE"
+  ],
+  "primitive_definitions": [
+    {
+      "id": "browser.dom.form",
+      "contract": "Set/read webpage values; click semantic DOM target",
+      "oracle": "DOM value equals synthetic expected Unicode string",
+      "preconditions": "browser context; no OS chrome requirement",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "browser.file.upload",
+      "contract": "Supply an approved file to browser file chooser",
+      "oracle": "Page reads bytes equal fixture; no native file dialog inferred",
+      "preconditions": "Playwright browser protocol and isolated context",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "browser.file.download",
+      "contract": "Capture browser download and verify exact bytes",
+      "oracle": "SHA-256 of downloaded bytes equals fixture",
+      "preconditions": "Synthetic download and isolated filesystem",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "browser.webdriver.dom",
+      "contract": "Operate stock browser through W3C WebDriver",
+      "oracle": "Independent expected text in DOM",
+      "preconditions": "geckodriver/stock Firefox isolated profile",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.window.enumerate",
+      "contract": "Enumerate candidate top-level windows",
+      "oracle": "Counts and independent process/window identity",
+      "preconditions": "Interactive native Windows session",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.window.identify",
+      "contract": "Bind PID, HWND, visibility, class and geometry before observing",
+      "oracle": "Same target HWND/PID independently verified",
+      "preconditions": "Fresh visible substantial window; no stale handles",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.uia.snapshot",
+      "contract": "Read an accessibility tree from exact target",
+      "oracle": "Independent Windows UIA tree supports observed immediate children",
+      "preconditions": "Valid UIA provider and UIA client thread",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.uia.find",
+      "contract": "Resolve unique semantic element without guessing coordinates",
+      "oracle": "Unique fixture-known element and stale/ambiguous-target rejection",
+      "preconditions": "Supported UIA provider and scoped tree",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.uia.invoke",
+      "contract": "Invoke identified native UI element",
+      "oracle": "Independent application state transition",
+      "preconditions": "Authorization and one input owner; target match",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.dialog.file",
+      "contract": "Select or save fixture via actual native OS Open/Save dialog",
+      "oracle": "Independent target file SHA and dialog ownership",
+      "preconditions": "Interactive session, one desktop input lease",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.input.keyboard",
+      "contract": "Send text/hotkey to uniquely owned desktop target",
+      "oracle": "Independent focused-target readback and exact Unicode",
+      "preconditions": "Unlocked desktop and input lease",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.input.pointer",
+      "contract": "Target pointer action to verified native window",
+      "oracle": "Independent application postcondition",
+      "preconditions": "DPI, coordinate system, focus and input lease",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.visual.capture",
+      "contract": "Observe native screen/window without leaking content",
+      "oracle": "Hash/local synthetic mark detection; redacted receipt",
+      "preconditions": "Explicit screenshot privacy authorization",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "desktop.events.subscribe",
+      "contract": "Observe state change without polling race",
+      "oracle": "Known fixture change observed with bounded latency",
+      "preconditions": "Approved event mechanism and nonleaking stream",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "system.process.manage",
+      "contract": "Inspect or execute bounded synthetic process",
+      "oracle": "Independent PID and exit verification",
+      "preconditions": "VM/sandbox privilege boundary",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "system.file.manage",
+      "contract": "Read/write restricted synthetic file path",
+      "oracle": "Filesystem hash and path boundary verifier",
+      "preconditions": "Authorized rooted path and rollback",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "system.registry.manage",
+      "contract": "Read/write synthetic registry key",
+      "oracle": "Independent registry readback and rollback",
+      "preconditions": "Disposable VM and explicit change gate",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "system.service.manage",
+      "contract": "Inspect or operate synthetic service",
+      "oracle": "Independent service state readback",
+      "preconditions": "Disposable VM and privilege gate",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "environment.wine.compat",
+      "contract": "Operate Windows control/window under Wine",
+      "oracle": "Independent fixture readback under pinned Wine",
+      "preconditions": "Admitted Wine/CI runner",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "transport.ipc.request",
+      "contract": "Deliver framed RPC with exact request/response correlation",
+      "oracle": "Reply ID equals request ID, bounded framing and timeout",
+      "preconditions": "Protocol identity/authorization",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    },
+    {
+      "id": "provider.security.gates",
+      "contract": "Constrain allowed tools, network egress, disclosure and input authority",
+      "oracle": "Denylisted action refused; egress rules independently checked",
+      "preconditions": "Agent Dispatch grants, isolated runner",
+      "measure": [
+        "success_rate",
+        "latency_ms",
+        "interventions",
+        "failure_class",
+        "safety",
+        "cleanup",
+        "deployment_cost"
+      ]
+    }
+  ],
+  "provider_claims": [
+    {
+      "provider": "wininspect.public-projection",
+      "primitive": "desktop.window.identify",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39384458133/artifacts/12246768692",
+      "detail": "6 PID-matching HWNDs, one visible; correct visible HWND selected; observed WinInspect/independent counts agree"
+    },
+    {
+      "provider": "wininspect.public-projection",
+      "primitive": "desktop.uia.snapshot",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242",
+      "detail": "2 immediate children on selected synthetic visible Edge HWND"
+    },
+    {
+      "provider": "windows.direct-uia",
+      "primitive": "desktop.uia.snapshot",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242",
+      "detail": "2 immediate children on the same HWND"
+    },
+    {
+      "provider": "microsoft.winappcli.v0.7.1",
+      "primitive": "desktop.uia.snapshot",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242",
+      "detail": "3 UIA elements reported on same HWND at depth=1; do not directly compare count with WinInspect child-only list"
+    },
+    {
+      "provider": "sbroenne.windows-mcp.v1.3.28",
+      "primitive": "desktop.uia.snapshot",
+      "tier": "SOURCE_CONFIRMED",
+      "outcome": "NOT_EXECUTED",
+      "evidence": "https://github.com/sbroenne/mcp-windows/blob/v1.3.28/src/Sbroenne.WindowsMcp/Automation/Tools/UISnapshotTool.cs",
+      "detail": "Read-only ui_snapshot and least privilege allowlist; current harness staged but not yet executed"
+    },
+    {
+      "provider": "playwright.chromium",
+      "primitive": "browser.dom.form",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242",
+      "detail": "Synthetic Unicode form on Chrome and Edge"
+    },
+    {
+      "provider": "playwright.chromium",
+      "primitive": "browser.file.upload",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39421156474/artifacts/12263805903",
+      "detail": "3/3 synthetic runs via filechooser.setFiles; no native OS dialog"
+    },
+    {
+      "provider": "playwright.chromium",
+      "primitive": "browser.file.download",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39421156474/artifacts/12263805903",
+      "detail": "3/3 synthetic runs independently hashed"
+    },
+    {
+      "provider": "webdriver.stock-firefox",
+      "primitive": "browser.webdriver.dom",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39420691578/artifacts/12263875335",
+      "detail": "Installed Firefox W3C session, synthetic Unicode form PASS; not patched Playwright Firefox"
+    },
+    {
+      "provider": "wininspect.public-projection",
+      "primitive": "transport.ipc.request",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "FAIL",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242",
+      "detail": "Response ID mismatched request ID; do not promote write or action interface"
+    },
+    {
+      "provider": "sbroenne.windows-mcp.v1.3.28",
+      "primitive": "desktop.dialog.file",
+      "tier": "SOURCE_CONFIRMED",
+      "outcome": "NOT_EXECUTED",
+      "evidence": "https://github.com/sbroenne/mcp-windows/blob/v1.3.28/FEATURES.md",
+      "detail": "Claims file-open/save; English-only restriction; no task acceptance"
+    },
+    {
+      "provider": "microsoft.winappcli.v0.7.1",
+      "primitive": "desktop.uia.find",
+      "tier": "SOURCE_CONFIRMED",
+      "outcome": "NOT_EXECUTED",
+      "evidence": "https://github.com/microsoft/winappCli/blob/v0.7.1/docs/ui-automation.md",
+      "detail": "Documented scoped UI search and selector ambiguity controls; not yet independently tested"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "web.form.synthetic",
+      "goal": "Set Unicode field and independently verify output",
+      "required": [
+        [
+          "browser.dom.form"
+        ]
+      ],
+      "status": "QUALIFIED_SYNTHETIC",
+      "evidence": [
+        "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242"
+      ],
+      "outcome": "PASS",
+      "composition": [
+        "playwright.chromium"
+      ],
+      "wininspect_marginal_utility": "NOT_NEEDED_FOR_THIS_TASK",
+      "limits": "Not a real website/account"
+    },
+    {
+      "id": "web.transfer.synthetic",
+      "goal": "Upload and download synthetic UTF-8 data",
+      "required": [
+        [
+          "browser.file.upload",
+          "browser.file.download"
+        ]
+      ],
+      "status": "QUALIFIED_SYNTHETIC",
+      "evidence": [
+        "https://github.com/SemperSupra/WinInspect/actions/runs/39421156474/artifacts/12263805903"
+      ],
+      "outcome": "PASS_3_OF_3_EACH",
+      "composition": [
+        "playwright.chromium"
+      ],
+      "wininspect_marginal_utility": "NOT_NEEDED_FOR_THIS_TASK",
+      "limits": "Browser interception; not OS dialog"
+    },
+    {
+      "id": "firefox.form.stock",
+      "goal": "Set Unicode field in installed stock Firefox",
+      "required": [
+        [
+          "browser.webdriver.dom"
+        ]
+      ],
+      "status": "QUALIFIED_SYNTHETIC",
+      "evidence": [
+        "https://github.com/SemperSupra/WinInspect/actions/runs/39420691578/artifacts/12263875335"
+      ],
+      "outcome": "PASS",
+      "composition": [
+        "webdriver.stock-firefox"
+      ],
+      "wininspect_marginal_utility": "NOT_NEEDED_FOR_THIS_TASK",
+      "limits": "No native browser chrome testing"
+    },
+    {
+      "id": "edge.native.inspect",
+      "goal": "Identify correct visible Edge HWND and inspect UIA tree",
+      "required": [
+        [
+          "desktop.window.identify",
+          "desktop.uia.snapshot"
+        ]
+      ],
+      "status": "QUALIFIED_OBSERVATION_ONLY",
+      "evidence": [
+        "https://github.com/SemperSupra/WinInspect/actions/runs/39423242646/artifacts/12265147242"
+      ],
+      "outcome": "PASS",
+      "composition": [
+        "wininspect.public-projection",
+        "windows.direct-uia",
+        "microsoft.winappcli.v0.7.1"
+      ],
+      "wininspect_marginal_utility": "UNPROVEN_VS_ALTERNATIVES",
+      "limits": "Native observation only, no actuation; WinInspect IPC response correlation failed"
+    },
+    {
+      "id": "browser.native.file-dialog",
+      "goal": "Control a genuine synthetic Windows file picker with independent filesystem SHA",
+      "required": [
+        [
+          "desktop.window.identify",
+          "desktop.dialog.file"
+        ],
+        [
+          "desktop.window.identify",
+          "desktop.uia.find",
+          "desktop.uia.invoke"
+        ]
+      ],
+      "status": "NOT_QUALIFIED",
+      "evidence": [],
+      "outcome": "NOT_EXECUTED",
+      "composition": [],
+      "wininspect_marginal_utility": "UNMEASURED",
+      "limits": "Requires single input lease and separate actuation admission"
+    },
+    {
+      "id": "vm.settings.readonly",
+      "goal": "Observe harmless Windows Settings page in disposable VM",
+      "required": [
+        [
+          "desktop.window.identify",
+          "desktop.uia.snapshot"
+        ]
+      ],
+      "status": "NOT_QUALIFIED",
+      "evidence": [],
+      "outcome": "NOT_EXECUTED",
+      "composition": [],
+      "wininspect_marginal_utility": "UNMEASURED",
+      "limits": "No VM platform parity qualification"
+    },
+    {
+      "id": "wine.desktop.inspect",
+      "goal": "Inspect windows under Wine synthetic host",
+      "required": [
+        [
+          "environment.wine.compat",
+          "desktop.window.identify"
+        ]
+      ],
+      "status": "NOT_QUALIFIED",
+      "evidence": [],
+      "outcome": "NOT_EXECUTED",
+      "composition": [],
+      "wininspect_marginal_utility": "UNMEASURED",
+      "limits": "Source support is not runtime portability"
+    }
+  ],
+  "decision_policy": {
+    "hard_gates": [
+      "authorization",
+      "zero-dollar budget",
+      "private-source custody",
+      "synthetic data/no real profiles",
+      "one desktop input owner",
+      "independent outcome oracle",
+      "teardown"
+    ],
+    "metrics": [
+      "paired_task_success_rate",
+      "incremental_success_delta",
+      "p50_end_to_end_ms",
+      "p95_end_to_end_ms",
+      "interventions_per_trial",
+      "unsafe_action_count",
+      "deployment_footprint",
+      "maintenance_cost",
+      "dependency_complexity"
+    ],
+    "caution": "Do not calculate p95, Shapley or causal marginal contribution from a single run or three trials; use matched repeated trials, controlled ablations, interaction experiments and uncertainty bounds.",
+    "dispositions": [
+      "USE_NATIVE",
+      "USE_EXISTING_PROVIDER",
+      "COMPOSE",
+      "BUILD_MINIMAL_WININSPECT",
+      "PRESERVE_EXISTING",
+      "DEFER",
+      "RETIRE_REDUNDANT"
+    ]
+  }
+}
