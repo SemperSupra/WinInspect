@@ -113,6 +113,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Playwright harness syntax invalid' }
           node scripts/public-browser-playwright-rdte.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE failed; preserve receipt' }
+      - name: Measure Playwright-only synthetic file transfer baseline
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        env:
+          PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\public-playwright
+          TRANSFER_RECEIPT: ${{ runner.temp }}\public-browser-transfer.json
+        run: |
+          node --check scripts/public-browser-transfer-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Transfer harness syntax error' }
+          node scripts/public-browser-transfer-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic browser-only transfer baseline failed' }
+
       - name: Tear down WinApp CLI executable guard and scratch state
         if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
@@ -130,6 +142,7 @@ jobs:
           name: wininspect-browser-rdte
           path: |
             ${{ runner.temp }}\public-browser-rdte.json
+            ${{ runner.temp }}\public-browser-transfer.json
             ${{ runner.temp }}\public-browser-competitor-provenance.json
           if-no-files-found: warn
           retention-days: 7
