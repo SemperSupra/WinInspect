@@ -106,12 +106,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Playwright harness syntax invalid' }
           node scripts/public-browser-playwright-rdte.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE failed; preserve receipt' }
+      - name: Compare independent native UIA
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/Test-PublicIndependentEdgeUIA.ps1
+
+      - name: Verify pinned competitor release provenance
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: ./scripts/public-browser-competitor-provenance.ps1
+
       - name: Archive sanitized browser RDTE results
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wininspect-browser-rdte
-          path: ${{ runner.temp }}\public-browser-rdte.json
+          path: |
+            ${{ runner.temp }}\public-browser-rdte.json
+            ${{ runner.temp }}\edge-independent-uia.json
+            ${{ runner.temp }}\public-browser-competitor-provenance.json
           if-no-files-found: warn
           retention-days: 7
 
