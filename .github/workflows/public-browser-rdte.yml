@@ -17,10 +17,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     env:
-      PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\\rdte-playwright
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\\rdte-browsers
-      RDTE_RECEIPT: ${{ runner.temp }}\\browser-rdte-receipt.json
-      WININSPECT_DAEMON: ${{ github.workspace }}\\build\\Release\\wininspectd.exe
+      PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\rdte-playwright
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\rdte-browsers
+      RDTE_RECEIPT: ${{ runner.temp }}\browser-rdte-receipt.json
+      WININSPECT_DAEMON: ${{ github.workspace }}\build\Release\wininspectd.exe
     steps:
       - name: Checkout public release plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -46,7 +46,7 @@ jobs:
           node --version
           npm --version
           New-Item -ItemType Directory -Force -Path $env:PLAYWRIGHT_MODULE_ROOT | Out-Null
-          npm install --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund --no-save playwright@1.54.2
+          npm install --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund --no-save playwright@1.64.1
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Playwright package failed' }
           $pw = Join-Path $env:PLAYWRIGHT_MODULE_ROOT 'node_modules/.bin/playwright.cmd'
           & $pw install firefox
@@ -65,6 +65,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: public-wininspect-browser-rdte
-          path: ${{ runner.temp }}\\browser-rdte-receipt.json
+          path: ${{ runner.temp }}\browser-rdte-receipt.json
           if-no-files-found: warn
           retention-days: 7
