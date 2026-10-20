@@ -7,6 +7,8 @@ on:
       - 'scripts/public-browser-playwright-rdte.cjs'
       - 'scripts/public-browser-wininspect-observe.cjs'
       - 'docs/browser-playwright-rdte.md'
+      - 'scripts/public-browser-rdte/package.json'
+      - 'scripts/public-browser-rdte/package-lock.json'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +48,8 @@ jobs:
           node --version
           npm --version
           New-Item -ItemType Directory -Force -Path $env:PLAYWRIGHT_MODULE_ROOT | Out-Null
-          npm install --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund --no-save playwright@1.64.1
+          Copy-Item -Path 'scripts/public-browser-rdte/package*.json' -Destination $env:PLAYWRIGHT_MODULE_ROOT
+          npm ci --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Playwright package failed' }
           $pw = Join-Path $env:PLAYWRIGHT_MODULE_ROOT 'node_modules/.bin/playwright.cmd'
           & $pw install firefox
