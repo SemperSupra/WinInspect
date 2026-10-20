@@ -49,6 +49,20 @@ async function observe(pid){
       out.uiaCount=u.ok&&Array.isArray(u.result)?u.result.length:0;
       out.uiaIdMatched=u.idMatched;}
     catch{out.uia='UIA_TIMEOUT';}
+    // Compare against the identical HWND/PID while Playwright holds this Edge open.
+    const exact=spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',
+      path.join(__dirname,'public-browser-uia-same-hwnd.ps1'),
+      '-Hwnd',row.hwnd,'-ExpectedPid',String(pid)],
+      {encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:8192,stdio:['ignore','pipe','pipe']});
+    if(exact.status===0){
+      try{
+        const direct=JSON.parse(exact.stdout.trim());
+        out.independent={status:direct.status,childCount:direct.childCount||0,
+          rootFound:direct.rootFound===true,pidMatched:direct.pidMatched===true,
+          errorClass:direct.errorClass||null};
+      }catch{out.independent={status:'MALFORMED_INDEPENDENT_RECEIPT'};}
+    }else out.independent={status:'INDEPENDENT_PROBE_FAILED'};
+    out.sameTargetCompared=true;
     break;
    }
   }
