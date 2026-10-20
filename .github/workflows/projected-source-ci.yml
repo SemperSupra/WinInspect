@@ -85,6 +85,15 @@ jobs:
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
+      - name: Validate supplier-neutral primitive evidence catalog
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        run: |
+          node --check scripts/validate-primitive-impact.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog validator syntax failed' }
+          node scripts/validate-primitive-impact.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Primitive catalog failed validation' }
+
       - name: Prepare isolated WinApp CLI read-only contender
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
         shell: pwsh
