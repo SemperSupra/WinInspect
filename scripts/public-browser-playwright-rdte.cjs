@@ -24,20 +24,23 @@ async function main(){
  for(const [name,engine,opts,installed] of browsers){
   const r={name,installed,dom:'NOT_RUN'};receipt.browsers.push(r);
   if(!installed){r.dom='NOT_INSTALLED';continue;}
-  let browser;
+  let browser,server;
   try{
-   browser=await engine.launch({...opts,timeout:18000});
+   if(name==='edge'){
+    server=await engine.launchServer({...opts,timeout:18000});
+    browser=await engine.connect(server.wsEndpoint());
+   }else browser=await engine.launch({...opts,timeout:18000});
    r.version=browser.version();
    const context=await browser.newContext(),page=await context.newPage();
    await page.goto('data:text/html;charset=utf-8,'+encodeURIComponent(fixture));
    await page.locator('#f').fill('hello-ไทย-日本語');
    await page.locator('#b').click();
    r.dom=(await page.locator('#o').innerText())==='hello-ไทย-日本語'?'PASS':'FAIL';
-   r.browserPid=browser.process()?.pid||null;
+   r.browserPid=name==='edge'?server.process()?.pid||null:null;
    if(name==='edge'&&wininspectReady&&r.browserPid)r.native=await wininspect.observe(r.browserPid);
    await context.close();
   }catch(e){r.dom='UNSUPPORTED_OR_FAILED';r.failureClass=e.name||'Error';}
-  finally{if(browser)await browser.close().catch(()=>{});}
+  finally{if(browser)await browser.close().catch(()=>{});if(server)await server.close().catch(()=>{});}
   console.log('RDTE_BROWSER='+name+' DOM='+r.dom);
  }
  // Browser PIDs are transient execution evidence; do not publish machine process IDs.
