@@ -1,0 +1,70 @@
+name: Public WinInspect browser RDTE
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/public-browser-rdte.yml'
+      - 'scripts/public-browser-playwright-rdte.cjs'
+      - 'scripts/public-browser-wininspect-observe.cjs'
+      - 'docs/browser-playwright-rdte.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-rdte:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\\rdte-playwright
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\\rdte-browsers
+      RDTE_RECEIPT: ${{ runner.temp }}\\browser-rdte-receipt.json
+      WININSPECT_DAEMON: ${{ github.workspace }}\\build\\Release\\wininspectd.exe
+    steps:
+      - name: Checkout public release plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify projection and public-only custody
+        shell: pwsh
+        run: |
+          ./scripts/Test-PublicDeployPlane.ps1
+          ./scripts/Test-ProjectedSourcePathSafety.ps1
+          ./scripts/Test-ProjectedSource.ps1
+          if (-not (Test-Path source/CMakeLists.txt)) { throw 'Approved projection missing' }
+      - name: Build approved projected WinInspect
+        shell: pwsh
+        run: |
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+          if (-not (Test-Path $env:WININSPECT_DAEMON)) { throw 'Daemon binary not found' }
+          Write-Host "PUBLIC_BINARY_SHA256=$((Get-FileHash $env:WININSPECT_DAEMON -Algorithm SHA256).Hash)"
+      - name: Prepare isolated Playwright engine
+        shell: pwsh
+        run: |
+          node --version
+          npm --version
+          New-Item -ItemType Directory -Force -Path $env:PLAYWRIGHT_MODULE_ROOT | Out-Null
+          npm install --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund --no-save playwright@1.54.2
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Playwright package failed' }
+          $pw = Join-Path $env:PLAYWRIGHT_MODULE_ROOT 'node_modules/.bin/playwright.cmd'
+          & $pw install firefox
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable Firefox engine failed' }
+      - name: Qualify stock browsers with synthetic offline DOM and native window observation
+        shell: pwsh
+        run: |
+          node --check scripts/public-browser-wininspect-observe.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect helper syntax invalid' }
+          node --check scripts/public-browser-playwright-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright browser harness syntax invalid' }
+          node scripts/public-browser-playwright-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE returned failure' }
+      - name: Preserve privacy-minimized receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-wininspect-browser-rdte
+          path: ${{ runner.temp }}\\browser-rdte-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
