@@ -11,6 +11,7 @@ on:
       - '.github/workflows/projected-source-ci.yml'
       - '.github/workflows/release.yml'
       - 'README.md'
+      - 'scripts/public-browser-**'
       - 'docs/**'
   push:
     branches:
@@ -81,6 +82,38 @@ jobs:
           go version
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
+
+      - name: Browser RDTE on approved public projection
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        shell: pwsh
+        env:
+          PLAYWRIGHT_MODULE_ROOT: ${{ runner.temp }}\public-playwright
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\public-browsers
+          WININSPECT_DAEMON: ${{ github.workspace }}\build\Release\wininspectd.exe
+          RDTE_RECEIPT: ${{ runner.temp }}\public-browser-rdte.json
+        run: |
+          if (-not (Test-Path -LiteralPath $env:WININSPECT_DAEMON)) { throw 'Projected binary missing' }
+          New-Item -ItemType Directory -Force -Path $env:PLAYWRIGHT_MODULE_ROOT | Out-Null
+          Copy-Item scripts/public-browser-rdte/package*.json $env:PLAYWRIGHT_MODULE_ROOT
+          npm ci --prefix $env:PLAYWRIGHT_MODULE_ROOT --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned npm ci failed' }
+          $pw = Join-Path $env:PLAYWRIGHT_MODULE_ROOT 'node_modules/.bin/playwright.cmd'
+          & $pw install firefox
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright Firefox browser installation failed' }
+          node --check scripts/public-browser-wininspect-observe.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native observer syntax invalid' }
+          node --check scripts/public-browser-playwright-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright harness syntax invalid' }
+          node scripts/public-browser-playwright-rdte.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Browser RDTE failed; preserve receipt' }
+      - name: Archive sanitized browser RDTE results
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qualification/browser-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wininspect-browser-rdte
+          path: ${{ runner.temp }}\public-browser-rdte.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Record public execution boundary
         shell: pwsh
