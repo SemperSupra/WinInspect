@@ -105,8 +105,13 @@ try {
     $length = [BitConverter]::ToUInt32($replyHeader, 0)
     if ($length -lt 2 -or $length -gt 65536) { throw "Unsafe public response length $length." }
     $reply = [Text.Encoding]::UTF8.GetString((Read-Exact -Stream $pipe -Length ([int]$length))) | ConvertFrom-Json -ErrorAction Stop
-    if ($reply.id -ne 'public-smoke-health' -or $reply.ok -ne $true) {
-        throw 'Projected daemon read-only health RPC returned an unexpected response.'
+    $idMatches = ($reply.id -eq 'public-smoke-health')
+    $isSuccess = ($reply.ok -eq $true)
+    if (-not $idMatches -or -not $isSuccess) {
+        # Privacy-minimized native evidence: never emit response result, ID,
+        # error message, paths, machine identity or environment metadata.
+        Write-Host "OBSERVED: named-pipe frame decoded; id_matched=$($idMatches.ToString().ToLowerInvariant()); ok=$($isSuccess.ToString().ToLowerInvariant())"
+        throw 'Projected daemon read-only health RPC failed correlation/success oracle.'
     }
     Write-Host 'PASS: projected Windows daemon accepted a local framed named-pipe read-only health request.'
     Write-Host 'PASS: response ID correlated; successful typed result; no private source or real app content.'
