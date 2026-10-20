@@ -78,7 +78,8 @@ async function observe(pid){
      rootFound:direct.rootFound===true,pidMatched:direct.pidMatched===true,
      errorClass:direct.errorClass||null};
    }catch{out.independent={status:'MALFORMED_INDEPENDENT_RECEIPT'};}
-  }else out.independent={status:'INDEPENDENT_PROBE_FAILED'};
+  }else out.independent={status:'INDEPENDENT_PROBE_FAILED',
+    failureClass:exact.error?.code||('EXIT_'+String(exact.status))};
   if(process.env.WINAPP_EXE&&process.env.WINAPP_EGRESS_DENIED==='1'){
    const start=Date.now();
    const v=spawnSync(process.env.WINAPP_EXE,
