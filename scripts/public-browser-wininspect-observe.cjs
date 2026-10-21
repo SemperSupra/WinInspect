@@ -117,7 +117,44 @@ async function observe(pid){
       targetClassChromium:exact.length===1?String(exact[0].className ?? exact[0].ClassName ?? '').startsWith('Chrome_WidgetWin'):null,
       visibleSize:exact.length===1?(Number(exact[0].width??exact[0].Width)>100 &&
         Number(exact[0].height??exact[0].Height)>100):null};
-    }catch{out.winappWindowIdentity.status='JSON_PARSE_FAILED'}
+     // Supplier-neutral selector: choose using WinApp PID/class/size ONLY.
+     // Compare with WinInspect's HWND strictly AFTER WinApp has selected.
+     const eligible=scoped.filter(w=>{
+      try{
+       const hwnd=BigInt(w.hwnd??w.Hwnd);
+       const cls=String(w.className??w.ClassName??'');
+       const width=Number(w.width??w.Width),height=Number(w.height??w.Height);
+       return hwnd>0n&&hwnd<=(1n<<64n)-1n&&cls.startsWith('Chrome_WidgetWin') &&
+        Number.isFinite(width)&&Number.isFinite(height)&&width>100&&height>100;
+      }catch{return false;}
+     });
+     out.winappIndependentSelection={
+      status:eligible.length===1?'ORACLE_PENDING':(eligible.length===0?'NO_ELIGIBLE':'AMBIGUOUS'),
+      processWindowCount:scoped.length,eligibleCount:eligible.length,
+      selector:'PID_CHROMIUM_CLASS_GEOMETRY',referenceUsedForSelection:false};
+     if(eligible.length===1){
+      const independentHwnd=BigInt(eligible[0].hwnd??eligible[0].Hwnd);
+      const direct=spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',
+       path.join(__dirname,'public-browser-uia-same-hwnd.ps1'),
+       '-Hwnd','0x'+independentHwnd.toString(16),'-ExpectedPid',String(pid)],
+       {encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:8192,stdio:['ignore','pipe','pipe']});
+      if(direct.status!==0){
+       out.winappIndependentSelection.status='ORACLE_PROCESS_FAILED';
+      }else{
+       try{
+        const verdict=JSON.parse(direct.stdout.trim());
+        const sameAsReference=independentHwnd===BigInt(chosen.hwnd);
+        out.winappIndependentSelection.rootFound=verdict.rootFound===true;
+        out.winappIndependentSelection.pidMatched=verdict.pidMatched===true;
+        out.winappIndependentSelection.matchesReference=sameAsReference;
+        out.winappIndependentSelection.status=verdict.rootFound===true &&
+         verdict.pidMatched===true?(sameAsReference?'SELECTED_ORACLE_MATCH':'SELECTED_ORACLE_DISAGREE')
+         :'ORACLE_REJECTED';
+       }catch{out.winappIndependentSelection.status='ORACLE_JSON_INVALID';}
+      }
+     }
+    }catch{out.winappWindowIdentity.status='JSON_PARSE_FAILED';
+      out.winappIndependentSelection={status:'EVALUATION_ERROR'};}
    }
    const start=Date.now();
    const v=spawnSync(process.env.WINAPP_EXE,
