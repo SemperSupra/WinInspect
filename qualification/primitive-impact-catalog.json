@@ -608,10 +608,18 @@
     {
       "provider": "microsoft.winappcli.v0.7.1",
       "primitive": "desktop.window.enumerate",
-      "tier": "SOURCE_CONFIRMED",
-      "outcome": "NOT_EXECUTED",
-      "evidence": "https://github.com/microsoft/winappCli/blob/v0.7.1/docs/ui-automation.md",
-      "detail": "list-windows documented; not independently qualified by this program"
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39484376744/artifacts/12293640978",
+      "detail": "Public synthetic Edge and accessibility Edge: guarded WinApp ui list-windows -a <supplied PID> --json returned exactly one PID/HWND/class/geometry match to the separately selected visible HWND in each trial. Standalone HWND choice, full process discovery and actual task success not proven."
+    },
+    {
+      "provider": "microsoft.winappcli.v0.7.1",
+      "primitive": "desktop.window.identify",
+      "tier": "EXECUTED_ON_EXACT_TARGET",
+      "outcome": "INCONCLUSIVE",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39484376744/artifacts/12293640978",
+      "detail": "When supplied browser PID and WinInspect-selected comparison HWND, WinApp independently enumerated matching PID/HWND/class/geometry twice; it was not asked to select the correct visible window without the reference HWND. No standalone discovery/selection PASS inferred."
     },
     {
       "provider": "sbroenne.windows-mcp.v1.3.28",
