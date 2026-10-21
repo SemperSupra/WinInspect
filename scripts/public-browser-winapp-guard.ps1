@@ -33,16 +33,21 @@ $s=[ordered]@{work=$work;rule=$ruleName;ready=$false}
 $s | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8NoBOM
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $tag='v0.7.1';$assetName='winappcli-x64.zip'
-$api='https://api.github.com/repos/microsoft/winappCli/releases/tags/'+$tag
-$headers=@{'User-Agent'='WinInspect-RDTE';'Accept'='application/vnd.github+json'}
-$r=Invoke-RestMethod -Uri $api -Headers $headers -TimeoutSec 20
-$asset=@($r.assets | Where-Object {$_.name -eq $assetName}) | Select-Object -First 1
-if(-not $asset -or -not ([string]$asset.digest -match '^sha256:[0-9a-fA-F]{64}$')){throw 'No trusted release digest'}
-if($asset.size -gt 120MB){throw 'Archive exceeds size limit'}
+# Frozen upstream release asset digest and length were independently checked
+# against GitHub's official v0.7.1 release metadata before this change.
+# An anonymous REST metadata lookup on each disposable runner exhausted GitHub's
+# shared unauthenticated rate limit (403), despite the asset itself being pinned.
+# Never trust a mutable asset by URL alone: fail closed on exact size + SHA-256.
+$expectedSha256='d925d1e32cdc320b6d271f653fd2cd3c05b5d7558deb20d1b548bead77900fcf'
+$expectedBytes=[int64]99013508
+if($expectedBytes -gt 120MB){throw 'Pinned archive exceeds size limit'}
+$downloadUrl='https://github.com/microsoft/winappCli/releases/download/'+$tag+'/'+$assetName
 $zip=Join-Path $work $assetName
-Invoke-WebRequest -Uri ([string]$asset.browser_download_url) -OutFile $zip -MaximumRedirection 5 -TimeoutSec 180
+Invoke-WebRequest -Uri $downloadUrl -OutFile $zip -MaximumRedirection 5 -TimeoutSec 180
+$actualBytes=(Get-Item -LiteralPath $zip -ErrorAction Stop).Length
+if($actualBytes -ne $expectedBytes){throw 'Pinned archive length mismatch'}
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
-if($hash -ine ([string]$asset.digest).Substring(7)){throw 'Archive hash mismatch'}
+if($hash -ine $expectedSha256){throw 'Pinned archive hash mismatch'}
 $root=Join-Path $work 'bin'
 Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
 Remove-Item -LiteralPath $zip -Force
