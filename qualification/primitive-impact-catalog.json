@@ -617,9 +617,9 @@
       "provider": "microsoft.winappcli.v0.7.1",
       "primitive": "desktop.window.identify",
       "tier": "EXECUTED_ON_EXACT_TARGET",
-      "outcome": "INCONCLUSIVE",
-      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39484376744/artifacts/12293640978",
-      "detail": "When supplied browser PID and WinInspect-selected comparison HWND, WinApp independently enumerated matching PID/HWND/class/geometry twice; it was not asked to select the correct visible window without the reference HWND. No standalone discovery/selection PASS inferred."
+      "outcome": "PASS",
+      "evidence": "https://github.com/SemperSupra/WinInspect/actions/runs/39677672742/artifacts/12382453536",
+      "detail": "PID-SUPPLIED synthetic Edge window selection ONLY: independent WinApp CLI PID/class/geometry unique-candidate selector, WITHOUT using WinInspect's chosen HWND, returned SELECTED_ORACLE_MATCH on Edge normal and accessibility launches (2/2). Separate Win32 GetWindowThreadProcessId and UIAutomationElement.FromHandle root oracle both PASS, final cross-provider HWND match true. Not global process discovery, no Windows native actuation, no broad consumer or causal claim; WinInspect IPC request ID mismatch remains FAIL."
     },
     {
       "provider": "sbroenne.windows-mcp.v1.3.28",
