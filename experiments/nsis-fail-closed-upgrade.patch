@@ -1,0 +1,71 @@
+diff --git a/source/tools/wininspect.nsi b/source/tools/wininspect.nsi
+--- a/source/tools/wininspect.nsi
++++ b/source/tools/wininspect.nsi
+@@ -348,5 +348,55 @@ skip_zip:
+   StrCpy $existing_method "none"
+ FunctionEnd
+ 
++; Fail closed before mutating an existing NSIS installation when any product
++; executable cannot be opened for write. This is deliberately a bounded
++; preflight using native NSIS FileOpen semantics, not a new installer layer.
++; Missing files are ignored so repair/reinstall can restore them.
++Function PreflightExistingNsisProductFiles
++  ${If} $existing_method != "nsis"
++    Return
++  ${EndIf}
++
++  Push $R4
++
++  IfFileExists "$LOCALAPPDATA\WinInspect\wininspectd.exe" 0 preflight_cli
++  ClearErrors
++  FileOpen $R4 "$LOCALAPPDATA\WinInspect\wininspectd.exe" a
++  IfErrors preflight_locked
++  FileClose $R4
++
++preflight_cli:
++  IfFileExists "$LOCALAPPDATA\WinInspect\wininspect.exe" 0 preflight_gui
++  ClearErrors
++  FileOpen $R4 "$LOCALAPPDATA\WinInspect\wininspect.exe" a
++  IfErrors preflight_locked
++  FileClose $R4
++
++preflight_gui:
++  IfFileExists "$LOCALAPPDATA\WinInspect\wininspect-gui.exe" 0 preflight_uninstaller
++  ClearErrors
++  FileOpen $R4 "$LOCALAPPDATA\WinInspect\wininspect-gui.exe" a
++  IfErrors preflight_locked
++  FileClose $R4
++
++preflight_uninstaller:
++  IfFileExists "$LOCALAPPDATA\WinInspect\uninstall.exe" 0 preflight_ok
++  ClearErrors
++  FileOpen $R4 "$LOCALAPPDATA\WinInspect\uninstall.exe" a
++  IfErrors preflight_locked
++  FileClose $R4
++
++preflight_ok:
++  Pop $R4
++  Return
++
++preflight_locked:
++  DetailPrint "Existing WinInspect installation has a file that cannot be replaced."
++  DetailPrint "Aborting before package files or registration are changed."
++  SetErrorLevel 2
++  Pop $R4
++  Abort
++FunctionEnd
++
+ ; ── Initialization (after sections so section constants are available) ───────
+ Function .onInit
+@@ -479,7 +529,10 @@ upgrade_ok:
+   ${EndIf}
+ 
+-  !insertmacro DetectInstallMode
+   SetShellVarContext current
+   StrCpy $INSTDIR "$LOCALAPPDATA\WinInspect"
++  ; Existing-install replacement viability is checked only after any interactive
++  ; reinstall/upgrade decision, but before sections can mutate package state.
++  Call PreflightExistingNsisProductFiles
++  !insertmacro DetectInstallMode
+   ; Fleet mode overrides happen at the section level (see each section)
+ FunctionEnd
