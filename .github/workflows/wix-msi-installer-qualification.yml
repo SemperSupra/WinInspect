@@ -1,0 +1,252 @@
+name: WiX MSI installer qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wix-msi-installer-qualification.yml'
+      - 'source/tools/winspect-msi.wxs'
+      - 'source/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-payload:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            cmake_arch: x64
+            artifact_arch: x64
+          - runner: windows-11-arm
+            cmake_arch: ARM64
+            artifact_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build native payload
+        shell: pwsh
+        run: |
+          cmake -S source -B source/build -A ${{ matrix.cmake_arch }} -DWININSPECT_BUILD_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+          cmake --build source/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+          New-Item -ItemType Directory -Force payload | Out-Null
+          foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+            $src = Join-Path 'source/build/Release' $name
+            if (-not (Test-Path $src)) { throw "Missing $src" }
+            Copy-Item $src payload/$name
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wix-payload-${{ matrix.artifact_arch }}
+          path: payload
+          retention-days: 7
+
+  package:
+    needs: build-payload
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: wix-payload-*
+          path: incoming
+      - name: Install pinned WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          wix --version
+      - name: Build architecture-specific A and B MSIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $hashes = [ordered]@{ architectures = [ordered]@{} }
+          foreach ($arch in @('x64','arm64')) {
+            $src = Join-Path 'incoming' "wix-payload-$arch"
+            $a = Join-Path 'work' "$arch-a"
+            $b = Join-Path 'work' "$arch-b"
+            New-Item -ItemType Directory -Force $a,$b | Out-Null
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              Copy-Item (Join-Path $src $name) (Join-Path $a $name) -Force
+              Copy-Item (Join-Path $src $name) (Join-Path $b $name) -Force
+              [IO.File]::AppendAllText((Join-Path $b $name), 'WININSPECT_WIX_B')
+            }
+            $hashes.architectures[$arch] = [ordered]@{ a=[ordered]@{}; b=[ordered]@{} }
+            foreach ($name in @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')) {
+              $hashes.architectures[$arch].a[$name] = (Get-FileHash (Join-Path $a $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+              $hashes.architectures[$arch].b[$name] = (Get-FileHash (Join-Path $b $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            wix build source/tools/winspect-msi.wxs -arch $arch -d "Payload=$a" -d ProductVersion=1.0.1 -o "dist/WinInspect-WiX-$arch-a.msi"
+            if ($LASTEXITCODE -ne 0) { throw "WiX A build failed for $arch" }
+            wix build source/tools/winspect-msi.wxs -arch $arch -d "Payload=$b" -d ProductVersion=1.0.2 -o "dist/WinInspect-WiX-$arch-b.msi"
+            if ($LASTEXITCODE -ne 0) { throw "WiX B build failed for $arch" }
+          }
+          $hashes | ConvertTo-Json -Depth 6 | Set-Content dist/expected-hashes.json -Encoding utf8NoBOM
+          Get-ChildItem dist | Format-Table Name,Length
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wix-msi-candidates
+          path: dist
+          retention-days: 7
+
+  windows-lifecycle:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+            pe_machine: 34404
+          - runner: windows-11-arm
+            arch: arm64
+            pe_machine: 43620
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: wix-msi-candidates
+          path: dist
+      - name: Qualify MSI lifecycle and transactional rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arch = '${{ matrix.arch }}'
+          $root = Join-Path $env:LOCALAPPDATA 'WinInspect'
+          $expected = Get-Content dist/expected-hashes.json -Raw | ConvertFrom-Json -AsHashtable
+          $names = @('wininspectd.exe','wininspect.exe','wininspect-gui.exe')
+          function Msi([string]$v) { return (Resolve-Path "dist/WinInspect-WiX-$arch-$v.msi").Path }
+          function Invoke-Msi([string[]]$args, [string]$log) {
+            $all = @() + $args + @('/qn','/norestart','REBOOT=ReallySuppress','MSIRESTARTMANAGERCONTROL=Disable','/l*v', $log)
+            $p = Start-Process msiexec.exe -ArgumentList $all -PassThru -Wait
+            return $p.ExitCode
+          }
+          function Install([string]$v) {
+            $code = Invoke-Msi @('/i', ('"' + (Msi $v) + '"')) "install-$v.log"
+            if ($code -ne 0) { throw "Install $v failed: $code" }
+          }
+          function Assert-Hashes([string]$v) {
+            foreach ($name in $names) {
+              $actual = (Get-FileHash (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+              $want = [string]$expected['architectures'][$arch][$v][$name]
+              if ($actual -ne $want) { throw "$name mismatch $arch/$v actual=$actual want=$want" }
+            }
+          }
+          function Machine([string]$path) {
+            $bytes=[IO.File]::ReadAllBytes($path); $pe=[BitConverter]::ToInt32($bytes,0x3c); return [BitConverter]::ToUInt16($bytes,$pe+4)
+          }
+          function ArpEntries {
+            $roots=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
+            return @($roots | ForEach-Object { Get-ItemProperty $_ -ErrorAction SilentlyContinue } | Where-Object { $_.DisplayName -eq 'WinInspect' })
+          }
+
+          Install 'a'
+          Assert-Hashes 'a'
+          if ((Machine (Join-Path $root 'wininspect.exe')) -ne ${{ matrix.pe_machine }}) { throw 'Native PE identity mismatch.' }
+          & (Join-Path $root 'wininspect.exe') '--version' *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'Installed CLI failed.' }
+          Install 'a'
+          Assert-Hashes 'a'
+
+          Install 'b'
+          Assert-Hashes 'b'
+          Install 'a'
+          Assert-Hashes 'a'
+
+          # Exact NSIS/Inno falsifier: one product file is exclusively locked.
+          $locked=[IO.File]::Open((Join-Path $root 'wininspect.exe'),[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+          try { $lockExit = Invoke-Msi @('/i', ('"' + (Msi 'b') + '"')) 'locked-upgrade.log' } finally { $locked.Dispose() }
+          $preserved=$true; $hashError=$null
+          try { Assert-Hashes 'a' } catch { $preserved=$false; $hashError=$_.Exception.Message }
+          $arp=ArpEntries
+          [ordered]@{ exitCode=$lockExit; hashesPreserved=$preserved; hashError=$hashError; arpVersions=@($arp.DisplayVersion); arpCount=$arp.Count } |
+            ConvertTo-Json -Depth 4 | Set-Content "lock-$arch.json" -Encoding utf8NoBOM
+          Get-Content "lock-$arch.json"
+          if ($lockExit -eq 0) { throw 'Locked upgrade incorrectly returned success.' }
+          if (-not $preserved) { throw "MSI rollback did not restore A: $hashError" }
+          if ($arp.Count -ne 1 -or [string]$arp[0].DisplayVersion -ne '1.0.1') { throw "ARP state after rollback is not exactly A: $($arp.DisplayVersion -join ',')" }
+
+          Copy-Item (Msi 'b') dist/corrupt.msi -Force
+          $fs=[IO.File]::Open('dist/corrupt.msi',[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::None)
+          try { $fs.SetLength([Math]::Min(4096,$fs.Length)) } finally { $fs.Dispose() }
+          $badExit=Invoke-Msi @('/i', ('"' + (Resolve-Path dist/corrupt.msi).Path + '"')) 'corrupt.log'
+          if ($badExit -eq 0) { throw 'Corrupt MSI was accepted.' }
+          Assert-Hashes 'a'
+
+          $uninstallExit=Invoke-Msi @('/x', ('"' + (Msi 'a') + '"')) 'uninstall.log'
+          if ($uninstallExit -ne 0) { throw "Uninstall failed: $uninstallExit" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $root) { throw "Install directory residue remains: $root" }
+          if ((ArpEntries).Count -ne 0) { throw 'ARP registration residue remains.' }
+
+          [ordered]@{ schemaVersion=1; runner='${{ matrix.runner }}'; architecture=$arch; cleanInstall=$true; nativePE=$true; repeatInstall=$true; upgrade=$true; downgradeExact=$true; lockedBinaryExit=$lockExit; transactionalRollback=$true; corruptPackageRejected=$true; uninstallClean=$true; scope='hosted Windows qualification only; not WinBot interactive acceptance' } |
+            ConvertTo-Json | Set-Content "evidence-$arch.json" -Encoding utf8NoBOM
+      - name: Upload Windows evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wix-msi-evidence-${{ matrix.arch }}
+          path: |
+            lock-${{ matrix.arch }}.json
+            evidence-${{ matrix.arch }}.json
+            locked-upgrade.log
+            corrupt.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  wine-lifecycle:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: wix-msi-candidates
+          path: dist
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine64 wine32 >/dev/null
+          wine --version
+      - name: Qualify x64 MSI under Wine
+        shell: bash
+        env:
+          WINEDEBUG: '-all'
+          WINEPREFIX: ${{ github.workspace }}/wineprefix
+        run: |
+          set -euo pipefail
+          export WINEARCH=win64
+          wineboot -u
+          A="$(pwd)/dist/WinInspect-WiX-x64-a.msi"
+          B="$(pwd)/dist/WinInspect-WiX-x64-b.msi"
+          install_msi() { wine msiexec /i "$1" /qn /norestart; }
+          install_msi "$A"
+          local_win="$(wine cmd /c 'echo %LOCALAPPDATA%' | tr -d '\r')"
+          local_unix="$(winepath -u "$local_win")"
+          root="$local_unix/WinInspect"
+          test -f "$root/winspect.exe"
+          wine "$root/winspect.exe" --version >/dev/null
+          install_msi "$A"
+          install_msi "$B"
+          wine "$root/winspect.exe" --version >/dev/null
+          install_msi "$A"
+          wine "$root/winspect.exe" --version >/dev/null
+          wine msiexec /x "$A" /qn /norestart
+          sleep 2
+          test ! -d "$root"
+          printf '%s\n' '{"schemaVersion":1,"wineLifecycle":true,"x64Msi":true,"cleanInstall":true,"repeatInstall":true,"upgrade":true,"downgrade":true,"installedCli":true,"uninstallClean":true}' > wine-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: wix-msi-evidence-wine
+          path: wine-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

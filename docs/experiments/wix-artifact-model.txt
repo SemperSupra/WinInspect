@@ -1,0 +1,1 @@
+The first WiX rep intentionally emits x64 and ARM64 MSIs from one source definition. A single-file wrapper is not required to qualify the backend because WinGet/Foundry can select architecture-specific installers. Wine consumes the x64 MSI.
