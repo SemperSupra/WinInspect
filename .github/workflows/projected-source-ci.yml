@@ -34,6 +34,8 @@ jobs:
   validate-and-build:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      WININSPECT_GO_VERSION: '1.26.11'
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -71,6 +73,15 @@ jobs:
           cmake --build build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
 
+      - name: Select pinned Go toolchain
+        if: steps.projection.outputs.present == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: ${{ env.WININSPECT_GO_VERSION }}
+          check-latest: false
+          cache: false
+          architecture: x64
+
       - name: Build projected portable client
         if: steps.projection.outputs.present == 'true'
         shell: pwsh
@@ -81,6 +92,9 @@ jobs:
             exit 0
           }
           go version
+          if ($LASTEXITCODE -ne 0 -or (go env GOVERSION).Trim() -cne "go$env:WININSPECT_GO_VERSION") {
+            throw 'Selected Go compiler differs from the declared product Go toolchain.'
+          }
           go build -C source/clients/portable -trimpath -buildvcs=false -ldflags=-buildid= -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
@@ -261,6 +275,9 @@ jobs:
             throw 'Cannot identify Go version/Windows architecture.'
           }
           $goVersion = $Matches[1]
+          if ($goVersion -cne $env:WININSPECT_GO_VERSION) {
+            throw 'Observed Go compiler does not match the bounded toolchain pin.'
+          }
           $compilerRecords = @(Get-ChildItem -LiteralPath 'build/CMakeFiles' -Filter 'CMakeCXXCompiler.cmake' -Recurse -File)
           if ($compilerRecords.Count -ne 1) { throw 'Expected exactly one CMake C++ compiler record.' }
           $compilerLine = [System.IO.File]::ReadAllText($compilerRecords[0].FullName)
