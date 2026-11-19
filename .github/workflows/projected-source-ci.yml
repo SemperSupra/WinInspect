@@ -37,6 +37,8 @@ jobs:
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Validate public deploy-plane architecture
         shell: pwsh
