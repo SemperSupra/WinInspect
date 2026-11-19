@@ -122,6 +122,53 @@ jobs:
           $checksums | Set-Content -LiteralPath (Join-Path $stageRoot 'SHA256SUMS.txt') -Encoding utf8
           Write-Host "Staged $($binaries.Count) executables with SHA-256 receipts from public projected source."
 
+      - name: Build deterministic product bundle
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $stageRoot = (Resolve-Path -LiteralPath 'public-build-evidence').Path
+          [string[]]$members = @(
+            'Release/wininspect.exe',
+            'Release/wininspectd.exe',
+            'Release/wininspect-gui.exe',
+            'SHA256SUMS.txt'
+          )
+          if (Test-Path -LiteralPath (Join-Path $stageRoot 'wi-portable-projected-win-x64.exe') -PathType Leaf) {
+            $members += 'wi-portable-projected-win-x64.exe'
+          }
+          [Array]::Sort($members, [StringComparer]::Ordinal)
+          $bundlePath = Join-Path $stageRoot 'wininspect-public-product-bundle.zip'
+          $stream = [System.IO.File]::Open($bundlePath, [System.IO.FileMode]::CreateNew)
+          try {
+            $archive = [System.IO.Compression.ZipArchive]::new(
+              $stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+            try {
+              foreach ($relative in $members) {
+                $source = Join-Path $stageRoot $relative
+                if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+                  throw "Missing required deterministic bundle input: $relative"
+                }
+                $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::NoCompression)
+                $entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+                $sourceStream = [System.IO.File]::OpenRead($source)
+                $destinationStream = $entry.Open()
+                try { $sourceStream.CopyTo($destinationStream) }
+                finally {
+                  $destinationStream.Dispose()
+                  $sourceStream.Dispose()
+                }
+              }
+            } finally { $archive.Dispose() }
+          } finally { $stream.Dispose() }
+          $digest = (Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "${digest}  wininspect-public-product-bundle.zip" |
+            Set-Content -LiteralPath (Join-Path $stageRoot 'BUNDLE-SHA256SUMS.txt') -Encoding ascii
+          Write-Host "Deterministic public product bundle sha256:$digest ($($members.Count) inputs)."
+          # The actions/upload-artifact carrier ZIP may still have variable
+          # timestamps; only the inner product bundle is the stable identity.
+
       - name: Upload bounded public build evidence
         if: steps.projection.outputs.present == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
