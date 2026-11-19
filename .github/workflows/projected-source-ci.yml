@@ -236,9 +236,75 @@ jobs:
           }
           Write-Host "Verified $($expected.Count) immutable bundle members, component receipts and sha256:$actual."
 
+      - name: Record product build environment
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path -LiteralPath 'public-build-evidence').Path
+          $bundle = Join-Path $root 'wininspect-public-product-bundle.zip'
+          $bundleDigest = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checkoutSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkoutSha -cne $env:GITHUB_SHA) {
+            throw 'Checked-out commit differs from GitHub workflow source identity.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ImageOS) -or [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
+            throw 'GitHub runner image identity missing: cannot bind build evidence.'
+          }
+          $cmakeText = ((cmake --version) | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or $cmakeText -notmatch '^cmake version ([0-9]+[.][0-9]+[.][0-9]+)') {
+            throw 'Cannot identify CMake toolchain version.'
+          }
+          $cmakeVersion = $Matches[1]
+          $goText = ((go version) | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or $goText -notmatch '^go version go([0-9]+[.][0-9]+[.][0-9]+) windows/amd64') {
+            throw 'Cannot identify Go version/Windows architecture.'
+          }
+          $goVersion = $Matches[1]
+          $compilerRecords = @(Get-ChildItem -LiteralPath 'build/CMakeFiles' -Filter 'CMakeCXXCompiler.cmake' -Recurse -File)
+          if ($compilerRecords.Count -ne 1) { throw 'Expected exactly one CMake C++ compiler record.' }
+          $compilerLine = [System.IO.File]::ReadAllText($compilerRecords[0].FullName)
+          if ($compilerLine -notmatch 'set\(CMAKE_CXX_COMPILER_VERSION "([0-9]+[.][0-9]+[.][0-9]+[.][0-9]+)"\)') {
+            throw 'Cannot identify actual MSVC C++ compiler version.'
+          }
+          $msvcVersion = $Matches[1]
+          $sourceManifest = Join-Path $env:GITHUB_WORKSPACE '.projection/source-manifest.json'
+          if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) {
+            throw 'Approved public source manifest absent.'
+          }
+          $receipt = [ordered]@{
+            schema = 'wininspect.public-build-environment/v1'
+            public_repo = $env:GITHUB_REPOSITORY
+            checkout_commit = $checkoutSha
+            approved_source_manifest_sha256 = (Get-FileHash -LiteralPath $sourceManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+            product_checksums_sha256 = (Get-FileHash -LiteralPath (Join-Path $root 'SHA256SUMS.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
+            product_bundle_sha256 = $bundleDigest
+            runner = [ordered]@{
+              runner_os = $env:RUNNER_OS
+              runner_arch = $env:RUNNER_ARCH
+              image_os = $env:ImageOS
+              image_version = $env:ImageVersion
+            }
+            toolchain = [ordered]@{
+              cmake = $cmakeVersion
+              msvc_cxx = $msvcVersion
+              go = $goVersion
+            }
+          }
+          $receiptPath = Join-Path $root 'BUILD-ENVIRONMENT.json'
+          $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+          $readback = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($readback.product_bundle_sha256 -cne $bundleDigest -or
+              $readback.checkout_commit -cne $checkoutSha -or
+              $readback.toolchain.msvc_cxx -cne $msvcVersion -or
+              $readback.runner.image_version -cne $env:ImageVersion) {
+            throw 'Generated product build environment receipt failed readback.'
+          }
+          Write-Host "Public product identity bound to image $($env:ImageOS)@$($env:ImageVersion), MSVC $msvcVersion, Go $goVersion, CMake $cmakeVersion."
+
       - name: Upload bounded public build evidence
         if: steps.projection.outputs.present == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: wininspect-public-projection-${{ github.run_id }}-${{ github.run_attempt }}
           path: public-build-evidence/
