@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22)
+project(wininspect_native_winevent_feasibility LANGUAGES CXX)
+add_executable(native-winevent-probe probe.cpp)
+target_compile_features(native-winevent-probe PRIVATE cxx_std_17)
+target_compile_definitions(native-winevent-probe PRIVATE UNICODE _UNICODE)
+target_link_libraries(native-winevent-probe PRIVATE user32)
