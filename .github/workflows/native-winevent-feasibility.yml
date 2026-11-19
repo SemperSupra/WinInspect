@@ -61,8 +61,13 @@ jobs:
             g++-mingw-w64-x86-64 wine xvfb
       - name: Compile synthetic Win32 fixture for Wine
         run: |
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 \
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -static-libgcc -static-libstdc++ \
             experiments/native-observer/probe.cpp -o native-winevent-probe.exe -luser32
+          imports="$(x86_64-w64-mingw32-objdump -p native-winevent-probe.exe | grep 'DLL Name:' || true)"
+          if printf '%s\n' "$imports" | grep -Eqi 'libstdc\+\+|libgcc|libwinpthread'; then
+            echo 'Synthetic PE still has non-system MinGW runtime DLL dependencies.' >&2
+            exit 1
+          fi
       - name: Classify Wine/Xvfb delivery, not WinInspect parity
         shell: bash
         run: |
