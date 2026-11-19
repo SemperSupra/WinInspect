@@ -82,6 +82,41 @@ jobs:
           go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
+      - name: Stage bounded public build evidence
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildRoot = (Resolve-Path -LiteralPath 'build').Path
+          $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'public-build-evidence'
+          New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+          $binaries = @(Get-ChildItem -LiteralPath $buildRoot -File -Recurse |
+            Where-Object { $_.Extension -eq '.exe' } |
+            Sort-Object FullName)
+          if ($binaries.Count -eq 0 -or $binaries.Count -gt 20) {
+            throw "Expected 1..20 projected executables; found $($binaries.Count)."
+          }
+          $checksums = foreach ($binary in $binaries) {
+            if ($binary.Length -gt 125MB) { throw "Projected executable too large: $($binary.Name)" }
+            $relative = [System.IO.Path]::GetRelativePath($buildRoot, $binary.FullName)
+            $destination = Join-Path $stageRoot $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $binary.FullName -Destination $destination
+            $digest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            "${digest}  $($relative.Replace('\\','/'))"
+          }
+          $checksums | Set-Content -LiteralPath (Join-Path $stageRoot 'SHA256SUMS.txt') -Encoding utf8
+          Write-Host "Staged $($binaries.Count) executables with SHA-256 receipts from public projected source."
+
+      - name: Upload bounded public build evidence
+        if: steps.projection.outputs.present == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wininspect-public-projection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: public-build-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Record public execution boundary
         shell: pwsh
         run: |
