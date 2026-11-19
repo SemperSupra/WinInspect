@@ -92,11 +92,23 @@ jobs:
           $buildRoot = (Resolve-Path -LiteralPath 'build').Path
           $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'public-build-evidence'
           New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+          # Only stage product executables, never CMake compiler probes or other build helpers.
+          $requiredRelative = @('Release/wininspect.exe', 'Release/wininspectd.exe', 'Release/wininspect-gui.exe')
+          $allowedRelative = $requiredRelative + @('wi-portable-projected-win-x64.exe')
           $binaries = @(Get-ChildItem -LiteralPath $buildRoot -File -Recurse |
-            Where-Object { $_.Extension -eq '.exe' } |
+            Where-Object {
+              $_.Extension -eq '.exe' -and
+              $allowedRelative -contains ([System.IO.Path]::GetRelativePath($buildRoot, $_.FullName).Replace('\', '/'))
+            } |
             Sort-Object FullName)
-          if ($binaries.Count -eq 0 -or $binaries.Count -gt 20) {
-            throw "Expected 1..20 projected executables; found $($binaries.Count)."
+          $selectedRelative = @($binaries | ForEach-Object {
+            [System.IO.Path]::GetRelativePath($buildRoot, $_.FullName).Replace('\', '/')
+          })
+          foreach ($required in $requiredRelative) {
+            if ($selectedRelative -notcontains $required) { throw "Required product executable absent: $required" }
+          }
+          if ($binaries.Count -lt $requiredRelative.Count -or $binaries.Count -gt $allowedRelative.Count) {
+            throw "Unexpected product executable count: $($binaries.Count)."
           }
           $checksums = foreach ($binary in $binaries) {
             if ($binary.Length -gt 125MB) { throw "Projected executable too large: $($binary.Name)" }
