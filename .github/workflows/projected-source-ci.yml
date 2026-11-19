@@ -66,7 +66,7 @@ jobs:
         if: steps.projection.outputs.present == 'true'
         shell: pwsh
         run: |
-          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF -DCMAKE_EXE_LINKER_FLAGS=/Brepro
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
           cmake --build build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
@@ -81,7 +81,7 @@ jobs:
             exit 0
           }
           go version
-          go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
+          go build -C source/clients/portable -trimpath -buildvcs=false -ldflags=-buildid= -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
       - name: Stage bounded public build evidence
