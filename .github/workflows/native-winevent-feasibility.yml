@@ -1,0 +1,92 @@
+name: Synthetic native WinEvent feasibility
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/native-observer/**'
+      - '.github/workflows/native-winevent-feasibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Build synthetic Win32 producer and observer
+        shell: pwsh
+        run: |
+          cmake -S experiments/native-observer -B build/native-observer -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic fixture configure failed.' }
+          cmake --build build/native-observer --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic fixture build failed.' }
+      - name: Classify Windows delivery, not product acceptance
+        shell: pwsh
+        run: |
+          $output = & ./build/native-observer/Release/native-winevent-probe.exe --probe 2>&1
+          $code = $LASTEXITCODE
+          $output | Set-Content -LiteralPath windows-observer-receipt.txt
+          "EXIT_CODE=$code" | Add-Content -LiteralPath windows-observer-receipt.txt
+          Get-Content windows-observer-receipt.txt
+          if ($code -eq 0) {
+            'Synthetic Windows WinEvent delivery observed; product RPC not tested.' >> $env:GITHUB_STEP_SUMMARY
+          } elseif ($code -in @(2,3,4)) {
+            "Windows WinEvent delivery NOT QUALIFIED (code=$code)." >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            throw "Unexpected probe code: $code"
+          }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: native-observer-windows
+          path: windows-observer-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  wine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Install free Linux Wine and MinGW tools
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            g++-mingw-w64-x86-64 wine xvfb
+      - name: Compile synthetic Win32 fixture for Wine
+        run: |
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 \
+            experiments/native-observer/probe.cpp -o native-winevent-probe.exe -luser32
+      - name: Classify Wine/Xvfb delivery, not WinInspect parity
+        shell: bash
+        run: |
+          set -uo pipefail
+          export WINEDEBUG=-all
+          export WINEPREFIX="$RUNNER_TEMP/wine-observer-synthetic"
+          set +e
+          timeout 120s xvfb-run -a wine ./native-winevent-probe.exe --probe \
+            > wine-observer-receipt.txt 2>&1
+          code=$?
+          set -e
+          cat wine-observer-receipt.txt
+          echo "EXIT_CODE=$code" >> wine-observer-receipt.txt
+          if [[ $code -eq 0 ]]; then
+            echo 'Wine synthetic WinEvent delivery observed; product RPC not tested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ $code -eq 2 || $code -eq 3 || $code -eq 4 || $code -eq 124 ]]; then
+            echo "Wine native observer delivery NOT QUALIFIED (code=$code)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Unexpected probe error $code" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: native-observer-wine
+          path: wine-observer-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
