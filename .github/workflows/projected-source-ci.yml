@@ -103,7 +103,7 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
             Copy-Item -LiteralPath $binary.FullName -Destination $destination
             $digest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
-            "${digest}  $($relative.Replace('\\','/'))"
+            "${digest}  $($relative.Replace('\','/'))"
           }
           $checksums | Set-Content -LiteralPath (Join-Path $stageRoot 'SHA256SUMS.txt') -Encoding utf8
           Write-Host "Staged $($binaries.Count) executables with SHA-256 receipts from public projected source."
