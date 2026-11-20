@@ -66,10 +66,13 @@ jobs:
           install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/trace
           echo "RPCSS_DIFFERENTIAL_FLAVOR=${{ matrix.flavor }}"
           echo "RPCSS_DIFFERENTIAL_OS=$(grep '^VERSION_ID=' /etc/os-release)"
-          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=+ole,+rpc,+service timeout -s INT -k 5s 40s \
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=+ole,+rpc,+service timeout -s INT -k 5s 55s \
             xvfb-run -a bash -c '
               set +e
-              strace -ff -tt -s 40 -e trace=process,network,ipc,signal \
+              # Inner cap finishes BEFORE the outer 55s budget so failures
+              # can be summarized instead of losing all receipts to timeout.
+              timeout -s INT -k 3s 25s strace -ff -tt -s 40 \
+                -e trace=process,network,ipc,signal \
                 -o /home/wineprobe/trace/wine wineboot --init \
                 > /home/wineprobe/trace/boot.log 2>&1 &
               tracer=$!
