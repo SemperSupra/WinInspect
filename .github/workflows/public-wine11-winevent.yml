@@ -88,17 +88,36 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/opt/wine-stable/bin:$PATH"
-          export WINEDEBUG=-all
           export WINEPREFIX="$RUNNER_TEMP/public-wine11"
-          timeout 150s xvfb-run -a bash -c '
+          export WINEARCH=win64
+          # Keep startup diagnostics instead of hiding all failures with -all.
+          export WINEDEBUG=fixme-all
+          timeout 210s xvfb-run -a bash -c '
             set -euo pipefail
-            "$WINEHQ_LOADER" "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe | tee wine11-receipt.txt
+            echo "WINEHQ11_PREFIX_BOOT=START"
+            # Prefix boot and event delivery are different acceptance gates.
+            # No user targets; the only PE is our public synthetic fixture.
+            if timeout 130s /opt/wine-stable/bin/wineboot -u > wine11-boot.txt 2>&1; then
+              echo "WINEHQ11_PREFIX_BOOT=PASS"
+            else
+              status=$?
+              echo "WINEHQ11_PREFIX_BOOT=FAIL code=$status"
+              tail -n 35 wine11-boot.txt || true
+              exit "$status"
+            fi
+            echo "WINEHQ11_SYNTHETIC_PROBE=START"
+            timeout 55s "$WINEHQ_LOADER" "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > wine11-receipt.txt 2>&1 || {
+              status=$?
+              echo "WINEHQ11_SYNTHETIC_PROBE=FAIL code=$status"
+              tail -n 45 wine11-receipt.txt || true
+              exit "$status"
+            }
+            cat wine11-receipt.txt
             grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-receipt.txt
             grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
             grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
-            if test -x /opt/wine-stable/bin/wineserver; then
-              /opt/wine-stable/bin/wineserver -k >/dev/null 2>&1 || true
-            fi
+            echo "WINEHQ11_SYNTHETIC_DELIVERY=PASS"
+            /opt/wine-stable/bin/wineserver -k >/dev/null 2>&1 || true
           '
           echo 'PUBLIC_WINE11_SYNTHETIC_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: State bounded qualification
