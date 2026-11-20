@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
-          apt-get install -y --no-install-recommends xvfb xauth strace ca-certificates curl gnupg
+          apt-get install -y --no-install-recommends xvfb xauth ca-certificates curl gnupg
           test -z "$(dpkg --print-foreign-architectures)"
       - name: Install same-major Ubuntu distro Wine10
         if: matrix.flavor == 'ubuntu-distro'
@@ -57,47 +57,41 @@ jobs:
           wine --version | tee candidate-version.txt
           grep -Eq '^wine-10\.' candidate-version.txt
           dpkg-query -W winehq-stable wine-stable
-      - name: Trace identical Wine10 prefix boot with bounded service wait census
+      - name: Compare bounded Wine10 prefix boot without ptrace perturbation
         shell: bash
         run: |
           set -euo pipefail
           useradd -m -s /bin/bash wineprobe
           install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/prefix
-          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/trace
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/diagnostic
           echo "RPCSS_DIFFERENTIAL_FLAVOR=${{ matrix.flavor }}"
           echo "RPCSS_DIFFERENTIAL_OS=$(grep '^VERSION_ID=' /etc/os-release)"
-          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=+ole,+rpc,+service timeout -s INT -k 5s 55s \
+          # The previously successful Ubuntu distro Wine10 control became
+          # stuck under strace. Avoid ptrace instrumentation bias entirely.
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=fixme-all timeout -s INT -k 5s 60s \
             xvfb-run -a bash -c '
               set +e
-              # Inner cap finishes BEFORE the outer 55s budget so failures
-              # can be summarized instead of losing all receipts to timeout.
-              timeout -s INT -k 3s 25s strace -ff -tt -s 40 \
-                -e trace=process,network,ipc,signal \
-                -o /home/wineprobe/trace/wine wineboot --init \
-                > /home/wineprobe/trace/boot.log 2>&1 &
-              tracer=$!
-              sleep 8
+              timeout -s INT -k 3s 38s wineboot --init > /home/wineprobe/diagnostic/boot.log 2>&1 &
+              bootstrap=$!
+              sleep 7
               echo RPCSS_DIFFERENTIAL_WAIT_CENSUS_BEGIN
               ps -eo user,stat,wchan:24,comm | grep -Ei "USER|wine|service|explorer|control|device|rpcss" | head -n 30 || true
               echo RPCSS_DIFFERENTIAL_WAIT_CENSUS_END
-              wait "$tracer"
+              wait "$bootstrap"
               code=$?
               echo "RPCSS_DIFFERENTIAL_BOOT_EXIT=$code"
               echo RPCSS_DIFFERENTIAL_COM_MARKERS_BEGIN
-              grep -Ei "err:ole|err:rpc|err:service|start_rpcss|marshal|service.*fail" /home/wineprobe/trace/boot.log \
-                | sed -E "s/0x[0-9a-fA-F]{9,}/0xADDR/g" | head -n 25 || true
+              grep -Ei "err:ole|err:rpc|err:service|start_rpcss|marshal|service.*fail" /home/wineprobe/diagnostic/boot.log \
+                | head -n 25 || true
               echo RPCSS_DIFFERENTIAL_COM_MARKERS_END
-              echo RPCSS_DIFFERENTIAL_SYSCALL_RESULTS_BEGIN
-              grep -h -oE "= -1 (EACCES|EPERM|ENOSYS|ECONNREFUSED|ENOENT|EPIPE|ETIMEDOUT|EAGAIN)" /home/wineprobe/trace/wine.* \
-                | sort | uniq -c | sort -rn | head -n 15 || true
-              echo RPCSS_DIFFERENTIAL_SYSCALL_RESULTS_END
+              echo RPCSS_DIFFERENTIAL_PROCESS_END_BEGIN
+              ps -eo user,stat,wchan:24,comm | grep -Ei "USER|wine|service|explorer|control|device|rpcss" | head -n 30 || true
+              echo RPCSS_DIFFERENTIAL_PROCESS_END_END
               exit 0
             '
-          # Source of truth is the explicit BOOT_EXIT receipt above, not a
-          # green diagnostic job. No unredacted raw trace artifacts uploaded.
-          echo 'RPCSS_COMPARISON_EVIDENCE_CAPTURED=PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'RPCSS_LOW_OVERHEAD_COMPARISON_CAPTURED=PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Scope boundary
         if: always()
         shell: bash
         run: |
-          echo 'Same Ubuntu25.10, same Wine10 major, no user fixture or target, bounded service-wait census. Green means diagnostic capture only, not successful prefix boot. No raw trace upload, private source, private Actions minutes or release.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Same Ubuntu25.10 and Wine10 major. No ptrace or source-target program. Captures bounded boot exit and wchan snapshots only. Green means diagnostic capture, not a successful prefix. No private source, private Actions or release.' >> "$GITHUB_STEP_SUMMARY"
