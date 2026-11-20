@@ -56,17 +56,24 @@ jobs:
           # The Noble winehq-stable metapackage hard-requires wine-stable-i386.
           # The synthetic Win32 test is x64: install WineHQ's amd64 runtime only.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine-stable-amd64 xvfb xauth
-          # wine-stable-amd64 installs its own 64-bit loader, not always a
-          # wine wrapper. Admit only the package-owned loader.
-          dpkg -L wine-stable-amd64 | grep '/bin/wine' || true
-          if test -x /opt/wine-stable/bin/wine64; then
-            loader=/opt/wine-stable/bin/wine64
-          elif test -x /opt/wine-stable/bin/wine; then
-            loader=/opt/wine-stable/bin/wine
-          else
-            echo 'WineHQ amd64 loader missing' >&2
-            exit 1
-          fi
+          # WineHQ packages split runtime libraries (wine-stable-amd64) from
+          # launchers (wine-stable). The launcher .deb has an i386 dependency
+          # only at package-manager level; extract its signed-repo payload
+          # without installing/configuring that multiarch metapackage.
+          apt-get download wine-stable
+          launcher_deb="$(find . -maxdepth 1 -name 'wine-stable_11.*_amd64.deb' -print -quit)"
+          test -n "$launcher_deb"
+          runtime_version="$(dpkg-query -W -f='\${Version}' wine-stable-amd64)"
+          launcher_version="$(dpkg-deb -f "$launcher_deb" Version)"
+          test "$runtime_version" = "$launcher_version"
+          case "$runtime_version" in 11.*) ;; *) echo 'WineHQ package-version mismatch' >&2; exit 1;; esac
+          mkdir -p "$RUNNER_TEMP/winehq-launcher"
+          dpkg-deb -x "$launcher_deb" "$RUNNER_TEMP/winehq-launcher"
+          test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wine"
+          test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wineserver"
+          sudo install -m 0755 "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wine" /opt/wine-stable/bin/wine
+          sudo install -m 0755 "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wineserver" /opt/wine-stable/bin/wineserver
+          loader=/opt/wine-stable/bin/wine
           "$loader" --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
           echo "WINEHQ_LOADER=$loader" >> "$GITHUB_ENV"
