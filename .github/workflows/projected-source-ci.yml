@@ -34,9 +34,13 @@ jobs:
   validate-and-build:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      WININSPECT_GO_VERSION: '1.26.11'
     steps:
       - name: Checkout public deployment plane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Validate public deploy-plane architecture
         shell: pwsh
@@ -64,10 +68,19 @@ jobs:
         if: steps.projection.outputs.present == 'true'
         shell: pwsh
         run: |
-          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          cmake -S source -B build -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF -DCMAKE_EXE_LINKER_FLAGS=/Brepro
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
           cmake --build build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
+
+      - name: Select pinned Go toolchain
+        if: steps.projection.outputs.present == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: ${{ env.WININSPECT_GO_VERSION }}
+          check-latest: false
+          cache: false
+          architecture: x64
 
       - name: Build projected portable client
         if: steps.projection.outputs.present == 'true'
@@ -79,7 +92,10 @@ jobs:
             exit 0
           }
           go version
-          go build -C source/clients/portable -o ../../../build/wi-portable-projected-win-x64.exe
+          if ($LASTEXITCODE -ne 0 -or (go env GOVERSION).Trim() -cne "go$env:WININSPECT_GO_VERSION") {
+            throw 'Selected Go compiler differs from the declared product Go toolchain.'
+          }
+          go build -C source/clients/portable -trimpath -buildvcs=false -ldflags=-buildid= -o ../../../build/wi-portable-projected-win-x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'Projected portable client build failed.' }
 
       - name: Stage bounded public build evidence
@@ -90,11 +106,23 @@ jobs:
           $buildRoot = (Resolve-Path -LiteralPath 'build').Path
           $stageRoot = Join-Path $env:GITHUB_WORKSPACE 'public-build-evidence'
           New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+          # Only stage product executables, never CMake compiler probes or other build helpers.
+          $requiredRelative = @('Release/wininspect.exe', 'Release/wininspectd.exe', 'Release/wininspect-gui.exe')
+          $allowedRelative = $requiredRelative + @('wi-portable-projected-win-x64.exe')
           $binaries = @(Get-ChildItem -LiteralPath $buildRoot -File -Recurse |
-            Where-Object { $_.Extension -eq '.exe' } |
+            Where-Object {
+              $_.Extension -eq '.exe' -and
+              $allowedRelative -contains ([System.IO.Path]::GetRelativePath($buildRoot, $_.FullName).Replace('\', '/'))
+            } |
             Sort-Object FullName)
-          if ($binaries.Count -eq 0 -or $binaries.Count -gt 20) {
-            throw "Expected 1..20 projected executables; found $($binaries.Count)."
+          $selectedRelative = @($binaries | ForEach-Object {
+            [System.IO.Path]::GetRelativePath($buildRoot, $_.FullName).Replace('\', '/')
+          })
+          foreach ($required in $requiredRelative) {
+            if ($selectedRelative -notcontains $required) { throw "Required product executable absent: $required" }
+          }
+          if ($binaries.Count -lt $requiredRelative.Count -or $binaries.Count -gt $allowedRelative.Count) {
+            throw "Unexpected product executable count: $($binaries.Count)."
           }
           $checksums = foreach ($binary in $binaries) {
             if ($binary.Length -gt 125MB) { throw "Projected executable too large: $($binary.Name)" }
@@ -108,9 +136,192 @@ jobs:
           $checksums | Set-Content -LiteralPath (Join-Path $stageRoot 'SHA256SUMS.txt') -Encoding utf8
           Write-Host "Staged $($binaries.Count) executables with SHA-256 receipts from public projected source."
 
+      - name: Build deterministic product bundle
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $stageRoot = (Resolve-Path -LiteralPath 'public-build-evidence').Path
+          [string[]]$members = @(
+            'Release/wininspect.exe',
+            'Release/wininspectd.exe',
+            'Release/wininspect-gui.exe',
+            'SHA256SUMS.txt'
+          )
+          if (Test-Path -LiteralPath (Join-Path $stageRoot 'wi-portable-projected-win-x64.exe') -PathType Leaf) {
+            $members += 'wi-portable-projected-win-x64.exe'
+          }
+          [Array]::Sort($members, [StringComparer]::Ordinal)
+          $bundlePath = Join-Path $stageRoot 'wininspect-public-product-bundle.zip'
+          $stream = [System.IO.File]::Open($bundlePath, [System.IO.FileMode]::CreateNew)
+          try {
+            $archive = [System.IO.Compression.ZipArchive]::new(
+              $stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+            try {
+              foreach ($relative in $members) {
+                $source = Join-Path $stageRoot $relative
+                if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+                  throw "Missing required deterministic bundle input: $relative"
+                }
+                $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::NoCompression)
+                $entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+                $sourceStream = [System.IO.File]::OpenRead($source)
+                $destinationStream = $entry.Open()
+                try { $sourceStream.CopyTo($destinationStream) }
+                finally {
+                  $destinationStream.Dispose()
+                  $sourceStream.Dispose()
+                }
+              }
+            } finally { $archive.Dispose() }
+          } finally { $stream.Dispose() }
+          $digest = (Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "${digest}  wininspect-public-product-bundle.zip" |
+            Set-Content -LiteralPath (Join-Path $stageRoot 'BUNDLE-SHA256SUMS.txt') -Encoding ascii
+          Write-Host "Deterministic public product bundle sha256:$digest ($($members.Count) inputs)."
+          # The actions/upload-artifact carrier ZIP may still have variable
+          # timestamps; only the inner product bundle is the stable identity.
+
+      - name: Verify staged product bundle
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $root = (Resolve-Path -LiteralPath 'public-build-evidence').Path
+          $bundle = Join-Path $root 'wininspect-public-product-bundle.zip'
+          [string[]]$expected = @(
+            'Release/wininspect.exe',
+            'Release/wininspectd.exe',
+            'Release/wininspect-gui.exe',
+            'SHA256SUMS.txt'
+          )
+          if (Test-Path -LiteralPath (Join-Path $root 'wi-portable-projected-win-x64.exe') -PathType Leaf) {
+            $expected += 'wi-portable-projected-win-x64.exe'
+          }
+          [Array]::Sort($expected, [StringComparer]::Ordinal)
+          $manifest = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+          foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $root 'SHA256SUMS.txt'))) {
+            if ($line -cnotmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid product SHA256SUMS record.' }
+            $digest = $Matches[1]
+            $relative = $Matches[2]
+            if ($expected -cnotcontains $relative -or $relative -ceq 'SHA256SUMS.txt') {
+              throw "Unexpected product receipt path: $relative"
+            }
+            if ($manifest.ContainsKey($relative)) { throw "Duplicate product receipt: $relative" }
+            $manifest.Add($relative, $digest)
+          }
+          if ($manifest.Count -ne $expected.Count - 1) { throw 'Incomplete product SHA256SUMS manifest.' }
+          $fixedTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+          $stream = [System.IO.File]::OpenRead($bundle)
+          try {
+            $zip = [System.IO.Compression.ZipArchive]::new(
+              $stream, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+            try {
+              if ($zip.Entries.Count -ne $expected.Count) { throw 'Wrong product bundle entry count.' }
+              for ($i = 0; $i -lt $expected.Count; $i++) {
+                $entry = $zip.Entries[$i]
+                $relative = $expected[$i]
+                if ($entry.FullName -cne $relative) { throw "Bundle entry order/name mismatch at $i" }
+                if ($entry.LastWriteTime.UtcDateTime -ne $fixedTime.UtcDateTime) {
+                  throw "Variable product bundle timestamp: $relative"
+                }
+                $source = Join-Path $root $relative
+                if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing staged input: $relative" }
+                $fileHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+                $read = $entry.Open()
+                try {
+                  $hash = [System.Security.Cryptography.SHA256]::Create()
+                  try { $entryHash = [Convert]::ToHexString($hash.ComputeHash($read)).ToLowerInvariant() }
+                  finally { $hash.Dispose() }
+                } finally { $read.Dispose() }
+                if ($entryHash -cne $fileHash) { throw "Bundle byte/hash mismatch: $relative" }
+                if ($relative -cne 'SHA256SUMS.txt' -and $manifest[$relative] -cne $fileHash) {
+                  throw "Component manifest hash mismatch: $relative"
+                }
+              }
+            } finally { $zip.Dispose() }
+          } finally { $stream.Dispose() }
+          $actual = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          $receipt = [System.IO.File]::ReadAllText((Join-Path $root 'BUNDLE-SHA256SUMS.txt')).TrimEnd()
+          if ($receipt -cne "$actual  wininspect-public-product-bundle.zip") {
+            throw 'Bundle digest receipt mismatch.'
+          }
+          Write-Host "Verified $($expected.Count) immutable bundle members, component receipts and sha256:$actual."
+
+      - name: Record product build environment
+        if: steps.projection.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path -LiteralPath 'public-build-evidence').Path
+          $bundle = Join-Path $root 'wininspect-public-product-bundle.zip'
+          $bundleDigest = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checkoutSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkoutSha -cne $env:GITHUB_SHA) {
+            throw 'Checked-out commit differs from GitHub workflow source identity.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ImageOS) -or [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
+            throw 'GitHub runner image identity missing: cannot bind build evidence.'
+          }
+          $cmakeText = ((cmake --version) | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or $cmakeText -notmatch '^cmake version ([0-9]+[.][0-9]+[.][0-9]+)') {
+            throw 'Cannot identify CMake toolchain version.'
+          }
+          $cmakeVersion = $Matches[1]
+          $goText = ((go version) | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or $goText -notmatch '^go version go([0-9]+[.][0-9]+[.][0-9]+) windows/amd64') {
+            throw 'Cannot identify Go version/Windows architecture.'
+          }
+          $goVersion = $Matches[1]
+          if ($goVersion -cne $env:WININSPECT_GO_VERSION) {
+            throw 'Observed Go compiler does not match the bounded toolchain pin.'
+          }
+          $compilerRecords = @(Get-ChildItem -LiteralPath 'build/CMakeFiles' -Filter 'CMakeCXXCompiler.cmake' -Recurse -File)
+          if ($compilerRecords.Count -ne 1) { throw 'Expected exactly one CMake C++ compiler record.' }
+          $compilerLine = [System.IO.File]::ReadAllText($compilerRecords[0].FullName)
+          if ($compilerLine -notmatch 'set\(CMAKE_CXX_COMPILER_VERSION "([0-9]+[.][0-9]+[.][0-9]+[.][0-9]+)"\)') {
+            throw 'Cannot identify actual MSVC C++ compiler version.'
+          }
+          $msvcVersion = $Matches[1]
+          $sourceManifest = Join-Path $env:GITHUB_WORKSPACE '.projection/source-manifest.json'
+          if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) {
+            throw 'Approved public source manifest absent.'
+          }
+          $receipt = [ordered]@{
+            schema = 'wininspect.public-build-environment/v1'
+            public_repo = $env:GITHUB_REPOSITORY
+            checkout_commit = $checkoutSha
+            approved_source_manifest_sha256 = (Get-FileHash -LiteralPath $sourceManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+            product_checksums_sha256 = (Get-FileHash -LiteralPath (Join-Path $root 'SHA256SUMS.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
+            product_bundle_sha256 = $bundleDigest
+            runner = [ordered]@{
+              runner_os = $env:RUNNER_OS
+              runner_arch = $env:RUNNER_ARCH
+              image_os = $env:ImageOS
+              image_version = $env:ImageVersion
+            }
+            toolchain = [ordered]@{
+              cmake = $cmakeVersion
+              msvc_cxx = $msvcVersion
+              go = $goVersion
+            }
+          }
+          $receiptPath = Join-Path $root 'BUILD-ENVIRONMENT.json'
+          $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+          $readback = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($readback.product_bundle_sha256 -cne $bundleDigest -or
+              $readback.checkout_commit -cne $checkoutSha -or
+              $readback.toolchain.msvc_cxx -cne $msvcVersion -or
+              $readback.runner.image_version -cne $env:ImageVersion) {
+            throw 'Generated product build environment receipt failed readback.'
+          }
+          Write-Host "Public product identity bound to image $($env:ImageOS)@$($env:ImageVersion), MSVC $msvcVersion, Go $goVersion, CMake $cmakeVersion."
+
       - name: Upload bounded public build evidence
         if: steps.projection.outputs.present == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: wininspect-public-projection-${{ github.run_id }}-${{ github.run_attempt }}
           path: public-build-evidence/
