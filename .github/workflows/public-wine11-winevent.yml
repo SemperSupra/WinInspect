@@ -8,7 +8,7 @@ permissions:
 jobs:
   public-wine11-synthetic:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
@@ -17,7 +17,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture i386
+          # This fixture is x86_64-only. Enabling i386 pulls gigabytes of
+          # multilib/recommended packages and exceeded the previous 20m cap.
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl gnupg g++-mingw-w64-x86-64 xvfb xauth
@@ -27,7 +28,9 @@ jobs:
           curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
             | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends winehq-stable
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable
+          # Require the native x86_64 loader, not a silently substituted distro Wine.
+          test -x /opt/wine-stable/bin/wine || command -v wine
           wine --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
       - name: Build independent existing public synthetic Win32 window probe
