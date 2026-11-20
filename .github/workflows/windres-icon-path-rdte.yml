@@ -1,0 +1,43 @@
+name: Synthetic public MinGW resource path proof
+
+on:
+  pull_request:
+    paths: ['.github/workflows/windres-icon-path-rdte.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-resource-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Install ordinary public MinGW resource compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 gcc-mingw-w64-x86-64
+      - name: Test slash icon reference and windres source-root include independently
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scratch
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("source/resources/wininspect.rc").read_text()
+          target = 'IDI_WININSPECT           ICON           "..\\\\assets\\\\brand\\\\ico\\\\strix.ico"'
+          assert src.count(target) == 1, "Public RC baseline changed; fixture not comparable"
+          patched = src.replace(target, '#ifdef WININSPECT_MINGW_RC\nIDI_WININSPECT           ICON           "assets/brand/ico/strix.ico"\n#else\n' + target + '\n#endif')
+          Path("scratch/probe.rc").write_text(patched)
+          assert Path("source/assets/brand/ico/strix.ico").is_file()
+          PY
+          cd scratch
+          x86_64-w64-mingw32-windres --define WININSPECT_MINGW_RC \
+            -I ../source -I ../source/resources \
+            -i probe.rc -O coff -o icon-probe.res
+          test -s icon-probe.res
+          echo "PASS: GNU windres resolved public branded icon using POSIX path and source-root include"
+          echo 'PUBLIC_WINDRES_RESOURCE=PASS' >> "$GITHUB_STEP_SUMMARY"
