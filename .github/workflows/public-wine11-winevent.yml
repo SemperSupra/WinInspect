@@ -1,0 +1,66 @@
+name: Public WineHQ11 synthetic WinEvent delivery admission
+on:
+  pull_request:
+    paths: ['.github/workflows/public-wine11-winevent.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-wine11-synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Install authenticated WineHQ stable 11 and MinGW on free public Ubuntu
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg g++-mingw-w64-x86-64 xvfb xauth
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+            | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
+            | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends winehq-stable
+          wine --version | tee wine11-version.txt
+          grep -Eq '^wine-11\.' wine11-version.txt
+      - name: Build independent existing public synthetic Win32 window probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -static-libgcc -static-libstdc++ \
+            experiments/native-observer/probe.cpp -o native-winevent-probe.exe -luser32
+          test -s native-winevent-probe.exe
+          if x86_64-w64-mingw32-objdump -p native-winevent-probe.exe \
+              | grep 'DLL Name:' | grep -Eqi 'libstdc\+\+|libgcc|libwinpthread'; then
+            echo 'Unexpected non-system MinGW dependency' >&2
+            exit 1
+          fi
+      - name: Require real cross-process synthetic WinEvent delivery inside Wine11
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WINEDEBUG=-all
+          export WINEPREFIX="$RUNNER_TEMP/public-wine11-synthetic"
+          timeout 150s xvfb-run -a bash -c '
+            set -euo pipefail
+            wineboot -u >/dev/null 2>&1
+            wine ./native-winevent-probe.exe --probe | tee wine11-synthetic-receipt.txt
+            grep -q "^RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-synthetic-receipt.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*" wine11-synthetic-receipt.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*" wine11-synthetic-receipt.txt
+            wineserver -k >/dev/null 2>&1 || true
+          '
+          echo 'PUBLIC_WINEHQ11_CROSS_PROCESS_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Distinguish synthetic from product acceptance
+        if: always()
+        shell: bash
+        run: |
+          echo 'Synthetic public Wine11 event-delivery probe only. No private WinInspect daemon, no user target, no observer RPC and no release promotion.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Free public GitHub Actions; no private Actions minutes authorized or spent by this job.' >> "$GITHUB_STEP_SUMMARY"
