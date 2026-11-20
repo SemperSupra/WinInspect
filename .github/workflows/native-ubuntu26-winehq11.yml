@@ -1,0 +1,103 @@
+name: Native Ubuntu26 WineHQ11 RpcSs and synthetic WinEvent acceptance
+on:
+  pull_request:
+    paths: ['.github/workflows/native-ubuntu26-winehq11.yml']
+permissions:
+  contents: read
+jobs:
+  fixture:
+    runs-on: windows-2025
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Compile exact public 64-bit synthetic producer
+        shell: pwsh
+        run: |
+          cmake -S experiments/native-observer -B build/fixture -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+          cmake --build build/fixture --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture build failed' }
+          $exe = 'build/fixture/Release/native-winevent-probe.exe'
+          if (!(Test-Path $exe)) { throw 'Synthetic executable absent' }
+          Get-FileHash $exe -Algorithm SHA256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: native-ubuntu26-winehq11-synthetic-pe
+          path: build/fixture/Release/native-winevent-probe.exe
+          if-no-files-found: error
+          retention-days: 1
+  native-winehq11:
+    name: Qualify WineHQ11 on real Ubuntu26 VM (no container)
+    runs-on: ubuntu-26.04
+    needs: fixture
+    timeout-minutes: 16
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-ubuntu26-winehq11-synthetic-pe
+          path: fixture
+      - name: Verify public fixture and install signed WineHQ11
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s fixture/native-winevent-probe.exe
+          sha256sum fixture/native-winevent-probe.exe
+          echo "RUNNER_OS=$(cat /etc/os-release | grep '^VERSION_ID=')" 
+          echo "NATIVE_RUNNER_UID=$(id -u)"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl gnupg xvfb xauth
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/resolute/winehq-resolute.sources | sudo tee /etc/apt/sources.list.d/winehq-resolute.sources >/dev/null
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable
+          wine --version | tee wine-version.txt
+          grep -Eq '^wine-11\.' wine-version.txt
+          dpkg-query -W wine-stable winehq-stable
+          echo 'NATIVE_WINEHQ11_VERSION=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Bounded unprivileged prefix boot then independent callback counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c %u "$RUNNER_TEMP")" = "$(id -u)"
+          export WINEPREFIX="$RUNNER_TEMP/native-winehq11-synthetic"
+          export WINEARCH=win64
+          export WINEDEBUG=fixme-all
+          timeout 155s xvfb-run -a bash -c '
+            set -euo pipefail
+            echo NATIVE_WINEHQ11_PREFIX_BOOT=START
+            if timeout 70s wineboot --init > prefix-boot.txt 2>&1; then
+              echo NATIVE_WINEHQ11_PREFIX_BOOT=PASS
+            else
+              rc=$?
+              echo "NATIVE_WINEHQ11_PREFIX_BOOT=FAIL code=$rc"
+              tail -n 40 prefix-boot.txt || true
+              ps -eo pid,ppid,user,stat,etime,comm | grep -E "PID|wine|rpcss|service|device|explorer" | head -n 35 || true
+              exit "$rc"
+            fi
+            echo NATIVE_WINEHQ11_SYNTHETIC_PROBE=START
+            if timeout 55s wine "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > probe.txt 2>&1; then
+              cat probe.txt
+            else
+              rc=$?
+              echo "NATIVE_WINEHQ11_SYNTHETIC_PROBE=FAIL code=$rc"
+              tail -n 40 probe.txt || true
+              exit "$rc"
+            fi
+            tr -d "\r" < probe.txt > normalized.txt
+            grep -qx "REGISTERED=1" normalized.txt
+            grep -qx "PRODUCER_OK=1" normalized.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" normalized.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" normalized.txt
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" normalized.txt
+            echo NATIVE_WINEHQ11_SYNTHETIC_DELIVERY=PASS
+            wineserver -k >/dev/null 2>&1 || true
+          '
+          echo 'NATIVE_WINEHQ11_PUBLIC_SYNTHETIC_CALLBACK=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Evidence boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'Public source-independent Wine11 synthetic on a native Ubuntu26 public VM, no Docker container; actual private daemon RPC, consumer HIL, private GHA and v0.5 release NOT qualified.' >> "$GITHUB_STEP_SUMMARY"
