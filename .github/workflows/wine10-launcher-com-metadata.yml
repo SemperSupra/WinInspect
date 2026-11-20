@@ -28,35 +28,29 @@ jobs:
           test -z "$(dpkg --print-foreign-architectures)"
           mkdir -p /tmp/wine-control /tmp/winehq
           cd /tmp
-          apt-get download 'wine=10.0~repack-6ubuntu1' wine64 'wine-stable=10.0.0.0~questing-1'
+          # WineHQ10 wine-stable is monolithic (~227MB). Metadata-only: do
+          # not download its entire runtime in this corrected comparison.
+          apt-get download 'wine=10.0~repack-6ubuntu1' wine64
           distro_wine="$(find /tmp -maxdepth 1 -name 'wine_*.deb' -print -quit)"
           distro_wine64="$(find /tmp -maxdepth 1 -name 'wine64_*.deb' -print -quit)"
-          winehq="$(find /tmp -maxdepth 1 -name 'wine-stable_*.deb' -print -quit)"
-          test -s "$distro_wine" && test -s "$distro_wine64" && test -s "$winehq"
-          for deb in "$distro_wine" "$distro_wine64" "$winehq"; do
+          echo WINEHQ10_MONOLITHIC_PACKAGE_METADATA_BEGIN
+          apt-cache show 'wine-stable=10.0.0.0~questing-1' | grep -E '^(Package|Version|Depends|Recommends|Installed-Size|Size|Filename):' | head -n 25
+          echo WINEHQ10_MONOLITHIC_PACKAGE_METADATA_END
+          test -s "$distro_wine" && test -s "$distro_wine64"
+          for deb in "$distro_wine" "$distro_wine64"; do
             echo PACKAGE_CONTROL_BEGIN
             dpkg-deb -f "$deb" Package Version Architecture Depends Recommends
             echo PACKAGE_CONTROL_END
           done
           dpkg-deb -x "$distro_wine" /tmp/wine-control
           dpkg-deb -x "$distro_wine64" /tmp/wine-control
-          dpkg-deb -x "$winehq" /tmp/winehq
+          # WineHQ10 full runtime is not downloaded or extracted.
           echo DISTRO_LOADER_MANIFEST_BEGIN
           find /tmp/wine-control -type f -o -type l | grep -E '/bin/|/wine/' | head -n 45 || true
           echo DISTRO_LOADER_MANIFEST_END
-          echo WINEHQ_LOADER_MANIFEST_BEGIN
-          find /tmp/winehq -type f -o -type l | grep -E '/bin/|/wine/' | head -n 45 || true
-          echo WINEHQ_LOADER_MANIFEST_END
-          echo WINEHQ_ELF_NEEDED_BEGIN
-          for loader in /tmp/winehq/opt/wine-stable/bin/wine /tmp/winehq/opt/wine-stable/bin/wineserver; do
-            if test -f "$loader"; then
-              echo "LOADER=$(basename "$loader")"
-              readelf -d "$loader" | grep NEEDED | head -n 30 || true
-            fi
-          done
-          echo WINEHQ_ELF_NEEDED_END
+          echo WINEHQ10_ELF_MANIFEST=NOT_ACQUIRED_METADATA_ONLY
           echo LIBRARY_PACKAGE_METADATA_BEGIN
-          for spec in 'libwine=10.0~repack-6ubuntu1' 'wine-stable-amd64=10.0.0.0~questing-1'; do
+          for spec in 'libwine=10.0~repack-6ubuntu1' 'wine-stable=10.0.0.0~questing-1'; do
             echo "PKG=$spec"
             apt-cache show "$spec" | grep -E '^(Package|Version|Source|Depends|Recommends|Conflicts|Breaks|Installed-Size|Size):' | head -n 20
           done
@@ -66,4 +60,4 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo 'Public small-package manifest and metadata only. No Wine runtime installed, prefix boot, private source, private GHA minutes, raw artifacts or release.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Public distro entrypoint package manifests and WineHQ monolithic metadata only. No Wine runtime installed, prefix boot, private source, private GHA minutes, raw artifacts or release.' >> "$GITHUB_STEP_SUMMARY"
