@@ -56,9 +56,45 @@ jobs:
           # The Noble winehq-stable metapackage hard-requires wine-stable-i386.
           # The synthetic Win32 test is x64: install WineHQ's amd64 runtime only.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine-stable-amd64 xvfb xauth
-          test -x /opt/wine-stable/bin/wine
-          /opt/wine-stable/bin/wine --version | tee wine11-version.txt
+          # wine-stable-amd64 can omit the WineHQ metapackage's 'wine'
+          # wrapper. Discover only the installed WineHQ 64-bit loader.
+          dpkg -L wine-stable-amd64 | grep -E '/bin/(wine|wine64|wineboot|wineserver)
+      - name: Require cross-process synthetic WinEvent create and show callbacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/opt/wine-stable/bin:$PATH"
+          export WINEDEBUG=-all
+          export WINEPREFIX="$RUNNER_TEMP/public-wine11"
+          timeout 150s xvfb-run -a bash -c '
+            set -euo pipefail
+            "$WINEHQ_LOADER" "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe | tee wine11-receipt.txt
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-receipt.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
+            if test -x /opt/wine-stable/bin/wineserver; then
+              /opt/wine-stable/bin/wineserver -k >/dev/null 2>&1 || true
+            fi
+          '
+          echo 'PUBLIC_WINE11_SYNTHETIC_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: State bounded qualification
+        if: always()
+        shell: bash
+        run: |
+          echo 'Public synthetic 64-bit WineHQ11 qualification only, not private daemon RPC or WineBot acceptance.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No private minutes, secrets, user targets, or product-source publication.' >> "$GITHUB_STEP_SUMMARY"
+ || true
+          if test -x /opt/wine-stable/bin/wine64; then
+            loader=/opt/wine-stable/bin/wine64
+          elif test -x /opt/wine-stable/bin/wine; then
+            loader=/opt/wine-stable/bin/wine
+          else
+            echo 'WineHQ 64-bit loader unavailable; fail closed' >&2
+            exit 1
+          fi
+          "$loader" --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
+          printf 'WINEHQ_LOADER=%s\n' "$loader" >> "$GITHUB_ENV"
       - name: Require cross-process synthetic WinEvent create and show callbacks
         shell: bash
         run: |
