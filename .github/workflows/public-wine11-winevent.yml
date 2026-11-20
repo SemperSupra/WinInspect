@@ -10,21 +10,21 @@ concurrency:
   cancel-in-progress: true
 jobs:
   native-fixture:
-    name: Compile 64-bit synthetic EXE on free public Windows
+    name: Compile public x64 synthetic WinEvent fixture
     runs-on: windows-2025
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           persist-credentials: false
-      - name: Build exact synthetic window producer with static MSVC runtime
+      - name: Compile Windows-only synthetic producer
         shell: pwsh
         run: |
           cmake -S experiments/native-observer -B build/fixture -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic configure failed' }
           cmake --build build/fixture --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic build failed' }
-          if (!(Test-Path build/fixture/Release/native-winevent-probe.exe)) { throw 'Synthetic PE missing' }
+          if (!(Test-Path build/fixture/Release/native-winevent-probe.exe)) { throw 'Synthetic executable missing' }
           Get-FileHash build/fixture/Release/native-winevent-probe.exe -Algorithm SHA256
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
@@ -33,98 +33,74 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   wine11:
-    name: Run independent public x64 fixture on signed WineHQ11
+    name: Qualify native WoW64 WineHQ11 on disposable Ubuntu 26.04
     runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:26.04
     needs: native-fixture
-    timeout-minutes: 16
+    timeout-minutes: 22
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: public-wine11-synthetic-pe
           path: fixture
-      - name: Verify artifact and install only 64-bit WineHQ11 runtime
+      - name: Admit official WineHQ 11 on 26.04 without i386 fallback
         shell: bash
         run: |
           set -euo pipefail
           test -s fixture/native-winevent-probe.exe
           sha256sum fixture/native-winevent-probe.exe
-          # No i386 architecture, no cross-compiler toolchain on this Linux runner.
-          sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
-          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
-          sudo apt-get update -qq
-          # The Noble winehq-stable metapackage hard-requires wine-stable-i386.
-          # The synthetic Win32 test is x64: install WineHQ's amd64 runtime only.
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine-stable-amd64 xvfb xauth
-          # WineHQ packages split runtime libraries (wine-stable-amd64) from
-          # launchers (wine-stable). The launcher .deb has an i386 dependency
-          # only at package-manager level; extract its signed-repo payload
-          # without installing/configuring that multiarch metapackage.
-          apt-get download wine-stable
-          launcher_deb="$(find . -maxdepth 1 -name 'wine-stable_11.*_amd64.deb' -print -quit)"
-          test -n "$launcher_deb"
-          runtime_version="$(dpkg-query -W -f='${Version}' wine-stable-amd64)"
-          launcher_version="$(dpkg-deb -f "$launcher_deb" Version)"
-          test "$runtime_version" = "$launcher_version"
-          case "$runtime_version" in 11.*) ;; *) echo 'WineHQ package-version mismatch' >&2; exit 1;; esac
-          mkdir -p "$RUNNER_TEMP/winehq-launcher"
-          dpkg-deb -x "$launcher_deb" "$RUNNER_TEMP/winehq-launcher"
-          test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wine"
-          test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wineserver"
-          # The 11.0 launcher package contains more than executables:
-          # include its complete package-owned resource tree (notably NLS).
-          # It is exact-version-matched to the installed amd64 runtime.
-          sudo install -d -m 0755 /opt/wine-stable
-          sudo cp -a "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/." /opt/wine-stable/
-          test -x /opt/wine-stable/bin/wine
-          test -x /opt/wine-stable/bin/wineserver
-          find /opt/wine-stable -name 'l_intl.nls' -print
-          loader=/opt/wine-stable/bin/wine
-          "$loader" --version | tee wine11-version.txt
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl gnupg xvfb xauth
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/resolute/winehq-resolute.sources | tee /etc/apt/sources.list.d/winehq-resolute.sources >/dev/null
+          apt-get update -qq
+          apt-cache policy wine-stable
+          if apt-cache depends wine-stable | grep -q 'wine-stable-i386'; then
+            echo 'Unexpected legacy multiarch WineHQ dependency' >&2
+            exit 1
+          fi
+          test -z "$(dpkg --print-foreign-architectures)"
+          apt-get install -y --no-install-recommends winehq-stable
+          wine --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
-          echo "WINEHQ_LOADER=$loader" >> "$GITHUB_ENV"
-      - name: Require cross-process synthetic WinEvent create and show callbacks
+          echo 'WINEHQ11_2604_VERSION=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Isolated prefix init and independent WinEvent delivery
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="/opt/wine-stable/bin:$PATH"
-          export WINEPREFIX="$RUNNER_TEMP/public-wine11"
-          # WineHQ 11 supports the new WoW64 mode; test a 64-bit prefix
-          # without the old 32-bit loader package, per upstream 11.0 notes.
+          export WINEPREFIX="$RUNNER_TEMP/wine11-resolute"
           export WINEARCH=wow64
-          # Keep startup diagnostics instead of hiding all failures with -all.
           export WINEDEBUG=fixme-all
-          timeout 210s xvfb-run -a bash -c '
+          timeout 250s xvfb-run -a bash -c '
             set -euo pipefail
-            echo "WINEHQ11_PREFIX_BOOT=START"
-            # Prefix boot and event delivery are different acceptance gates.
-            # No user targets; the only PE is our public synthetic fixture.
-            if timeout 130s /opt/wine-stable/bin/wineboot -u > wine11-boot.txt 2>&1; then
-              echo "WINEHQ11_PREFIX_BOOT=PASS"
+            echo WINEHQ11_PREFIX_BOOT=START
+            if timeout 160s wineboot -u > prefix-boot.txt 2>&1; then
+              echo WINEHQ11_PREFIX_BOOT=PASS
             else
               status=$?
               echo "WINEHQ11_PREFIX_BOOT=FAIL code=$status"
-              tail -n 35 wine11-boot.txt || true
+              tail -n 30 prefix-boot.txt || true
               exit "$status"
             fi
-            echo "WINEHQ11_SYNTHETIC_PROBE=START"
-            timeout 55s "$WINEHQ_LOADER" "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > wine11-receipt.txt 2>&1 || {
+            echo WINEHQ11_SYNTHETIC_PROBE=START
+            if timeout 60s wine "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > synthetic-receipt.txt 2>&1; then
+              cat synthetic-receipt.txt
+            else
               status=$?
               echo "WINEHQ11_SYNTHETIC_PROBE=FAIL code=$status"
-              tail -n 45 wine11-receipt.txt || true
+              tail -n 35 synthetic-receipt.txt || true
               exit "$status"
-            }
-            cat wine11-receipt.txt
-            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-receipt.txt
-            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
-            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
-            echo "WINEHQ11_SYNTHETIC_DELIVERY=PASS"
-            /opt/wine-stable/bin/wineserver -k >/dev/null 2>&1 || true
+            fi
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" synthetic-receipt.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" synthetic-receipt.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" synthetic-receipt.txt
+            echo WINEHQ11_SYNTHETIC_DELIVERY=PASS
+            wineserver -k >/dev/null 2>&1 || true
           '
-          echo 'PUBLIC_WINE11_SYNTHETIC_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
-      - name: State bounded qualification
+          echo 'PUBLIC_WINEHQ11_NATIVE_WOW64_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Evidence boundary
         if: always()
-        shell: bash
-        run: |
-          echo 'Public synthetic 64-bit WineHQ11 qualification only, not private daemon RPC or WineBot acceptance.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'No private minutes, secrets, user targets, or product-source publication.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Public synthetic WineHQ11 probe only; no private WinInspect daemon, real user target, consumer HIL, release, or private Actions minutes.' >> "$GITHUB_STEP_SUMMARY"
