@@ -71,6 +71,7 @@ jobs:
           dpkg-deb -x "$launcher_deb" "$RUNNER_TEMP/winehq-launcher"
           test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wine"
           test -x "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wineserver"
+          sudo install -d -m 0755 /opt/wine-stable/bin
           sudo install -m 0755 "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wine" /opt/wine-stable/bin/wine
           sudo install -m 0755 "$RUNNER_TEMP/winehq-launcher/opt/wine-stable/bin/wineserver" /opt/wine-stable/bin/wineserver
           loader=/opt/wine-stable/bin/wine
