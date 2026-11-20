@@ -1,0 +1,132 @@
+name: WineHQ11 recommended dependency effect on RpcSs startup
+on:
+  pull_request:
+    paths: ['.github/workflows/winehq11-recommends-rpcss.yml']
+permissions:
+  contents: read
+concurrency:
+  group: public-winehq11-recommends-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  fixture:
+    runs-on: windows-2025
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Build the one public Win32 fixture
+        shell: pwsh
+        run: |
+          cmake -S experiments/native-observer -B build/fixture -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+          cmake --build build/fixture --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          $pe = 'build/fixture/Release/native-winevent-probe.exe'
+          if (!(Test-Path $pe)) { throw 'Fixture missing' }
+          Get-FileHash $pe -Algorithm SHA256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: public-questing-wine-doe-pe
+          path: build/fixture/Release/native-winevent-probe.exe
+          retention-days: 1
+          if-no-files-found: error
+  versions:
+    name: Questing ${{ matrix.flavor }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    needs: fixture
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: winehq-wine11-recommends
+            version: '11'
+            package_version: '11.0.0.0~questing-1'
+    timeout-minutes: 14
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-questing-wine-doe-pe
+          path: fixture
+      - name: Install common runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s fixture/native-winevent-probe.exe
+          sha256sum fixture/native-winevent-probe.exe
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends xvfb xauth ca-certificates curl gnupg
+          test -z "$(dpkg --print-foreign-architectures)"
+      - name: Install Ubuntu distributor Wine10 control
+        if: matrix.flavor == 'distro-wine10'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine wine64
+          wine --version | tee wine-version.txt
+          grep -Eq '^wine-10\.' wine-version.txt
+      - name: Install pinned WineHQ stable candidate on same Ubuntu
+        if: matrix.flavor != 'distro-wine10'
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/questing/winehq-questing.sources | tee /etc/apt/sources.list.d/winehq-questing.sources >/dev/null
+          apt-get update -qq
+          apt-cache policy wine-stable
+          test -z "$(dpkg --print-foreign-architectures)"
+          pkg_ver='${{ matrix.package_version }}'
+          # This is the sole experimental variable vs exact public run 44697269828:
+          # install the WineHQ declared RECOMMENDED libs as well as Depends.
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends "winehq-stable=$pkg_ver" "wine-stable=$pkg_ver"
+          for lib in libdbus-1-3 libfontconfig1 libfreetype6 libgnutls30 libxfixes3 libxi6 libxrandr2; do
+            dpkg-query -W "$lib" 2>/dev/null || true
+          done
+          test "$(dpkg-query -W -f='${Version}' wine-stable)" = "$pkg_ver"
+          wine --version | tee wine-version.txt
+          grep -Eq '^wine-${{ matrix.version }}\.' wine-version.txt
+      - name: Identical unprivileged Xvfb prefix initialization and event proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd -m -s /bin/bash wineprobe
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/prefix
+          runuser -u wineprobe -- test -r "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe"
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=fixme-all GITHUB_WORKSPACE="$GITHUB_WORKSPACE" timeout 150s xvfb-run -a bash -c '
+            set -euo pipefail
+            echo PREFIX_BOOT=START
+            if timeout 55s wineboot --init > prefix-boot.txt 2>&1; then
+              echo PREFIX_BOOT=PASS
+            else
+              rc=$?
+              echo "PREFIX_BOOT=FAIL code=$rc"
+              tail -n 35 prefix-boot.txt || true
+              ps -eo pid,ppid,user,stat,etime,comm | grep -E "PID|wine|rpcss|service|device|explorer" | head -n 30 || true
+              exit "$rc"
+            fi
+            echo SYNTHETIC_PROBE=START
+            if timeout 50s wine "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > probe.txt 2>&1; then
+              cat probe.txt
+            else
+              rc=$?
+              echo "SYNTHETIC_PROBE=FAIL code=$rc"
+              tail -n 35 probe.txt || true
+              exit "$rc"
+            fi
+            tr -d "\r" < probe.txt > normalized.txt
+            grep -qx "REGISTERED=1" normalized.txt
+            grep -qx "PRODUCER_OK=1" normalized.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" normalized.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" normalized.txt
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" normalized.txt
+            echo SYNTHETIC_DELIVERY=PASS
+            wineserver -k >/dev/null 2>&1 || true
+          '
+          echo 'VERSION_${{ matrix.version }}_SYNTHETIC=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Scope boundary
+        if: always()
+        run: echo 'One public synthetic PE and Questing WoW64 WineHQ11: only recommended-library closure differs from previous exact experiment. Not private daemon qualification.' >> "$GITHUB_STEP_SUMMARY"
