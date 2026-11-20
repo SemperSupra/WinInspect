@@ -1,0 +1,35 @@
+name: Public WineHQ11 launcher package layout probe
+on:
+  pull_request:
+    paths: ['.github/workflows/winehq11-package-layout.yml']
+permissions:
+  contents: read
+jobs:
+  inspect-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Discover signed WineHQ 11 launcher package without installing runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
+          sudo apt-get update -qq
+          apt-cache show wine-stable | grep -E '^(Package|Version|Depends|Filename|Size):'
+          apt-get download wine-stable
+          deb="$(find . -maxdepth 1 -name 'wine-stable_*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb -f "$deb" Package Version Depends
+          dpkg-deb -c "$deb" | grep -E '(/bin/|/lib.*/wine|/usr/bin/)' | head -80 || true
+          mkdir -p package
+          dpkg-deb -x "$deb" package
+          find package -maxdepth 7 \( -name wine -o -name wine64 -o -name wineboot -o -name wineserver \) -print | head -50
+          echo 'PUBLIC_WINEHQ11_LAUNCHER_METADATA=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: No runtime proof
+        if: always()
+        run: echo 'Public package metadata only. No 160MB Wine runtime install; no Windows executable execution or private source.' >> "$GITHUB_STEP_SUMMARY"
