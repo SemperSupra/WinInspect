@@ -1,0 +1,95 @@
+name: Public Wine10 baseline for Wine11 RpcSs differential
+on:
+  pull_request:
+    paths: ['.github/workflows/public-wine10-control.yml']
+permissions:
+  contents: read
+concurrency:
+  group: public-wine10-control-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  fixture:
+    name: Build same public synthetic x64 PE
+    runs-on: windows-2025
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Build static-runtime WinEvent probe
+        shell: pwsh
+        run: |
+          cmake -S experiments/native-observer -B build/fixture -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw "Fixture configure failed" }
+          cmake --build build/fixture --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Fixture build failed" }
+          $exe = "build/fixture/Release/native-winevent-probe.exe"
+          if (!(Test-Path $exe)) { throw "No synthetic PE" }
+          Get-FileHash $exe -Algorithm SHA256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: public-wine10-control-pe
+          path: build/fixture/Release/native-winevent-probe.exe
+          retention-days: 1
+          if-no-files-found: error
+  control:
+    name: Wine10 distro baseline with isolated prefix and callback probe
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    needs: fixture
+    timeout-minutes: 12
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-wine10-control-pe
+          path: fixture
+      - name: Install distro Wine10 and verify exact version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s fixture/native-winevent-probe.exe
+          sha256sum fixture/native-winevent-probe.exe
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends wine wine64 xvfb xauth
+          wine --version | tee wine-version.txt
+          grep -Eq '^wine-10\.' wine-version.txt
+          echo 'WINE10_CONTROL_VERSION=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Bootstrap same unprivileged synthetic prefix and measure callbacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd -m -s /bin/bash wineprobe
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/prefix
+          runuser -u wineprobe -- test -r "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe"
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=fixme-all GITHUB_WORKSPACE="$GITHUB_WORKSPACE" timeout 190s xvfb-run -a bash -c '
+            set -euo pipefail
+            echo WINE10_PREFIX_BOOT=START
+            if timeout 70s wineboot --init > prefix-boot.txt 2>&1; then
+              echo WINE10_PREFIX_BOOT=PASS
+            else
+              rc=$?
+              echo "WINE10_PREFIX_BOOT=FAIL code=$rc"
+              tail -n 35 prefix-boot.txt || true
+              exit "$rc"
+            fi
+            echo WINE10_SYNTHETIC_PROBE=START
+            if timeout 60s wine "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe > probe.txt 2>&1; then
+              cat probe.txt
+            else
+              rc=$?
+              echo "WINE10_SYNTHETIC_PROBE=FAIL code=$rc"
+              tail -n 35 probe.txt || true
+              exit "$rc"
+            fi
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" probe.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" probe.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" probe.txt
+            echo WINE10_SYNTHETIC_DELIVERY=PASS
+            wineserver -k >/dev/null 2>&1 || true
+          '
+          echo 'PUBLIC_WINE10_CONTROL=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Evidence interpretation
+        if: always()
+        run: echo 'Independent public Wine10 control; no private product binary, no Wine11 claim, no release.' >> "$GITHUB_STEP_SUMMARY"
