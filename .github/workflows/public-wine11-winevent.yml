@@ -5,65 +5,76 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: public-wine11-source-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
-  public-wine11-synthetic:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 18
+  native-fixture:
+    name: Compile 64-bit synthetic EXE on free public Windows
+    runs-on: windows-2025
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           persist-credentials: false
-      - name: Install authenticated WineHQ stable 11 and MinGW on free public Ubuntu
+      - name: Build exact synthetic window producer with static MSVC runtime
+        shell: pwsh
+        run: |
+          cmake -S experiments/native-observer -B build/fixture -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic configure failed' }
+          cmake --build build/fixture --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic build failed' }
+          if (!(Test-Path build/fixture/Release/native-winevent-probe.exe)) { throw 'Synthetic PE missing' }
+          Get-FileHash build/fixture/Release/native-winevent-probe.exe -Algorithm SHA256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: public-wine11-synthetic-pe
+          path: build/fixture/Release/native-winevent-probe.exe
+          if-no-files-found: error
+          retention-days: 1
+  wine11:
+    name: Run independent public x64 fixture on signed WineHQ11
+    runs-on: ubuntu-24.04
+    needs: native-fixture
+    timeout-minutes: 16
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-wine11-synthetic-pe
+          path: fixture
+      - name: Verify artifact and install only 64-bit WineHQ11 runtime
         shell: bash
         run: |
           set -euo pipefail
-          # This fixture is x86_64-only. Enabling i386 pulls gigabytes of
-          # multilib/recommended packages and exceeded the previous 20m cap.
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl gnupg g++-mingw-w64-x86-64 xvfb xauth
+          test -s fixture/native-winevent-probe.exe
+          sha256sum fixture/native-winevent-probe.exe
+          # No i386 architecture, no cross-compiler toolchain on this Linux runner.
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
-            | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
-          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
-            | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable
-          # Require the native x86_64 loader, not a silently substituted distro Wine.
-          test -x /opt/wine-stable/bin/wine || command -v wine
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable xvfb xauth
           wine --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
-      - name: Build independent existing public synthetic Win32 window probe
-        shell: bash
-        run: |
-          set -euo pipefail
-          x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -static-libgcc -static-libstdc++ \
-            experiments/native-observer/probe.cpp -o native-winevent-probe.exe -luser32
-          test -s native-winevent-probe.exe
-          if x86_64-w64-mingw32-objdump -p native-winevent-probe.exe \
-              | grep 'DLL Name:' | grep -Eqi 'libstdc\+\+|libgcc|libwinpthread'; then
-            echo 'Unexpected non-system MinGW dependency' >&2
-            exit 1
-          fi
-      - name: Require real cross-process synthetic WinEvent delivery inside Wine11
+      - name: Require cross-process synthetic WinEvent create and show callbacks
         shell: bash
         run: |
           set -euo pipefail
           export WINEDEBUG=-all
-          export WINEPREFIX="$RUNNER_TEMP/public-wine11-synthetic"
+          export WINEPREFIX="$RUNNER_TEMP/public-wine11"
           timeout 150s xvfb-run -a bash -c '
             set -euo pipefail
             wineboot -u >/dev/null 2>&1
-            wine ./native-winevent-probe.exe --probe | tee wine11-synthetic-receipt.txt
-            grep -q "^RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-synthetic-receipt.txt
-            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*" wine11-synthetic-receipt.txt
-            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*" wine11-synthetic-receipt.txt
+            wine "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe" --probe | tee wine11-receipt.txt
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" wine11-receipt.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" wine11-receipt.txt
             wineserver -k >/dev/null 2>&1 || true
           '
-          echo 'PUBLIC_WINEHQ11_CROSS_PROCESS_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
-      - name: Distinguish synthetic from product acceptance
+          echo 'PUBLIC_WINE11_SYNTHETIC_WINEVENT=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: State bounded qualification
         if: always()
         shell: bash
         run: |
-          echo 'Synthetic public Wine11 event-delivery probe only. No private WinInspect daemon, no user target, no observer RPC and no release promotion.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Free public GitHub Actions; no private Actions minutes authorized or spent by this job.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Public synthetic 64-bit WineHQ11 qualification only, not private daemon RPC or WineBot acceptance.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No private minutes, secrets, user targets, or product-source publication.' >> "$GITHUB_STEP_SUMMARY"
