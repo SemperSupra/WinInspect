@@ -74,4 +74,6 @@ jobs:
           echo 'PUBLIC_WINE_APT_CLOSURE_DIFF=PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Classification
         if: always()
-        run: echo 'Public metadata and dry-run APT closure only: no Wine runtime download, prefix boot, target, private source, private Actions minutes or release.' >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
+        run: |
+          echo 'Public metadata and dry-run APT closure only: no Wine runtime download, prefix boot, target, private source, private Actions minutes or release.' >> "$GITHUB_STEP_SUMMARY"
