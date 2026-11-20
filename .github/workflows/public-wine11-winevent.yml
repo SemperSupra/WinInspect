@@ -53,13 +53,17 @@ jobs:
           curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
           curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources | sudo tee /etc/apt/sources.list.d/winehq-noble.sources >/dev/null
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable xvfb xauth
-          wine --version | tee wine11-version.txt
+          # The Noble winehq-stable metapackage hard-requires wine-stable-i386.
+          # The synthetic Win32 test is x64: install WineHQ's amd64 runtime only.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine-stable-amd64 xvfb xauth
+          test -x /opt/wine-stable/bin/wine
+          /opt/wine-stable/bin/wine --version | tee wine11-version.txt
           grep -Eq '^wine-11\.' wine11-version.txt
       - name: Require cross-process synthetic WinEvent create and show callbacks
         shell: bash
         run: |
           set -euo pipefail
+          export PATH="/opt/wine-stable/bin:$PATH"
           export WINEDEBUG=-all
           export WINEPREFIX="$RUNNER_TEMP/public-wine11"
           timeout 150s xvfb-run -a bash -c '
