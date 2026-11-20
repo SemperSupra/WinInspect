@@ -1,0 +1,100 @@
+name: Wine 10 same-version distro/WineHQ RpcSs service wait differential
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wine-rpcss-service-wait-differential.yml'
+permissions:
+  contents: read
+concurrency:
+  group: public-rpcss-differential-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  service-wait:
+    name: Ubuntu25 Wine10 service startup / ${{ matrix.flavor }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: ubuntu-distro
+          - flavor: winehq-signed
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Prepare identical Questing tracing harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends xvfb xauth strace ca-certificates curl gnupg
+          test -z "$(dpkg --print-foreign-architectures)"
+      - name: Install same-major Ubuntu distro Wine10
+        if: matrix.flavor == 'ubuntu-distro'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine=10.0~repack-6ubuntu1 wine64
+          wine --version | tee candidate-version.txt
+          grep -Eq '^wine-10\.' candidate-version.txt
+          dpkg-query -W wine wine64 libwine
+      - name: Install same-major signed WineHQ10 package
+        if: matrix.flavor == 'winehq-signed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/questing/winehq-questing.sources | tee /etc/apt/sources.list.d/winehq-questing.sources >/dev/null
+          apt-get update -qq
+          test -z "$(dpkg --print-foreign-architectures)"
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            winehq-stable=10.0.0.0~questing-1 wine-stable=10.0.0.0~questing-1
+          wine --version | tee candidate-version.txt
+          grep -Eq '^wine-10\.' candidate-version.txt
+          dpkg-query -W winehq-stable wine-stable
+      - name: Trace identical Wine10 prefix boot with bounded service wait census
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd -m -s /bin/bash wineprobe
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/prefix
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/trace
+          echo "RPCSS_DIFFERENTIAL_FLAVOR=${{ matrix.flavor }}"
+          echo "RPCSS_DIFFERENTIAL_OS=$(grep '^VERSION_ID=' /etc/os-release)"
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=win64 WINEDEBUG=+ole,+rpc,+service timeout -s INT -k 5s 40s \
+            xvfb-run -a bash -c '
+              set +e
+              strace -ff -tt -s 40 -e trace=process,network,ipc,signal \
+                -o /home/wineprobe/trace/wine wineboot --init \
+                > /home/wineprobe/trace/boot.log 2>&1 &
+              tracer=$!
+              sleep 8
+              echo RPCSS_DIFFERENTIAL_WAIT_CENSUS_BEGIN
+              ps -eo user,stat,wchan:24,comm | grep -Ei "USER|wine|service|explorer|control|device|rpcss" | head -n 30 || true
+              echo RPCSS_DIFFERENTIAL_WAIT_CENSUS_END
+              wait "$tracer"
+              code=$?
+              echo "RPCSS_DIFFERENTIAL_BOOT_EXIT=$code"
+              echo RPCSS_DIFFERENTIAL_COM_MARKERS_BEGIN
+              grep -Ei "err:ole|err:rpc|err:service|start_rpcss|marshal|service.*fail" /home/wineprobe/trace/boot.log \
+                | sed -E "s/0x[0-9a-fA-F]{9,}/0xADDR/g" | head -n 25 || true
+              echo RPCSS_DIFFERENTIAL_COM_MARKERS_END
+              echo RPCSS_DIFFERENTIAL_SYSCALL_RESULTS_BEGIN
+              grep -h -oE "= -1 (EACCES|EPERM|ENOSYS|ECONNREFUSED|ENOENT|EPIPE|ETIMEDOUT|EAGAIN)" /home/wineprobe/trace/wine.* \
+                | sort | uniq -c | sort -rn | head -n 15 || true
+              echo RPCSS_DIFFERENTIAL_SYSCALL_RESULTS_END
+              exit 0
+            '
+          # Source of truth is the explicit BOOT_EXIT receipt above, not a
+          # green diagnostic job. No unredacted raw trace artifacts uploaded.
+          echo 'RPCSS_COMPARISON_EVIDENCE_CAPTURED=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Scope boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'Same Ubuntu25.10, same Wine10 major, no user fixture or target, bounded service-wait census. Green means diagnostic capture only, not successful prefix boot. No raw trace upload, private source, private Actions minutes or release.' >> "$GITHUB_STEP_SUMMARY"
