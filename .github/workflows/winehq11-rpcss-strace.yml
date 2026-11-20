@@ -1,0 +1,80 @@
+name: Public native WineHQ11 RpcSs service startup syscall census
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/winehq11-rpcss-strace.yml'
+permissions:
+  contents: read
+concurrency:
+  group: winehq11-rpcss-trace-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  rpcss-diagnostic:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Install signed WineHQ11 and tracing prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl gnupg xvfb xauth strace
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/resolute/winehq-resolute.sources | sudo tee /etc/apt/sources.list.d/winehq-resolute.sources >/dev/null
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends winehq-stable
+          wine --version | tee wine-version.txt
+          grep -Eq '^wine-11\.' wine-version.txt
+          dpkg-query -W wine-stable winehq-stable
+          echo WINEHQ11_VERSION_PROVEN=PASS >> "$GITHUB_STEP_SUMMARY"
+      - name: Bound Wine service/COM boot and summarize syscall failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WINEPREFIX="$RUNNER_TEMP/rpcss-native-wine11"
+          export WINEARCH=win64
+          export WINEDEBUG=+ole,+rpc,+service
+          test "$(stat -c %u "$RUNNER_TEMP")" = "$(id -u)"
+          mkdir -p trace
+          echo RPCSS_TRACE_NATIVE_HOST=START
+          set +e
+          timeout -s INT -k 5s 45s xvfb-run -a strace -ff -tt -T -s 80 \
+            -e trace=process,network,ipc,signal \
+            -o trace/wine wineboot --init > wine-boot.log 2>&1
+          rc=$?
+          set -e
+          echo "RPCSS_TRACE_BOOT_EXIT=$rc"
+          echo "RPCSS_TRACE_FILES=$(find trace -maxdepth 1 -type f | wc -l)"
+          test -s wine-version.txt
+          test -n "$(find trace -maxdepth 1 -type f -print -quit)"
+          echo RPCSS_LOG_SIGNALS_BEGIN
+          grep -Ei 'err:ole|err:rpc|err:service|start_rpcss|marshal|service.*fail' wine-boot.log | head -n 35 || true
+          echo RPCSS_LOG_SIGNALS_END
+          echo RPCSS_PROCESS_CENSUS_BEGIN
+          ps -eo user,stat,comm | grep -Ei 'USER|wine|service|explorer|control|device|rpcss' | head -n 30 || true
+          echo RPCSS_PROCESS_CENSUS_END
+          echo RPCSS_SYSCALL_ERROR_COUNTS_BEGIN
+          grep -h -oE '= -1 (EACCES|EPERM|ENOSYS|ECONNREFUSED|ENOENT|EPIPE|ETIMEDOUT|EAGAIN)' trace/wine.* \
+            | sort | uniq -c | sort -rn | head -n 20 || true
+          echo RPCSS_SYSCALL_ERROR_COUNTS_END
+          echo RPCSS_SYSCALL_CLASS_COUNTS_BEGIN
+          grep -hE '^(.* )?(clone|clone3|fork|vfork|execve|socket|connect|bind|listen|accept4|wait4|waitid|futex|kill|tgkill)\(' trace/wine.* \
+            | sed -E 's/^.* ([a-zA-Z0-9_]+)\(.*/\1/' | sort | uniq -c | sort -rn | head -n 25 || true
+          echo RPCSS_SYSCALL_CLASS_COUNTS_END
+          if test "$rc" -eq 0; then
+            echo RPCSS_NATIVE_PREFIX=PASS | tee -a "$GITHUB_STEP_SUMMARY"
+          elif test "$rc" -eq 124 || test "$rc" -eq 137; then
+            echo RPCSS_NATIVE_PREFIX=TIMEOUT | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "RPCSS_NATIVE_PREFIX=ERROR code=$rc" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo 'RPCSS_SERVICE_TRACE_CAPTURED=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Privacy boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'Public WineHQ11 wineboot only. No private binary or real user target, no upload of raw strace, prefix, environment or service dumps. WinEvent callbacks, private daemon RPC and v0.5 release remain unqualified.' >> "$GITHUB_STEP_SUMMARY"
