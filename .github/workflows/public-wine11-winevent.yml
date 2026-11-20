@@ -58,8 +58,11 @@ jobs:
           curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/resolute/winehq-resolute.sources | tee /etc/apt/sources.list.d/winehq-resolute.sources >/dev/null
           apt-get update -qq
           apt-cache policy wine-stable
-          if apt-cache depends wine-stable | grep -q 'wine-stable-i386'; then
-            echo 'Unexpected legacy multiarch WineHQ dependency' >&2
+          apt-cache show wine-stable=11.0.0.0~resolute-1 | grep -E '^(Package|Version|Depends|Recommends):' || true
+          # Fail only on a HARD i386 dependency. Optional Recommends and
+          # conflicts are not installed by --no-install-recommends.
+          if apt-cache show wine-stable=11.0.0.0~resolute-1 | grep -E '^Depends:.*wine-stable-i386'; then
+            echo 'Unexpected mandatory i386 dependency in WineHQ11 Resolute package' >&2
             exit 1
           fi
           test -z "$(dpkg --print-foreign-architectures)"
