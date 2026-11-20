@@ -129,4 +129,6 @@ jobs:
           echo 'VERSION_${{ matrix.version }}_SYNTHETIC=PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Scope boundary
         if: always()
-        run: echo 'One public synthetic PE and Questing WoW64 WineHQ11: only recommended-library closure differs from previous exact experiment. Not private daemon qualification.' >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
+        run: |
+          echo 'One public synthetic PE and Questing WoW64 WineHQ11: only recommended-library closure differs from previous exact experiment. Not private daemon qualification.' >> "$GITHUB_STEP_SUMMARY"
