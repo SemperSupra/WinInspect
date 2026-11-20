@@ -1,0 +1,79 @@
+name: Public WineHQ versus distro package metadata and RpcSs dependency census
+on:
+  pull_request:
+    paths: ['.github/workflows/wine-package-rpcss-metadata.yml']
+permissions:
+  contents: read
+jobs:
+  package-census:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Admit distro and official signed WineHQ package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/questing/winehq-questing.sources | tee /etc/apt/sources.list.d/winehq-questing.sources >/dev/null
+          apt-get update -qq
+          test -z "$(dpkg --print-foreign-architectures)"
+      - name: Record version-pinned APT dependency and package-size envelopes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p comparison
+          for desc in distro-wine distro-wine64 winehq10 winehq11 winehq10-meta winehq11-meta; do
+            case "$desc" in
+              distro-wine) spec='wine=10.0~repack-6ubuntu1' ;;
+              distro-wine64) spec='wine64' ;;
+              winehq10) spec='wine-stable=10.0.0.0~questing-1' ;;
+              winehq11) spec='wine-stable=11.0.0.0~questing-1' ;;
+              winehq10-meta) spec='winehq-stable=10.0.0.0~questing-1' ;;
+              winehq11-meta) spec='winehq-stable=11.0.0.0~questing-1' ;;
+            esac
+            echo "== $desc / $spec =="
+            apt-cache show "$spec" | grep -E '^(Package|Version|Architecture|Depends|Recommends|Suggests|Breaks|Conflicts|Provides|Installed-Size|Size|Filename):' | head -n 24 | tee "comparison/$desc.txt"
+            test -s "comparison/$desc.txt"
+          done
+          echo '== WineHQ stable package-version metadata diff =='
+          diff -u comparison/winehq10.txt comparison/winehq11.txt || test "$?" -eq 1
+          echo 'PUBLIC_WINE_PACKAGE_METADATA=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Simulate APT installation without downloading runtime packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p comparison
+          apt-get -s -o APT::Install-Recommends=false install wine wine64 > comparison/distro-solve.txt
+          apt-get -s -o APT::Install-Recommends=false install \
+            winehq-stable=10.0.0.0~questing-1 wine-stable=10.0.0.0~questing-1 \
+            > comparison/winehq10-solve.txt
+          apt-get -s -o APT::Install-Recommends=false install \
+            winehq-stable=11.0.0.0~questing-1 wine-stable=11.0.0.0~questing-1 \
+            > comparison/winehq11-solve.txt
+          for kind in distro winehq10 winehq11; do
+            echo "== $kind simulated package closure =="
+            grep '^Inst ' "comparison/$kind-solve.txt" | cut -d ' ' -f2 | sort -u | tee "comparison/$kind-packages.txt"
+            test -s "comparison/$kind-packages.txt"
+            echo "$kind package count: $(wc -l < "comparison/$kind-packages.txt")"
+          done
+          echo '== WineHQ10-only package names relative to distro =='
+          comm -13 comparison/distro-packages.txt comparison/winehq10-packages.txt | head -n 55 || true
+          echo '== Distro-only package names relative to WineHQ10 =='
+          comm -23 comparison/distro-packages.txt comparison/winehq10-packages.txt | head -n 55 || true
+          echo '== WineHQ11-only package names relative to WineHQ10 =='
+          comm -13 comparison/winehq10-packages.txt comparison/winehq11-packages.txt | head -n 55 || true
+          echo 'PUBLIC_WINE_APT_CLOSURE_DIFF=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Classification
+        if: always()
+        shell: bash
+        run: |
+          echo 'Public metadata and dry-run APT closure only: no Wine runtime download, prefix boot, target, private source, private Actions minutes or release.' >> "$GITHUB_STEP_SUMMARY"
