@@ -85,7 +85,7 @@ jobs:
             fi
             # Windows stdout can contain CRLF; accept exact receipt lines after
             # removing only carriage returns, never weaken event assertions.
-            tr -d '\r' < probe.txt > probe-normalized.txt
+            tr -d "\r" < probe.txt > probe-normalized.txt
             grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" probe-normalized.txt
             grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" probe-normalized.txt
             grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" probe-normalized.txt
