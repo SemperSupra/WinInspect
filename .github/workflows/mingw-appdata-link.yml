@@ -1,0 +1,38 @@
+name: Free MinGW APPDATA Win32 CRT linker proof
+on:
+  pull_request:
+    paths:
+      - 'experiments/mingw-appdata/**'
+      - '.github/workflows/mingw-appdata-link.yml'
+permissions:
+  contents: read
+jobs:
+  public-mingw-lookup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Install disposable free MinGW toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64
+      - name: Compile, link and audit PE imports without private source
+        shell: bash
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            -static-libgcc -static-libstdc++ \
+            experiments/mingw-appdata/probe.cpp -o mingw-appdata-probe.exe
+          test -s mingw-appdata-probe.exe
+          x86_64-w64-mingw32-objdump -p mingw-appdata-probe.exe | grep 'DLL Name:' > import-list.txt
+          if x86_64-w64-mingw32-nm -u mingw-appdata-probe.exe | grep -qi dupenv; then
+            echo 'Unexpected unresolved _dupenv_s import' >&2
+            exit 1
+          fi
+          if grep -Eqi 'libstdc\+\+|libgcc|libwinpthread' import-list.txt; then
+            echo 'Unwanted dynamic GCC runtime import' >&2
+            exit 1
+          fi
+          echo 'PASS: Win32 APPDATA GetEnvironmentVariableA links cleanly under MinGW'
