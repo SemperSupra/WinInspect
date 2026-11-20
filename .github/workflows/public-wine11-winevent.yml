@@ -74,10 +74,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export WINEPREFIX="$RUNNER_TEMP/wine11-resolute"
-          export WINEARCH=wow64
-          export WINEDEBUG=fixme-all
-          timeout 250s xvfb-run -a bash -c '
+          # GitHub's bind-mounted RUNNER_TEMP is not owned by the
+          # container's process user; Wine rightly refuses a foreign prefix.
+          # Run the synthetic PE and Xvfb as a dedicated unprivileged user.
+          useradd -m -s /bin/bash wineprobe
+          install -d -o wineprobe -g wineprobe -m 0700 /home/wineprobe/prefix
+          runuser -u wineprobe -- test -r "$GITHUB_WORKSPACE/fixture/native-winevent-probe.exe"
+          runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=wow64 WINEDEBUG=fixme-all GITHUB_WORKSPACE="$GITHUB_WORKSPACE" timeout 250s xvfb-run -a bash -c '
             set -euo pipefail
             echo WINEHQ11_PREFIX_BOOT=START
             if timeout 160s wineboot -u > prefix-boot.txt 2>&1; then
