@@ -83,9 +83,12 @@ jobs:
               tail -n 35 probe.txt || true
               exit "$rc"
             fi
-            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" probe.txt
-            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" probe.txt
-            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" probe.txt
+            # Windows stdout can contain CRLF; accept exact receipt lines after
+            # removing only carriage returns, never weaken event assertions.
+            tr -d '\r' < probe.txt > probe-normalized.txt
+            grep -qx "RESULT=SYNTHETIC_DELIVERY_OBSERVED" probe-normalized.txt
+            grep -Eq "^CREATE_OBSERVED=[1-9][0-9]*$" probe-normalized.txt
+            grep -Eq "^SHOW_OBSERVED=[1-9][0-9]*$" probe-normalized.txt
             echo WINE10_SYNTHETIC_DELIVERY=PASS
             wineserver -k >/dev/null 2>&1 || true
           '
