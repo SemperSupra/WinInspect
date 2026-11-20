@@ -1,0 +1,63 @@
+name: Wine10 package wrapper metadata differential
+on:
+  pull_request:
+    paths: ['.github/workflows/wine10-launcher-com-metadata.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.10
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Fetch pinned public package metadata, no runtime installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl gnupg binutils
+          install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/questing/winehq-questing.sources | tee /etc/apt/sources.list.d/winehq-questing.sources >/dev/null
+          apt-get update -qq
+          test -z "$(dpkg --print-foreign-architectures)"
+          mkdir -p /tmp/wine-control /tmp/winehq
+          cd /tmp
+          # WineHQ10 wine-stable is monolithic (~227MB). Metadata-only: do
+          # not download its entire runtime in this corrected comparison.
+          apt-get download 'wine=10.0~repack-6ubuntu1' wine64
+          distro_wine="$(find /tmp -maxdepth 1 -name 'wine_*.deb' -print -quit)"
+          distro_wine64="$(find /tmp -maxdepth 1 -name 'wine64_*.deb' -print -quit)"
+          echo WINEHQ10_MONOLITHIC_PACKAGE_METADATA_BEGIN
+          apt-cache show 'wine-stable=10.0.0.0~questing-1' | grep -E '^(Package|Version|Depends|Recommends|Installed-Size|Size|Filename):' | head -n 25
+          echo WINEHQ10_MONOLITHIC_PACKAGE_METADATA_END
+          test -s "$distro_wine" && test -s "$distro_wine64"
+          for deb in "$distro_wine" "$distro_wine64"; do
+            echo PACKAGE_CONTROL_BEGIN
+            dpkg-deb -f "$deb" Package Version Architecture Depends Recommends
+            echo PACKAGE_CONTROL_END
+          done
+          dpkg-deb -x "$distro_wine" /tmp/wine-control
+          dpkg-deb -x "$distro_wine64" /tmp/wine-control
+          # WineHQ10 full runtime is not downloaded or extracted.
+          echo DISTRO_LOADER_MANIFEST_BEGIN
+          find /tmp/wine-control -type f -o -type l | grep -E '/bin/|/wine/' | head -n 45 || true
+          echo DISTRO_LOADER_MANIFEST_END
+          echo WINEHQ10_ELF_MANIFEST=NOT_ACQUIRED_METADATA_ONLY
+          echo LIBRARY_PACKAGE_METADATA_BEGIN
+          for spec in 'libwine=10.0~repack-6ubuntu1' 'wine-stable=10.0.0.0~questing-1'; do
+            echo "PKG=$spec"
+            apt-cache show "$spec" | grep -E '^(Package|Version|Source|Depends|Recommends|Conflicts|Breaks|Installed-Size|Size):' | head -n 20
+          done
+          echo LIBRARY_PACKAGE_METADATA_END
+          echo PUBLIC_WINE10_PACKAGE_DIFFERENTIAL=PASS >> "$GITHUB_STEP_SUMMARY"
+      - name: Scope boundary
+        if: always()
+        shell: bash
+        run: |
+          echo 'Public distro entrypoint package manifests and WineHQ monolithic metadata only. No Wine runtime installed, prefix boot, private source, private GHA minutes, raw artifacts or release.' >> "$GITHUB_STEP_SUMMARY"
