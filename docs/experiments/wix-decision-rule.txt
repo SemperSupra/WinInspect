@@ -1,0 +1,1 @@
+WiX/MSI wins this bakeoff only if it preserves/restores exact accepted A hashes and registration after the exclusive-file-lock B upgrade fails on both hosted Windows architectures, while the x64 MSI lifecycle also works under Wine. Otherwise no backend migration is authorized by this experiment.

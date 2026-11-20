@@ -1,0 +1,68 @@
+name: WiX 5 MSI Wine follow-up
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wix5-wine-followup.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  wine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download exact WiX5 MSI candidates
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: wix5-msi-candidates
+          path: dist
+          repository: SemperSupra/WinInspect
+          run-id: '35193235671'
+          github-token: ${{ github.token }}
+      - name: Install the already-proven Wine runtime shape
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32:i386 wine64 xvfb
+          wine --version
+      - name: Qualify x64 MSI lifecycle under Wine
+        shell: bash
+        env:
+          WINEPREFIX: ${{ github.workspace }}/wineprefix
+          WINEDEBUG: -all
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export WINEARCH=win64
+          Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
+          wineboot -u
+          A="$PWD/dist/WinInspect-WiX-x64-a.msi"
+          B="$PWD/dist/WinInspect-WiX-x64-b.msi"
+          install_msi() { wine msiexec /i "$1" /qn /norestart; }
+          install_msi "$A"
+          localappdata=$(wine cmd /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r' | tail -n1)
+          root=$(winepath -u "$localappdata\\WinInspect")
+          test -f "$root/winspect.exe"
+          wine "$root/winspect.exe" --version
+          install_msi "$A"
+          install_msi "$B"
+          wine "$root/winspect.exe" --version
+          install_msi "$A"
+          wine "$root/winspect.exe" --version
+          wine msiexec /x "$A" /qn /norestart
+          sleep 2
+          test ! -d "$root"
+          printf '%s\n' '{"schemaVersion":1,"wineLifecycle":"passed","x64Msi":true,"cleanInstall":true,"repeatInstall":true,"upgrade":true,"downgrade":true,"installedCli":true,"uninstallClean":true,"scope":"Wine compatibility qualification; not native Windows acceptance"}' > wine-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: wix5-wine-followup-evidence
+          path: wine-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

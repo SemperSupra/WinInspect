@@ -1,0 +1,1 @@
+This rep does not add a VC++ redistributable bootstrapper. The installer-backend decision is isolated from prerequisite deployment. If WiX/MSI wins, production integration must either package the architecture-correct x64/ARM64 VC runtime through established mechanisms or remove that dynamic-runtime prerequisite.

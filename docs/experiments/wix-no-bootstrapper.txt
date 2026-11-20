@@ -1,0 +1,1 @@
+No Burn/bootstrapper layer is included in the first WiX rep. Architecture-specific MSI packages are sufficient to test Windows Installer rollback and Wine compatibility; a universal wrapper is convenience, not a prerequisite.
