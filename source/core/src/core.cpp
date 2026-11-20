@@ -1741,6 +1741,11 @@ namespace wininspect {
     }
 
   after_dispatch:
+    // Handler lambdas return newly constructed CoreResponse objects and may
+    // leave id empty. Always preserve the caller's exact request correlation
+    // identity before serializing the reply, including on errors. The RPC
+    // client's strict ID check must never be weakened to accept empty IDs.
+    resp.id = req.id;
     auto end_time = std::chrono::steady_clock::now();
     auto duration_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
