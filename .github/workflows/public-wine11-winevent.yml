@@ -83,12 +83,23 @@ jobs:
           runuser -u wineprobe -- env WINEPREFIX=/home/wineprobe/prefix WINEARCH=wow64 WINEDEBUG=fixme-all GITHUB_WORKSPACE="$GITHUB_WORKSPACE" timeout 250s xvfb-run -a bash -c '
             set -euo pipefail
             echo WINEHQ11_PREFIX_BOOT=START
-            if timeout 160s wineboot -u > prefix-boot.txt 2>&1; then
+            # Fresh prefix: test explicit initial creation, not update (-u).
+            # Stop quickly and retain bounded diagnostics instead of another
+            # 160-second blind startup hang.
+            if timeout 50s wineboot --init > prefix-boot.txt 2>&1; then
               echo WINEHQ11_PREFIX_BOOT=PASS
             else
               status=$?
               echo "WINEHQ11_PREFIX_BOOT=FAIL code=$status"
-              tail -n 30 prefix-boot.txt || true
+              echo WINEHQ11_PROCESS_CENSUS=BEGIN
+              ps -eo pid,ppid,user,stat,etime,comm | grep -E "PID|wine|rpcss|service|device|explorer" | head -n 35 || true
+              echo WINEHQ11_PROCESS_CENSUS=END
+              echo WINEHQ11_PREFIX_STRUCTURE=BEGIN
+              find "$WINEPREFIX" -maxdepth 2 -type f -printf "%P\n" | head -n 35 || true
+              echo WINEHQ11_PREFIX_STRUCTURE=END
+              echo WINEHQ11_BOOT_LOG=BEGIN
+              tail -n 50 prefix-boot.txt || true
+              echo WINEHQ11_BOOT_LOG=END
               exit "$status"
             fi
             echo WINEHQ11_SYNTHETIC_PROBE=START
