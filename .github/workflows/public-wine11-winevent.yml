@@ -63,7 +63,7 @@ jobs:
           apt-get download wine-stable
           launcher_deb="$(find . -maxdepth 1 -name 'wine-stable_11.*_amd64.deb' -print -quit)"
           test -n "$launcher_deb"
-          runtime_version="$(dpkg-query -W -f='\${Version}' wine-stable-amd64)"
+          runtime_version="$(dpkg-query -W -f='${Version}' wine-stable-amd64)"
           launcher_version="$(dpkg-deb -f "$launcher_deb" Version)"
           test "$runtime_version" = "$launcher_version"
           case "$runtime_version" in 11.*) ;; *) echo 'WineHQ package-version mismatch' >&2; exit 1;; esac
