@@ -144,21 +144,19 @@ jobs:
 
       - name: Build portable CLI subjects
         shell: pwsh
+        env:
+          GOTOOLCHAIN: go1.26.2
+          CGO_ENABLED: '0'
+          GOARCH: amd64
+          GOWORK: 'off'
         run: |
           New-Item -ItemType Directory -Force -Path 'source/dist' | Out-Null
-          go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-win-x64.exe"
+          $env:GOOS = 'windows'
+          go build -C source/clients/portable -trimpath -buildvcs=false -o "../../dist/wi-portable-$env:RELEASE_TAG-win-x64.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Windows portable CLI build failed.' }
-          $oldGoOs = $env:GOOS
-          $oldGoArch = $env:GOARCH
-          try {
-            $env:GOOS = 'linux'
-            $env:GOARCH = 'amd64'
-            go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-linux-x64"
-            if ($LASTEXITCODE -ne 0) { throw 'Linux portable CLI build failed.' }
-          } finally {
-            $env:GOOS = $oldGoOs
-            $env:GOARCH = $oldGoArch
-          }
+          $env:GOOS = 'linux'
+          go build -C source/clients/portable -trimpath -buildvcs=false -o "../../dist/wi-portable-$env:RELEASE_TAG-linux-x64"
+          if ($LASTEXITCODE -ne 0) { throw 'Linux portable CLI build failed.' }
 
       - name: Install packaging tools
         shell: pwsh
