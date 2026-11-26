@@ -1,0 +1,103 @@
+name: Hosted native GUI visible focus conformance
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'experiments/Apply-HostedNativeHciRepair.ps1'
+      - 'experiments/Normalize-HostedNativeHciLayout.ps1'
+      - 'experiments/Normalize-HostedNativeKeyboardAccess.ps1'
+      - 'experiments/Normalize-HostedNativeAccessibleNames.ps1'
+      - 'experiments/Normalize-HostedNativeHighContrast.ps1'
+      - 'experiments/Normalize-HostedNativeDpiScaling.ps1'
+      - 'scripts/Invoke-HostedNativeFocusVisibilityConformance.ps1'
+      - '.github/workflows/hosted-native-focus-visibility.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  visible-focus:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64-server2025
+            runner: windows-2025
+            cmake_arch: x64
+          - name: arm64-win11
+            runner: windows-11-vs2026-arm
+            cmake_arch: ARM64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout public deployment plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Apply composed HCI candidate
+        shell: pwsh
+        run: |
+          ./experiments/Apply-HostedNativeHciRepair.ps1
+          ./experiments/Normalize-HostedNativeHciLayout.ps1
+          ./experiments/Normalize-HostedNativeKeyboardAccess.ps1
+          ./experiments/Normalize-HostedNativeAccessibleNames.ps1
+          ./experiments/Normalize-HostedNativeHighContrast.ps1
+          ./experiments/Normalize-HostedNativeDpiScaling.ps1
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Composed HCI candidate introduced whitespace errors.' }
+
+      - name: Configure GUI
+        shell: pwsh
+        run: |
+          cmake -S source -B build -A '${{ matrix.cmake_arch }}' -DWININSPECT_BUILD_TESTS=OFF -DWININSPECT_USE_OPENSSL=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
+
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target wininspect-gui --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect GUI build failed.' }
+
+      - name: Compare focused and unfocused owner-draw rendering
+        shell: pwsh
+        run: |
+          $gui = Get-ChildItem -Recurse build -Filter 'wininspect-gui.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'wininspect-gui.exe not found after build.' }
+          ./scripts/Invoke-HostedNativeFocusVisibilityConformance.ps1 -GuiPath $gui.FullName -OutputPath 'evidence/focus-visibility.json'
+
+      - name: Emit visible-focus summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path 'evidence/focus-visibility.json') {
+            $f = Get-Content 'evidence/focus-visibility.json' -Raw | ConvertFrom-Json
+            @"
+          ### Hosted native visible keyboard focus — ${{ matrix.name }}
+
+          - status: `$($f.status)`
+          - Connect-region pixels compared: `$($f.connect_pixels)`
+          - pixels changed between focused/unfocused render: `$($f.changed_pixels)`
+          - visible focus delta: `$($f.visible_focus_delta)`
+
+          This confirms an observable owner-draw focus cue on hosted native Windows; it does not replace human/Narrator or controlled interactive acceptance.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### Hosted native visible keyboard focus — ${{ matrix.name }}`n`nNo focus-visibility evidence was produced; inspect the job log." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload visible-focus evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-native-focus-visibility-${{ matrix.name }}
+          path: evidence/focus-visibility.json
+          if-no-files-found: warn
+          retention-days: 14
