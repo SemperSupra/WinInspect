@@ -1,0 +1,1 @@
+WiX Toolset CLI 7.0.0 is used only for this qualification rep. Production adoption must separately review its current licensing/maintenance terms and may pin another supported WiX version without changing the Windows Installer transaction hypothesis.

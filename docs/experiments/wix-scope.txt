@@ -1,0 +1,1 @@
+Evidence from this branch is hosted package-lifecycle qualification only. It is not controlled WinBot, interactive-desktop, Hyper-V lifecycle, reboot persistence, or native-CUA acceptance.
