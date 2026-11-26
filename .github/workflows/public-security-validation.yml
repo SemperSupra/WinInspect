@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: public-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   zizmor:
     name: GitHub Actions security (zizmor)
@@ -20,7 +24,6 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           persist-credentials: false
-
       - name: Audit GitHub Actions
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
         with:
@@ -39,18 +42,337 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           persist-credentials: false
-
       - name: Run Scorecard
         uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: false
-
       - name: Upload Scorecard SARIF as artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: scorecard-sarif
           path: results.sarif
+          if-no-files-found: error
+          retention-days: 14
+
+  wine-uinput-w1:
+    name: Wine two-source uinput identity E3
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'experiment/379-wine-uinput-actions-preflight' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Record environment and install only missing fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo "experiment=wininspect-379-wine-uinput-e3"
+            echo "commit=$GITHUB_SHA"
+            uname -a
+            cat /etc/os-release
+            ls -l /dev/uinput || true
+          } > evidence/environment.txt
+
+          missing=(xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput xinput x11-xserver-utils x11-utils openbox wine64)
+          if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
+            missing+=(g++-mingw-w64-x86-64-posix)
+          fi
+          install=()
+          for pkg in "${missing[@]}"; do
+            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || install+=("$pkg")
+          done
+          if [ "${#install[@]}" -gt 0 ]; then
+            printf 'Installing only missing packages: %s\n' "${install[*]}" | tee evidence/packages-installed.txt
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${install[@]}"
+          else
+            echo 'All required packages already present.' | tee evidence/packages-installed.txt
+          fi
+
+          wine_bin=$(command -v wine64 || command -v wine || find /usr/lib/wine -maxdepth 1 -type f -name wine64 -print -quit)
+          if [ -z "$wine_bin" ]; then
+            echo 'wine executable not found after package install' >&2
+            exit 2
+          fi
+          echo "$wine_bin" > evidence/wine-bin.txt
+          "$wine_bin" --version | tee evidence/wine-version.txt
+          x86_64-w64-mingw32-g++ --version | head -1 | tee evidence/mingw-version.txt
+
+      - name: Build controls and two-source uinput identity fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++ \
+            experiments/wine-uinput/wine_input_probe.cpp -o evidence/wine_input_probe.exe -luser32
+          x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -Werror -static -static-libgcc -static-libstdc++ \
+            experiments/wine-uinput/sendinput_control.cpp -o evidence/sendinput_control.exe -luser32
+          gcc -std=c11 -O2 -Wall -Wextra -Werror \
+            experiments/wine-uinput/uinput-two-source-probe.c -o evidence/uinput-two-source-probe
+          sha256sum evidence/wine_input_probe.exe evidence/sendinput_control.exe evidence/uinput-two-source-probe > evidence/fixture-sha256.txt
+
+          {
+            echo '--- wine_input_probe.exe ---'
+            x86_64-w64-mingw32-objdump -p evidence/wine_input_probe.exe | grep 'DLL Name:' || true
+            echo '--- sendinput_control.exe ---'
+            x86_64-w64-mingw32-objdump -p evidence/sendinput_control.exe | grep 'DLL Name:' || true
+          } | tee evidence/pe-imports.txt
+          if grep -Eqi 'lib(winpthread|gcc|stdc\+\+)[^ ]*\.dll' evidence/pe-imports.txt; then
+            echo 'Unexpected MinGW runtime DLL dependency remains.' >&2
+            exit 2
+          fi
+
+      - name: Run controls and two-source identity treatment in one Wine session
+        id: matrix
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          cat > evidence/xorg.conf <<'EOF'
+          Section "ServerFlags"
+              Option "AutoAddDevices" "true"
+              Option "AutoEnableDevices" "true"
+              Option "AllowMouseOpenFail" "true"
+              Option "DontVTSwitch" "true"
+          EndSection
+          Section "Device"
+              Identifier "DummyDevice"
+              Driver "dummy"
+              VideoRam 256000
+          EndSection
+          Section "Monitor"
+              Identifier "DummyMonitor"
+              HorizSync 5.0 - 1000.0
+              VertRefresh 5.0 - 200.0
+              Modeline "1024x768" 65.0 1024 1048 1184 1344 768 771 777 806
+          EndSection
+          Section "Screen"
+              Identifier "DummyScreen"
+              Device "DummyDevice"
+              Monitor "DummyMonitor"
+              DefaultDepth 24
+              SubSection "Display"
+                  Depth 24
+                  Modes "1024x768"
+              EndSubSection
+          EndSection
+          Section "ServerLayout"
+              Identifier "DummyLayout"
+              Screen "DummyScreen"
+          EndSection
+          EOF
+
+          sudo Xorg :99 -noreset -nolisten tcp -ac -config "$PWD/evidence/xorg.conf" -logfile "$PWD/evidence/Xorg.log" > evidence/xorg-stdout.txt 2>&1 &
+          xorg_pid=$!
+          openbox_pid=''
+          wine_pid=''
+          cleanup() {
+            if [ -n "${wine_pid:-}" ] && [ "$wine_pid" -gt 1 ] 2>/dev/null; then kill "$wine_pid" 2>/dev/null || true; fi
+            wineserver -k 2>/dev/null || true
+            if [ -n "${openbox_pid:-}" ] && [ "$openbox_pid" -gt 1 ] 2>/dev/null; then kill "$openbox_pid" 2>/dev/null || true; fi
+            if [ -n "${xorg_pid:-}" ] && [ "$xorg_pid" -gt 1 ] 2>/dev/null; then sudo kill "$xorg_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+
+          x_ready=false
+          for _ in $(seq 1 20); do DISPLAY=:99 xset q >/dev/null 2>&1 && { x_ready=true; break; }; sleep 0.5; done
+          if [ "$x_ready" != true ]; then
+            echo '{"classification":"xorg-start-failed"}' > evidence/wine-result.json
+            exit 1
+          fi
+
+          DISPLAY=:99 openbox --sm-disable > evidence/openbox.log 2>&1 &
+          openbox_pid=$!
+          wm_ready=false
+          for _ in $(seq 1 20); do
+            active=$(DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true)
+            [ -n "$active" ] && [ "$active" != '_NET_SUPPORTING_WM_CHECK:  no such atom on any window.' ] && { wm_ready=true; break; }
+            sleep 0.25
+          done
+          if [ "$wm_ready" != true ]; then
+            echo '{"classification":"openbox-start-failed"}' > evidence/wine-result.json
+            exit 1
+          fi
+
+          wine_bin=$(cat evidence/wine-bin.txt)
+          export DISPLAY=:99
+          export WINEARCH=win64
+          export WINEPREFIX="$RUNNER_TEMP/wininspect-wineprefix"
+          export WINEDEBUG=-all
+          rm -rf "$WINEPREFIX"
+
+          "$wine_bin" cmd /c exit > evidence/wine-prefix-init.txt 2>&1
+          prefix_rc=$?
+          command -v wineserver >/dev/null 2>&1 && wineserver -w 2>> evidence/wine-prefix-init.txt || true
+          if [ "$prefix_rc" -ne 0 ]; then
+            printf '{"classification":"wine-prefix-init-failed","prefix_exit_code":%d}\n' "$prefix_rc" > evidence/wine-result.json
+            cat evidence/wine-prefix-init.txt
+            exit 1
+          fi
+
+          "$wine_bin" "$PWD/evidence/wine_input_probe.exe" > evidence/probe.jsonl 2> evidence/probe.stderr &
+          wine_pid=$!
+          ready=false
+          for _ in $(seq 1 60); do
+            grep -q '"event":"probe_ready"' evidence/probe.jsonl 2>/dev/null && { ready=true; break; }
+            if ! kill -0 "$wine_pid" 2>/dev/null; then break; fi
+            sleep 0.5
+          done
+          if [ "$ready" != true ]; then
+            probe_rc='running'
+            if ! kill -0 "$wine_pid" 2>/dev/null; then
+              wait "$wine_pid"; probe_rc=$?
+            fi
+            {
+              echo "probe_process=$probe_rc"
+              echo '--- probe stdout ---'
+              cat evidence/probe.jsonl 2>/dev/null || true
+              echo '--- probe stderr ---'
+              cat evidence/probe.stderr 2>/dev/null || true
+              echo '--- Xorg tail ---'
+              tail -80 evidence/Xorg.log 2>/dev/null || true
+            } > evidence/readiness-diagnostics.txt
+            printf '{"classification":"wine-probe-not-ready","probe_process":"%s"}\n' "$probe_rc" > evidence/wine-result.json
+            exit 1
+          fi
+
+          idle_start=$(wc -l < evidence/probe.jsonl)
+          sleep 2
+          idle_end=$(wc -l < evidence/probe.jsonl)
+          sed -n "$((idle_start+1)),${idle_end}p" evidence/probe.jsonl > evidence/phase-idle.jsonl
+
+          "$wine_bin" "$PWD/evidence/sendinput_control.exe" > evidence/sendinput-control.txt 2>&1
+          send_rc=$?
+          sleep 1
+          send_end=$(wc -l < evidence/probe.jsonl)
+          sed -n "$((idle_end+1)),${send_end}p" evidence/probe.jsonl > evidence/phase-sendinput.jsonl
+
+          "$wine_bin" "$PWD/evidence/sendinput_control.exe" --focus-only > evidence/focus-control.txt 2>&1
+          focus_rc=$?
+          sleep 0.5
+          xprop -root _NET_ACTIVE_WINDOW > evidence/active-window.txt 2>&1 || true
+          active_window=$(awk '{print $5}' evidence/active-window.txt 2>/dev/null)
+          host_focus_ok=0
+          if [ -n "${active_window:-}" ] && [ "$active_window" != "0x0" ]; then
+            xprop -id "$active_window" WM_NAME _NET_WM_NAME > evidence/active-window-properties.txt 2>&1 || true
+            grep -q 'WinInspect Input Probe' evidence/active-window-properties.txt && host_focus_ok=1
+          else
+            : > evidence/active-window-properties.txt
+          fi
+          DISPLAY=:99 xprop -root _NET_ACTIVE_WINDOW > evidence/active-window-before-uinput.txt 2>&1 || true
+          DISPLAY=:99 xwininfo -root -tree > evidence/window-tree-before-uinput.txt 2>&1 || true
+          before_uinput=$(wc -l < evidence/probe.jsonl)
+          timeout 8s xinput test-xi2 --root > evidence/xinput2-uinput.txt 2>&1 &
+          xi2_pid=$!
+          sleep 0.25
+          sudo "$PWD/evidence/uinput-two-source-probe" > evidence/uinput-emitter.txt 2> evidence/uinput-emitter.err
+          uinput_rc=$?
+          sleep 1
+          wait "$xi2_pid" 2>/dev/null || true
+          uinput_end=$(wc -l < evidence/probe.jsonl)
+          sed -n "$((before_uinput+1)),${uinput_end}p" evidence/probe.jsonl > evidence/phase-uinput.jsonl
+
+          idle_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-idle.jsonl || true)
+          send_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-sendinput.jsonl || true)
+          uinput_events=$(grep -Ec '"event":"(raw_input|key_message|edit_changed)"' evidence/phase-uinput.jsonl || true)
+          uinput_raw=$(grep -Ec '"event":"raw_input".*"type":"keyboard"' evidence/phase-uinput.jsonl || true)
+          uinput_edits=$(grep -Ec '"event":"edit_changed"' evidence/phase-uinput.jsonl || true)
+          grep '"event":"raw_input".*"type":"keyboard"' evidence/phase-uinput.jsonl | grep -o '"hDevice":"[^"]*"' | sort -u > evidence/uinput-device-handles.txt || true
+          grep '"event":"raw_input".*"type":"keyboard"' evidence/phase-uinput.jsonl | grep -o '"device_name":"[^"]*"' | sort -u > evidence/uinput-device-names.txt || true
+          uinput_handle_count=$(grep -c . evidence/uinput-device-handles.txt || true)
+          uinput_name_count=$(grep -c . evidence/uinput-device-names.txt || true)
+          xi2_raw_key_events=$(grep -Ec 'RawKeyPress|RawKeyRelease' evidence/xinput2-uinput.txt || true)
+          xi2_source_ids=$(awk '/device:/ {gsub(/[()]/, "", $3); if ($3 ~ /^[0-9]+$/) print $3}' evidence/xinput2-uinput.txt | sort -un | paste -sd, - || true)
+          xi2_source_count=$(echo "$xi2_source_ids" | awk -F, '{ if (NF == 1 && $1 == "") print 0; else print NF }')
+
+          if [ "$idle_events" -ne 0 ]; then
+            classification='idle-control-contaminated'
+          elif [ "$send_rc" -ne 0 ] || [ "$send_events" -eq 0 ]; then
+            classification='sendinput-control-invalid'
+          elif [ "$focus_rc" -ne 0 ] || [ "$host_focus_ok" -ne 1 ]; then
+            classification='host-x-focus-control-invalid'
+          elif [ "$uinput_rc" -ne 0 ]; then
+            classification='two-source-uinput-emitter-failed'
+          elif [ "$xi2_raw_key_events" -lt 4 ] || [ "$xi2_source_count" -lt 2 ]; then
+            classification='xinput2-did-not-observe-two-distinct-source-events'
+          elif [ "$uinput_raw" -lt 4 ] || [ "$uinput_edits" -lt 2 ]; then
+            classification='two-host-sources-not-fully-delivered-to-wine'
+          elif [ "$uinput_handle_count" -ge 2 ]; then
+            classification='wine-preserved-two-uinput-source-identities'
+          elif [ "$uinput_handle_count" -eq 1 ]; then
+            classification='wine-collapsed-two-uinput-sources-to-one-rawinput-device'
+          else
+            classification='wine-two-source-identity-inconclusive'
+          fi
+
+          printf '{"classification":"%s","idle_input_events":%d,"sendinput_exit_code":%d,"sendinput_input_events":%d,"focus_exit_code":%d,"host_x_focus_ok":%d,"uinput_exit_code":%d,"uinput_input_events":%d,"uinput_raw_keyboard_events":%d,"uinput_application_edits":%d,"uinput_raw_device_handle_count":%d,"uinput_raw_device_name_count":%d,"xinput2_raw_key_events":%d,"xinput2_source_count":%d,"xinput2_source_ids":"%s"}\n' \
+            "$classification" "$idle_events" "$send_rc" "$send_events" "$focus_rc" "$host_focus_ok" "$uinput_rc" "$uinput_events" "$uinput_raw" "$uinput_edits" "$uinput_handle_count" "$uinput_name_count" "$xi2_raw_key_events" "$xi2_source_count" "$xi2_source_ids" > evidence/wine-result.json
+          cat evidence/wine-result.json
+          [ "$classification" = 'wine-preserved-two-uinput-source-identities' ] || [ "$classification" = 'wine-collapsed-two-uinput-sources-to-one-rawinput-device' ]
+
+      - name: Summarize discovery disposition
+        if: always()
+        shell: bash
+        run: |
+          result='not-recorded'
+          if [ -f evidence/wine-result.json ]; then result=$(python3 -c "import json; print(json.load(open('evidence/wine-result.json'))['classification'])"); fi
+          {
+            echo '# Wine/uinput E3 two-source identity'
+            echo
+            echo "Result: \`$result\`"
+            echo
+            if [ "$result" = 'wine-preserved-two-uinput-source-identities' ]; then
+              echo 'Two host sources remained distinct at Wine Raw Input in this discovery rep.'
+            elif [ "$result" = 'wine-collapsed-two-uinput-sources-to-one-rawinput-device' ]; then
+              echo 'Xorg preserved two sources but Wine Raw Input collapsed them to one device identity in this discovery rep.'
+            else
+              echo 'Stop at the recorded causal boundary unless one controlled variable changes.'
+            fi
+          } | tee evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Wine/uinput evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wine-uinput-e3
+          path: |
+            evidence/environment.txt
+            evidence/packages-installed.txt
+            evidence/wine-bin.txt
+            evidence/wine-version.txt
+            evidence/mingw-version.txt
+            evidence/wine_input_probe.exe
+            evidence/sendinput_control.exe
+            evidence/uinput-two-source-probe
+            evidence/fixture-sha256.txt
+            evidence/pe-imports.txt
+            evidence/xorg.conf
+            evidence/Xorg.log
+            evidence/xorg-stdout.txt
+            evidence/openbox.log
+            evidence/active-window.txt
+            evidence/active-window-properties.txt
+            evidence/wine-prefix-init.txt
+            evidence/probe.jsonl
+            evidence/probe.stderr
+            evidence/readiness-diagnostics.txt
+            evidence/phase-idle.jsonl
+            evidence/phase-sendinput.jsonl
+            evidence/phase-uinput.jsonl
+            evidence/sendinput-control.txt
+            evidence/focus-control.txt
+            evidence/uinput-emitter.txt
+            evidence/uinput-emitter.err
+            evidence/uinput-device-handles.txt
+            evidence/uinput-device-names.txt
+            evidence/xinput2-uinput.txt
+            evidence/wine-result.json
+            evidence/summary.md
           if-no-files-found: error
           retention-days: 14
