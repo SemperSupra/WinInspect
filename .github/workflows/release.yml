@@ -142,6 +142,14 @@ jobs:
           cmake --build source/build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
 
+      - name: Verify built WinInspect version
+        shell: pwsh
+        run: |
+          $version = & ./source/build/Release/wininspect.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect version command failed.' }
+          $expected = '^WinInspect ' + [regex]::Escape($env:RELEASE_TAG) + '(?:\s|$)'
+          if ($version[0] -cnotmatch $expected) { throw 'Built WinInspect version does not match the release tag.' }
+
       - name: Build portable CLI subjects
         shell: pwsh
         env:
@@ -253,6 +261,17 @@ jobs:
           trust-artifact-name: foundry-release-trust-${{ inputs.release_tag }}
           attest: 'true'
 
+      - name: Verify provenance before publishing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/release'
+          foreach ($subject in Get-ChildItem -LiteralPath $releaseRoot -File) {
+            gh attestation verify $subject.FullName -R $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "GitHub provenance verification failed: $($subject.Name)" }
+          }
+
       - name: Create immutable public release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
@@ -263,16 +282,11 @@ jobs:
             foundry-trust/*
           generate_release_notes: true
 
-      - name: Verify public release provenance
+      - name: Resolve the published release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/release'
-          foreach ($subject in Get-ChildItem -LiteralPath $releaseRoot -File) {
-            gh attestation verify $subject.FullName -R $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw "GitHub provenance verification failed: $($subject.Name)" }
-          }
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,url,targetCommitish
           if ($LASTEXITCODE -ne 0) { throw 'Created release could not be resolved.' }
 
