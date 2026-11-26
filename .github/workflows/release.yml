@@ -188,6 +188,20 @@ jobs:
             if ($before -ne $after) { throw "Binary changed during staging: $name" }
           }
 
+      - name: Verify packaged Windows runtime imports
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $dumpbin = & $vswhere -latest -version '[17.0,18.0)' -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (!$dumpbin) { throw 'Visual Studio dumpbin.exe was not found.' }
+          foreach ($binary in @('wininspect.exe', 'wininspectd.exe', 'wininspect-gui.exe')) {
+            $imports = & $dumpbin /dependents "source/dist/staging/$binary"
+            if ($LASTEXITCODE -ne 0) { throw "Unable to read PE imports for $binary." }
+            if ($imports -match '^\s*(?:vcruntime|msvcp|msvcr|concrt|libssl|libcrypto)[^\s]*\.dll\s*$') {
+              throw "$binary imports a runtime DLL that the offline package does not ship."
+            }
+          }
+
       - name: Package NSIS installer
         shell: pwsh
         run: |
@@ -200,7 +214,7 @@ jobs:
             if (-not $resolved) { throw 'makensis.exe was not found after NSIS installation.' }
             $makensis = $resolved.Source
           }
-          & $makensis "/DVERSION=$env:RELEASE_TAG" "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" $script
+          & $makensis /DSTATIC_MSVC_RUNTIME "/DVERSION=$env:RELEASE_TAG" "/DBUILD_SRC=$stageRoot" "/DDIST_DIR=$distRoot" $script
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE." }
           $installer = Join-Path $distRoot "WinInspect-Installer-$env:RELEASE_TAG.exe"
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Expected NSIS installer was not produced.' }
