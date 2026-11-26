@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
@@ -75,31 +75,96 @@ jobs:
           }
           Write-Host "Projection digest: $($manifest.projectionDigestSha256)"
 
+      - name: Build pinned static OpenSSL for Windows x64
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'wininspect-openssl'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $inputs = @(
+            @{
+              Url = 'https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz'
+              Sha256 = '67ebca7e50d17383028045486653492195b83db95f8558709701bb47b5c1ef81'
+            },
+            @{
+              Url = 'https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit-portable.zip'
+              Sha256 = '6a081a811781c30aca51dbc036afd93092af91e3297901f02c17043795a10690'
+            }
+          )
+          foreach ($inputArchive in $inputs) {
+            $archive = Join-Path $work ([IO.Path]::GetFileName($inputArchive.Url))
+            Invoke-WebRequest -Uri $inputArchive.Url -OutFile $archive -TimeoutSec 300
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $inputArchive.Sha256) {
+              throw "Build input SHA-256 mismatch: $archive"
+            }
+            tar.exe -xf $archive -C $work
+            if ($LASTEXITCODE -ne 0) { throw "Build input extraction failed: $archive" }
+          }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw 'MSVC x64 tools were not found.' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          $perl = Join-Path $work 'perl/bin/perl.exe'
+          if (!(Test-Path -LiteralPath $perl -PathType Leaf)) { throw 'Verified portable Perl was not found.' }
+          $prefix = Join-Path $work 'static-x64'
+          $batch = Join-Path $work 'build.cmd'
+          @"
+          @echo off
+          call "$vcvars" || exit /b 1
+          "$perl" Configure VC-WIN64A no-shared no-asm no-tests --prefix="$prefix" --openssldir="$prefix\ssl" || exit /b 1
+          nmake /NOLOGO > "$work\build.log" 2>&1 || exit /b 1
+          nmake /NOLOGO install_sw >> "$work\build.log" 2>&1 || exit /b 1
+          "@ | Set-Content -LiteralPath $batch -Encoding ascii
+          Push-Location (Join-Path $work 'openssl-3.0.22')
+          try {
+            $env:PATH = (Split-Path -Parent $perl) + ';' + $env:PATH
+            cmd.exe /c $batch
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content -LiteralPath (Join-Path $work 'build.log') -Tail 50 -ErrorAction SilentlyContinue
+              throw 'Pinned OpenSSL build failed.'
+            }
+          } finally {
+            Pop-Location
+          }
+          foreach ($library in @('libcrypto.lib', 'libssl.lib')) {
+            if (!(Test-Path -LiteralPath (Join-Path $prefix "lib/$library") -PathType Leaf)) {
+              throw "Expected static OpenSSL library is absent: $library"
+            }
+          }
+          "OPENSSL_ROOT_DIR=$prefix" >> $env:GITHUB_ENV
+
       - name: Build projected source
         shell: pwsh
         run: |
-          cmake -S source -B source/build -DWININSPECT_BUILD_TESTS=OFF
+          if (!$env:OPENSSL_ROOT_DIR) { throw 'Pinned static OpenSSL was not provisioned.' }
+          cmake -S source -B source/build -G "Visual Studio 17 2022" -A x64 -DWININSPECT_BUILD_TESTS=OFF "-DOPENSSL_ROOT_DIR=$env:OPENSSL_ROOT_DIR"
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
           cmake --build source/build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
 
-      - name: Build portable CLI subjects
+      - name: Verify built WinInspect version
         shell: pwsh
         run: |
+          $version = & ./source/build/Release/wininspect.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'WinInspect version command failed.' }
+          $expected = '^WinInspect ' + [regex]::Escape($env:RELEASE_TAG) + '(?:\s|$)'
+          if ($version[0] -cnotmatch $expected) { throw 'Built WinInspect version does not match the release tag.' }
+
+      - name: Build portable CLI subjects
+        shell: pwsh
+        env:
+          GOTOOLCHAIN: go1.26.2
+          CGO_ENABLED: '0'
+          GOARCH: amd64
+          GOWORK: 'off'
+        run: |
           New-Item -ItemType Directory -Force -Path 'source/dist' | Out-Null
-          go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-win-x64.exe"
+          $env:GOOS = 'windows'
+          go build -C source/clients/portable -trimpath -buildvcs=false -o "../../dist/wi-portable-$env:RELEASE_TAG-win-x64.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Windows portable CLI build failed.' }
-          $oldGoOs = $env:GOOS
-          $oldGoArch = $env:GOARCH
-          try {
-            $env:GOOS = 'linux'
-            $env:GOARCH = 'amd64'
-            go build -C source/clients/portable -o "../../dist/wi-portable-$env:RELEASE_TAG-linux-x64"
-            if ($LASTEXITCODE -ne 0) { throw 'Linux portable CLI build failed.' }
-          } finally {
-            $env:GOOS = $oldGoOs
-            $env:GOARCH = $oldGoArch
-          }
+          $env:GOOS = 'linux'
+          go build -C source/clients/portable -trimpath -buildvcs=false -o "../../dist/wi-portable-$env:RELEASE_TAG-linux-x64"
+          if ($LASTEXITCODE -ne 0) { throw 'Linux portable CLI build failed.' }
 
       - name: Install packaging tools
         shell: pwsh
@@ -149,6 +214,8 @@ jobs:
 
       - name: Package portable ZIP
         shell: bash
+        env:
+          WININSPECT_PORTABLE_ZIP_ONLY: '1'
         run: |
           set -euo pipefail
           export PATH="/c/Program Files/7-Zip:$PATH"
@@ -194,6 +261,17 @@ jobs:
           trust-artifact-name: foundry-release-trust-${{ inputs.release_tag }}
           attest: 'true'
 
+      - name: Verify provenance before publishing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/release'
+          foreach ($subject in Get-ChildItem -LiteralPath $releaseRoot -File) {
+            gh attestation verify $subject.FullName -R $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "GitHub provenance verification failed: $($subject.Name)" }
+          }
+
       - name: Create immutable public release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
@@ -204,16 +282,11 @@ jobs:
             foundry-trust/*
           generate_release_notes: true
 
-      - name: Verify public release provenance
+      - name: Resolve the published release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'source/dist/release'
-          foreach ($subject in Get-ChildItem -LiteralPath $releaseRoot -File) {
-            gh attestation verify $subject.FullName -R $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw "GitHub provenance verification failed: $($subject.Name)" }
-          }
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,url,targetCommitish
           if ($LASTEXITCODE -ne 0) { throw 'Created release could not be resolved.' }
 
